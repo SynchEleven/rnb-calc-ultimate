@@ -10,20 +10,20 @@
  * - Type effectiveness calculations
  */
 
-(function(window) {
+(function (window) {
     'use strict';
-    
+
     // Wait for BattlePlanner to be available
     if (!window.BattlePlanner) {
-        setTimeout(function() {
+        setTimeout(function () {
             window.BattlePlannerCalcIntegration && window.BattlePlannerCalcIntegration();
         }, 100);
         return;
     }
-    
+
     var BattlePlanner = window.BattlePlanner;
     var calc = window.calc;
-    
+
     // Type chart for effectiveness calculations
     var TYPE_CHART = {
         Normal: { Rock: 0.5, Ghost: 0, Steel: 0.5 },
@@ -45,26 +45,26 @@
         Steel: { Fire: 0.5, Water: 0.5, Electric: 0.5, Ice: 2, Rock: 2, Steel: 0.5, Fairy: 2 },
         Fairy: { Fire: 0.5, Fighting: 2, Poison: 0.5, Dragon: 2, Dark: 2, Steel: 0.5 }
     };
-    
+
     /**
      * Calculate type effectiveness
      */
     function getTypeEffectiveness(moveType, defenderTypes) {
         if (!moveType || !defenderTypes || defenderTypes.length === 0) return 1;
-        
+
         var multiplier = 1;
         var chart = TYPE_CHART[moveType] || {};
-        
+
         for (var i = 0; i < defenderTypes.length; i++) {
             var defType = defenderTypes[i];
             if (chart[defType] !== undefined) {
                 multiplier *= chart[defType];
             }
         }
-        
+
         return multiplier;
     }
-    
+
     /**
      * Get effectiveness label
      */
@@ -74,7 +74,7 @@
         if (multiplier > 1) return { label: 'Super Effective', class: 'super' };
         return { label: 'Neutral', class: 'neutral' };
     }
-    
+
     /**
      * Calculate KO chance
      */
@@ -86,7 +86,7 @@
         if (!defenderHP || defenderHP <= 0) {
             return { ohko: true, chance: 1, label: 'Already KO' };
         }
-        
+
         if (damage >= defenderHP) {
             return { ohko: true, chance: 1, label: 'OHKO' };
         }
@@ -102,7 +102,7 @@
         }
         return { hitsToKO: hitsToKO, label: hitsToKO + 'HKO' };
     }
-    
+
     /**
      * Check if move is a status move
      */
@@ -110,7 +110,7 @@
         if (!moveData) return false;
         return moveData.category === 'Status';
     }
-    
+
     /**
      * Get status move effects
      */
@@ -126,9 +126,9 @@
             heal: 0,
             other: null
         };
-        
+
         if (!moveData) return effects;
-        
+
         // Status-inflicting moves
         var statusMoves = {
             'Thunder Wave': { targetStatus: 'par' },
@@ -146,7 +146,7 @@
             'Poison Gas': { targetStatus: 'psn' },
             'Poison Powder': { targetStatus: 'psn' }
         };
-        
+
         // Stat boosting moves
         var boostMoves = {
             'Swords Dance': { atk: 2 },
@@ -172,7 +172,7 @@
             'Double Team': { evasion: 1 },
             'Autotomize': { spe: 2 }
         };
-        
+
         // Stat lowering moves
         var lowerMoves = {
             'Growl': { targetBoosts: { atk: -1 } },
@@ -194,7 +194,7 @@
             'King\'s Shield': { targetBoosts: { atk: -2 } },
             'Baneful Bunker': { targetBoosts: {} }
         };
-        
+
         // Hazard moves
         var hazardMoves = {
             'Stealth Rock': { hazard: 'stealthRock', side: 'defender' },
@@ -202,14 +202,14 @@
             'Toxic Spikes': { hazard: 'toxicSpikes', side: 'defender' },
             'Sticky Web': { hazard: 'stickyWeb', side: 'defender' }
         };
-        
+
         // Screen moves
         var screenMoves = {
             'Reflect': { screen: 'reflect', turns: 5 },
             'Light Screen': { screen: 'lightScreen', turns: 5 },
             'Aurora Veil': { screen: 'auroraVeil', turns: 5 }
         };
-        
+
         // Weather moves
         var weatherMoves = {
             'Rain Dance': { weather: 'Rain', turns: 5 },
@@ -218,7 +218,7 @@
             'Hail': { weather: 'Hail', turns: 5 },
             'Snowscape': { weather: 'Snow', turns: 5 }
         };
-        
+
         // Healing moves
         var healMoves = {
             'Recover': { heal: 0.5 },
@@ -234,49 +234,49 @@
             'Shore Up': { heal: 0.5 },
             'Strength Sap': { heal: 'target_atk' }
         };
-        
+
         if (statusMoves[moveName]) {
             effects.targetStatus = statusMoves[moveName].targetStatus;
         }
-        
+
         if (boostMoves[moveName]) {
             effects.selfBoosts = boostMoves[moveName];
         }
-        
+
         if (lowerMoves[moveName]) {
             effects.targetBoosts = lowerMoves[moveName].targetBoosts;
         }
-        
+
         if (hazardMoves[moveName]) {
             effects.hazards = hazardMoves[moveName];
         }
-        
+
         if (screenMoves[moveName]) {
             effects.screens = screenMoves[moveName];
         }
-        
+
         if (weatherMoves[moveName]) {
             effects.weather = weatherMoves[moveName];
         }
-        
+
         if (healMoves[moveName]) {
             effects.heal = healMoves[moveName].heal;
             if (healMoves[moveName].targetStatus) {
                 effects.selfStatus = healMoves[moveName].targetStatus;
             }
         }
-        
+
         return effects;
     }
-    
+
     /**
      * Get secondary effect chances from moves
      */
     function getSecondaryEffects(moveData) {
         var effects = [];
-        
+
         if (!moveData) return effects;
-        
+
         // Common secondary effects
         var secondaryEffectMoves = {
             'Thunderbolt': { status: 'par', chance: 0.1 },
@@ -315,37 +315,37 @@
             'Flash Cannon': { targetBoost: { spd: -1 }, chance: 0.1 },
             'Crunch': { targetBoost: { def: -1 }, chance: 0.2 }
         };
-        
+
         var moveName = moveData.name || '';
         if (secondaryEffectMoves[moveName]) {
             effects.push(secondaryEffectMoves[moveName]);
         }
-        
+
         return effects;
     }
-    
+
     /**
      * Calculate all possible outcomes for a move
      */
     function calculateAllOutcomes(attacker, defender, move, field, gen) {
         gen = gen || window.GENERATION || (calc && calc.Generations ? calc.Generations.get(8) : 8);
         field = field || (calc ? new calc.Field() : null);
-        
+
         var outcomes = [];
-        
+
         if (!calc || !attacker || !defender || !move) {
             return outcomes;
         }
-        
+
         var moveName = move.name || move;
         var moveData = null;
-        
+
         try {
             if (gen && gen.moves) {
                 moveData = gen.moves.get(calc.toID(moveName));
             }
-        } catch(e) { }
-        
+        } catch (e) { }
+
         if (!moveData) {
             return [{
                 type: 'unknown',
@@ -355,48 +355,48 @@
                 effects: {}
             }];
         }
-        
+
         var accuracy = getAccuracy(moveData, attacker, defender, field, gen);
         var missChance = accuracy < 100 ? (100 - accuracy) / 100 : 0;
         var hitChance = 1 - missChance;
         var critChance = getCritChance(move, attacker, defender, field, gen);
-        
+
         // Miss outcome
         if (missChance > 0) {
             outcomes.push(new BattlePlanner.BattleOutcome('Miss', missChance, 0, { miss: true }));
         }
-        
+
         // Normal hit (no crit)
         if (hitChance > 0 && critChance < 1) {
             try {
                 var normalResult = calc.calculate(gen, attacker, defender, move, field);
                 var normalDamageRange = getDamageRange(normalResult);
-                
+
                 outcomes.push(new BattlePlanner.BattleOutcome(
                     'Low Roll',
                     hitChance * (1 - critChance) * 0.0625,
                     normalDamageRange.min,
                     { lowRoll: true }
                 ));
-                
+
                 outcomes.push(new BattlePlanner.BattleOutcome(
                     'Normal',
                     hitChance * (1 - critChance) * 0.875,
                     normalDamageRange.avg,
                     {}
                 ));
-                
+
                 outcomes.push(new BattlePlanner.BattleOutcome(
                     'High Roll',
                     hitChance * (1 - critChance) * 0.0625,
                     normalDamageRange.max,
                     { highRoll: true }
                 ));
-            } catch(e) {
+            } catch (e) {
                 console.error('Failed to calculate normal hit:', e);
             }
         }
-        
+
         // Crit hit
         if (hitChance > 0 && critChance > 0) {
             try {
@@ -407,59 +407,59 @@
                 }
                 var critResult = calc.calculate(gen, attacker, defender, critMove, field);
                 var critDamageRange = getDamageRange(critResult);
-                
+
                 outcomes.push(new BattlePlanner.BattleOutcome(
                     'Crit (Low)',
                     hitChance * critChance * 0.0625,
                     critDamageRange.min,
                     { crit: true, lowRoll: true }
                 ));
-                
+
                 outcomes.push(new BattlePlanner.BattleOutcome(
                     'Crit',
                     hitChance * critChance * 0.875,
                     critDamageRange.avg,
                     { crit: true }
                 ));
-                
+
                 outcomes.push(new BattlePlanner.BattleOutcome(
                     'Crit (High)',
                     hitChance * critChance * 0.0625,
                     critDamageRange.max,
                     { crit: true, highRoll: true }
                 ));
-            } catch(e) {
+            } catch (e) {
                 console.error('Failed to calculate crit:', e);
             }
         }
-        
+
         outcomes = simplifyOutcomes(outcomes);
-        
+
         return outcomes;
     }
-    
+
     /**
      * Calculate simplified key outcomes (for UI display)
      */
     function calculateKeyOutcomes(attacker, defender, move, field, gen) {
         gen = gen || window.GENERATION || (calc && calc.Generations ? calc.Generations.get(8) : 8);
         field = field || (calc ? new calc.Field() : null);
-        
+
         var outcomes = [];
-        
+
         if (!calc || !attacker || !defender || !move) {
             return outcomes;
         }
-        
+
         var moveName = move.name || move;
         var moveData = null;
-        
+
         try {
             if (gen && gen.moves) {
                 moveData = gen.moves.get(calc.toID(moveName));
             }
-        } catch(e) { }
-        
+        } catch (e) { }
+
         if (!moveData) {
             return [{
                 type: 'unknown',
@@ -470,12 +470,12 @@
                 effects: {}
             }];
         }
-        
+
         // Handle status moves
         if (isStatusMove(moveData)) {
             var statusEffects = getStatusMoveEffects(moveName, moveData);
             var accuracy = getAccuracy(moveData, attacker, defender, field, gen);
-            
+
             if (accuracy < 100) {
                 outcomes.push({
                     type: 'miss',
@@ -486,7 +486,7 @@
                     effects: { miss: true }
                 });
             }
-            
+
             outcomes.push({
                 type: 'status',
                 label: getStatusMoveLabel(statusEffects),
@@ -496,24 +496,24 @@
                 effects: { statusMove: true, statusEffects: statusEffects },
                 isStatusMove: true
             });
-            
+
             return outcomes;
         }
-        
+
         // Get type effectiveness
         var defenderTypes = defender.types || (defender.species && defender.species.types) || [];
         var moveType = moveData.type || 'Normal';
         var effectiveness = getTypeEffectiveness(moveType, defenderTypes);
         var effectivenessInfo = getEffectivenessLabel(effectiveness);
-        
+
         var accuracy = getAccuracy(moveData, attacker, defender, field, gen);
         var missChance = accuracy < 100 ? (100 - accuracy) / 100 : 0;
         var hitChance = 1 - missChance;
         var critChance = getCritChance(move, attacker, defender, field, gen);
-        
+
         // Get secondary effects
         var secondaryEffects = getSecondaryEffects(moveData);
-        
+
         // Miss outcome (only show if 5%+)
         if (missChance >= 0.05) {
             outcomes.push({
@@ -525,20 +525,20 @@
                 effects: { miss: true }
             });
         }
-        
+
         // Normal hit
         if (hitChance > 0 && (1 - critChance) > 0) {
             try {
                 var normalResult = calc.calculate(gen, attacker, defender, move, field);
                 var normalRange = getDamageRange(normalResult);
-                
+
                 // Calculate KO chance - handle both calc.Pokemon objects (getters) and snapshots
-                var defenderHP = typeof defender.curHP === 'function' ? defender.curHP() : 
-                                 (defender.curHP || (defender.rawStats && defender.rawStats.hp) || 100);
+                var defenderHP = typeof defender.curHP === 'function' ? defender.curHP() :
+                    (defender.curHP || (defender.rawStats && defender.rawStats.hp) || 100);
                 var defenderMaxHP = typeof defender.maxHP === 'function' ? defender.maxHP() :
-                                    (defender.maxHP || (defender.rawStats && defender.rawStats.hp) || defenderHP);
+                    (defender.maxHP || (defender.rawStats && defender.rawStats.hp) || defenderHP);
                 var koInfo = calculateKOChance(normalRange.avg, defenderHP, defenderMaxHP);
-                
+
                 outcomes.push({
                     type: 'normal',
                     label: 'Normal',
@@ -556,11 +556,11 @@
                     koInfo: koInfo,
                     result: normalResult
                 });
-            } catch(e) {
+            } catch (e) {
                 console.error('Failed to calc normal:', e);
             }
         }
-        
+
         // Crit
         if (hitChance > 0 && critChance > 0.01) {
             try {
@@ -571,14 +571,14 @@
                 }
                 var critResult = calc.calculate(gen, attacker, defender, critMove, field);
                 var critRange = getDamageRange(critResult);
-                
+
                 // Calculate KO chance - handle both calc.Pokemon objects (getters) and snapshots
-                var defHP = typeof defender.curHP === 'function' ? defender.curHP() : 
-                           (defender.curHP || (defender.rawStats && defender.rawStats.hp) || 100);
+                var defHP = typeof defender.curHP === 'function' ? defender.curHP() :
+                    (defender.curHP || (defender.rawStats && defender.rawStats.hp) || 100);
                 var defMaxHP = typeof defender.maxHP === 'function' ? defender.maxHP() :
-                               (defender.maxHP || (defender.rawStats && defender.rawStats.hp) || defHP);
+                    (defender.maxHP || (defender.rawStats && defender.rawStats.hp) || defHP);
                 var critKoInfo = calculateKOChance(critRange.avg, defHP, defMaxHP);
-                
+
                 outcomes.push({
                     type: 'crit',
                     label: 'Critical Hit',
@@ -596,17 +596,17 @@
                     koInfo: critKoInfo,
                     result: critResult
                 });
-            } catch(e) {
+            } catch (e) {
                 console.error('Failed to calc crit:', e);
             }
         }
-        
+
         return outcomes;
     }
-    
+
     function getStatusMoveLabel(effects) {
         var labels = [];
-        
+
         if (effects.targetStatus) {
             var statusNames = {
                 'par': 'Paralyze',
@@ -618,7 +618,7 @@
             };
             labels.push(statusNames[effects.targetStatus] || effects.targetStatus);
         }
-        
+
         if (Object.keys(effects.selfBoosts).length > 0) {
             var boostLabels = [];
             for (var stat in effects.selfBoosts) {
@@ -628,43 +628,43 @@
             }
             labels.push(boostLabels.join(', '));
         }
-        
+
         if (Object.keys(effects.targetBoosts).length > 0) {
             labels.push('Lower stats');
         }
-        
+
         if (effects.hazards) {
             labels.push('Set hazard');
         }
-        
+
         if (effects.screens) {
             labels.push('Set screen');
         }
-        
+
         if (effects.weather) {
             labels.push(effects.weather.weather);
         }
-        
+
         if (effects.heal) {
             labels.push('Heal');
         }
-        
+
         return labels.length > 0 ? labels.join(', ') : 'Effect';
     }
-    
+
     /**
      * Get accuracy considering all modifiers
      */
     function getAccuracy(moveData, attacker, defender, field, gen) {
         if (!moveData) return 100;
-        
+
         if (moveData.accuracy === true || moveData.accuracy === 0) return 100;
-        
+
         var baseAccuracy = moveData.accuracy || 100;
-        
+
         var attackerAbility = attacker ? (attacker.ability || '') : '';
         var defenderAbility = defender ? (defender.ability || '') : '';
-        
+
         if (attackerAbility === 'No Guard' || defenderAbility === 'No Guard') {
             return 100;
         }
@@ -674,15 +674,15 @@
         if (attackerAbility === 'Hustle' && moveData.category === 'Physical') {
             baseAccuracy = Math.floor(baseAccuracy * 0.8);
         }
-        
+
         var attackerItem = attacker ? (attacker.item || '') : '';
         if (attackerItem === 'Wide Lens') {
             baseAccuracy = Math.floor(baseAccuracy * 1.1);
         }
-        
+
         var weather = field && field.weather ? field.weather : '';
         var moveName = moveData.name || '';
-        
+
         if (moveName === 'Thunder' || moveName === 'Hurricane') {
             if (weather === 'Rain' || weather === 'Heavy Rain') {
                 return 100;
@@ -694,32 +694,32 @@
         if (moveName === 'Blizzard' && (weather === 'Hail' || weather === 'Snow')) {
             return 100;
         }
-        
+
         if (field && field.isGravity) {
             baseAccuracy = Math.floor(baseAccuracy * 5 / 3);
         }
-        
+
         return Math.min(100, baseAccuracy);
     }
-    
+
     /**
      * Get crit chance as a decimal
      */
     function getCritChance(move, attacker, defender, field, gen) {
         if (!move) return 0;
-        
+
         var moveName = move.name || '';
-        
+
         var alwaysCrit = ['Storm Throw', 'Frost Breath', 'Zippy Zap', 'Surging Strikes', 'Wicked Blow'];
         if (alwaysCrit.indexOf(moveName) !== -1) return 1;
-        
+
         var defenderAbility = defender ? (defender.ability || '') : '';
         if (defenderAbility === 'Battle Armor' || defenderAbility === 'Shell Armor') {
             return 0;
         }
-        
+
         var critStage = 0;
-        
+
         var highCritMoves = [
             'Slash', 'Karate Chop', 'Razor Leaf', 'Crabhammer', 'Shadow Claw',
             'Stone Edge', 'Cross Chop', 'Aeroblast', 'Night Slash', 'Psycho Cut',
@@ -727,43 +727,43 @@
             'Drill Run', 'Leaf Blade', 'Poison Tail', 'Sky Attack', 'Shadow Blast'
         ];
         if (highCritMoves.indexOf(moveName) !== -1) critStage++;
-        
+
         var attackerItem = attacker ? (attacker.item || '') : '';
         var attackerAbility = attacker ? (attacker.ability || '') : '';
         var attackerName = attacker ? (attacker.name || '') : '';
-        
+
         if (attackerItem === 'Scope Lens' || attackerItem === 'Razor Claw') critStage++;
         if (attackerItem === 'Leek' && (attackerName === "Farfetch'd" || attackerName === "Sirfetch'd")) critStage += 2;
         if (attackerItem === 'Lucky Punch' && attackerName === 'Chansey') critStage += 2;
         if (attackerItem === 'Stick' && attackerName === "Farfetch'd") critStage += 2;
-        
+
         if (attackerAbility === 'Super Luck') critStage++;
-        
+
         var genNum = 8;
         if (gen && gen.num) {
             genNum = gen.num;
         } else if (typeof gen === 'number') {
             genNum = gen;
         }
-        
+
         if (genNum >= 7) {
-            var rates = [1/24, 1/8, 1/2, 1, 1];
+            var rates = [1 / 24, 1 / 8, 1 / 2, 1, 1];
             return rates[Math.min(critStage, 4)];
         } else {
-            var rates = [1/16, 1/8, 1/4, 1/3, 1/2];
+            var rates = [1 / 16, 1 / 8, 1 / 4, 1 / 3, 1 / 2];
             return rates[Math.min(critStage, 4)];
         }
     }
-    
+
     /**
      * Extract damage range from result
      */
     function getDamageRange(result) {
         if (!result) return { min: 0, max: 0, avg: 0, rolls: [] };
-        
+
         var damage = result.damage;
         var min = 0, max = 0, avg = 0;
-        
+
         if (typeof damage === 'number') {
             min = max = avg = damage;
         } else if (Array.isArray(damage)) {
@@ -785,119 +785,120 @@
                 avg = Math.floor(sum / damage.length);
             }
         }
-        
+
         // Fallback: if avg is still 0 but min/max aren't, use their average
         if (avg === 0 && (min > 0 || max > 0)) {
             avg = Math.floor((min + max) / 2);
         }
-        
+
         return { min: min, max: max, avg: avg, rolls: damage };
     }
-    
+
     /**
      * Simplify outcomes by filtering low probability ones
      */
     function simplifyOutcomes(outcomes, threshold) {
         threshold = threshold || 0.01;
-        
-        var significant = outcomes.filter(function(o) {
+
+        var significant = outcomes.filter(function (o) {
             return o.probability >= threshold;
         });
-        
+
         var remainingProb = 0;
-        outcomes.forEach(function(o) {
+        outcomes.forEach(function (o) {
             if (o.probability < threshold) {
                 remainingProb += o.probability;
             }
         });
-        
+
         if (remainingProb > 0 && significant.length > 0) {
             significant[0].probability += remainingProb;
         }
-        
+
         return significant;
     }
-    
+
     /**
      * Apply item effects after damage
      */
     function applyItemEffects(pokemon, damage) {
         var effects = { healed: 0, itemConsumed: false, itemEffect: null };
-        
+
         if (!pokemon || !pokemon.item) return effects;
-        
+
         var item = pokemon.item;
         var currentHP = pokemon.currentHP;
         var maxHP = pokemon.maxHP;
         var newHP = currentHP - damage;
         var hpPercent = (newHP / maxHP) * 100;
-        
+
         // Oran Berry - Heals 10 HP when HP drops to 50% or below
         if (item === 'Oran Berry' && hpPercent <= 50 && currentHP > maxHP * 0.5) {
             effects.healed = 10;
             effects.itemConsumed = true;
             effects.itemEffect = 'Oran Berry restored 10 HP';
         }
-        
+
         // Sitrus Berry - Heals 25% HP when HP drops to 50% or below
         if (item === 'Sitrus Berry' && hpPercent <= 50 && currentHP > maxHP * 0.5) {
             effects.healed = Math.floor(maxHP * 0.25);
             effects.itemConsumed = true;
             effects.itemEffect = 'Sitrus Berry restored ' + effects.healed + ' HP';
         }
-        
+
         // Focus Sash - Survives OHKO at full HP
         if (item === 'Focus Sash' && currentHP === maxHP && newHP <= 0) {
             effects.healed = 1 - newHP; // Restore to 1 HP
             effects.itemConsumed = true;
             effects.itemEffect = 'Focus Sash kept the Pokemon at 1 HP';
         }
-        
+
         // Focus Band - 10% chance to survive at 1 HP
         if (item === 'Focus Band' && newHP <= 0) {
             // This would be handled as a separate outcome branch
             effects.focusBandChance = true;
         }
-        
+
         // Leftovers healing (end of turn)
         if (item === 'Leftovers') {
             effects.endOfTurnHeal = Math.floor(maxHP / 16);
         }
-        
+
         // Black Sludge healing (end of turn for Poison types)
         if (item === 'Black Sludge' && pokemon.types && pokemon.types.indexOf('Poison') !== -1) {
             effects.endOfTurnHeal = Math.floor(maxHP / 16);
         }
-        
+
         return effects;
     }
-    
+
     /**
      * Apply an outcome to a battle state
      */
     function applyOutcomeToState(state, outcome, attackerSide, moveData) {
         var newState = state.clone();
         newState.turnNumber++;
-        
+
         var attacker = attackerSide === 'p1' ? newState.p1.active : newState.p2.active;
         var defender = attackerSide === 'p1' ? newState.p2.active : newState.p1.active;
-        
+
         if (!defender || !attacker) return newState;
-        
+
         // Handle status moves
         if (outcome.isStatusMove && outcome.effects.statusEffects) {
             var statusEffects = outcome.effects.statusEffects;
-            
+
             // Apply target status
-            if (statusEffects.targetStatus) {
+            // Pokemon can only have one status condition - don't overwrite existing status
+            if (statusEffects.targetStatus && (!defender.status || defender.status === 'Healthy')) {
                 defender.setStatus(convertStatusCode(statusEffects.targetStatus));
             }
-            
+
             // Apply self status
             if (statusEffects.selfStatus) {
                 attacker.setStatus(convertStatusCode(statusEffects.selfStatus));
             }
-            
+
             // Apply self boosts
             if (statusEffects.selfBoosts) {
                 for (var stat in statusEffects.selfBoosts) {
@@ -906,7 +907,7 @@
                     }
                 }
             }
-            
+
             // Apply target boosts (debuffs)
             if (statusEffects.targetBoosts) {
                 for (var stat in statusEffects.targetBoosts) {
@@ -915,7 +916,7 @@
                     }
                 }
             }
-            
+
             // Apply hazards
             if (statusEffects.hazards) {
                 var hazardSide = attackerSide === 'p1' ? 'p2' : 'p1';
@@ -929,7 +930,7 @@
                     newState.sides[hazardSide].stickyWeb = true;
                 }
             }
-            
+
             // Apply screens
             if (statusEffects.screens) {
                 var screenSide = attackerSide;
@@ -944,48 +945,49 @@
                     newState.sides[screenSide].auroraVeilTurns = 5;
                 }
             }
-            
+
             // Apply weather
             if (statusEffects.weather) {
                 newState.field.weather = statusEffects.weather.weather;
                 newState.field.weatherTurns = statusEffects.weather.turns || 5;
             }
-            
+
             // Apply healing
             if (statusEffects.heal) {
-                var healAmount = typeof statusEffects.heal === 'number' 
+                var healAmount = typeof statusEffects.heal === 'number'
                     ? Math.floor(attacker.maxHP * statusEffects.heal)
                     : 0;
                 attacker.applyHealing(healAmount);
             }
-            
+
             return newState;
         }
-        
+
         // Apply damage for attacking moves
         var damage = outcome.damage || outcome.damageDealt || 0;
         if (damage > 0) {
             // Check for item effects before applying damage
             var itemEffects = applyItemEffects(defender, damage);
-            
+
             defender.applyDamage(damage);
-            
+
             // Apply item healing
             if (itemEffects.healed > 0) {
                 defender.applyHealing(itemEffects.healed);
             }
-            
+
             // Consume item
             if (itemEffects.itemConsumed) {
                 defender.item = '';
             }
         }
-        
+
         // Apply secondary effects
         if (outcome.effects && outcome.effects.secondaryEffects) {
-            outcome.effects.secondaryEffects.forEach(function(effect) {
+            outcome.effects.secondaryEffects.forEach(function (effect) {
                 // Apply with probability
-                if (effect.status) {
+                // Don't overwrite existing status conditions
+                if (effect.status && (!defender.status || defender.status === 'Healthy')) {
                     defender.setStatus(convertStatusCode(effect.status));
                 }
                 if (effect.selfBoost) {
@@ -1000,17 +1002,17 @@
                 }
             });
         }
-        
+
         // Update team slot HP
         if (attackerSide === 'p1' && newState.p2.team[newState.p2.teamSlot]) {
             newState.p2.team[newState.p2.teamSlot] = defender.clone();
         } else if (attackerSide === 'p2' && newState.p1.team[newState.p1.teamSlot]) {
             newState.p1.team[newState.p1.teamSlot] = attacker.clone();
         }
-        
+
         return newState;
     }
-    
+
     function convertStatusCode(code) {
         var map = {
             'par': 'Paralyzed',
@@ -1022,7 +1024,7 @@
         };
         return map[code] || code;
     }
-    
+
     /**
      * Create a Pokemon object from a snapshot for calculation
      */
@@ -1030,13 +1032,19 @@
         if (!snapshot) {
             return null;
         }
-        
+
+        // If it's already a Pokemon object, return it (or a clone)
+        if (window.calc && snapshot instanceof window.calc.Pokemon) {
+            return snapshot.clone ? snapshot.clone() : snapshot;
+        }
+
         // Try to use stored Pokemon data first
         if (snapshot._pokemonData && snapshot._pokemonData.clone) {
             try {
                 var cloned = snapshot._pokemonData.clone();
+                // Ensure current state is applied
                 if (typeof snapshot.currentHP === 'number') {
-                    cloned.originalCurHP = snapshot.currentHP;
+                    cloned.curHP = snapshot.currentHP;
                 }
                 if (snapshot.status) {
                     cloned.status = snapshot._statusNameToCode ? snapshot._statusNameToCode(snapshot.status) : '';
@@ -1045,20 +1053,20 @@
                     cloned.boosts = Object.assign({}, snapshot.boosts);
                 }
                 return cloned;
-            } catch(e) {
+            } catch (e) {
                 console.warn('snapshotToPokemon: Clone failed, falling back to recreation:', e);
             }
         }
-        
+
         if (!window.calc || !snapshot.name) {
             return null;
         }
-        
+
         try {
             var genNum = 8;
             if (gen && gen.num) genNum = gen.num;
             else if (typeof gen === 'number') genNum = gen;
-            
+
             var options = {
                 level: snapshot.level || 100,
                 ability: snapshot.ability || '',
@@ -1069,26 +1077,44 @@
                 boosts: snapshot.boosts || {},
                 curHP: snapshot.currentHP
             };
-            
+
             if (snapshot.moves && snapshot.moves.length > 0) {
-                options.moves = snapshot.moves.map(function(moveName) {
+                options.moves = snapshot.moves.map(function (moveName) {
                     return new window.calc.Move(genNum, moveName);
                 });
             }
-            
+
             return new window.calc.Pokemon(genNum, snapshot.name, options);
-        } catch(e) {
+        } catch (e) {
             console.error('Failed to create Pokemon from snapshot:', e);
             return null;
         }
     }
-    
+
+    /**
+     * Create a calc.Field object from snapshot
+     */
+    function snapshotToField(snapshot) {
+        if (!window.calc) return null;
+        var field = new window.calc.Field();
+        if (!snapshot) return field;
+
+        field.weather = snapshot.weather && snapshot.weather !== 'None' ? snapshot.weather : undefined;
+        field.terrain = snapshot.terrain && snapshot.terrain !== 'None' ? snapshot.terrain : undefined;
+        field.isTrickRoom = !!snapshot.trickRoom;
+        field.isGravity = !!snapshot.gravity;
+        field.isMagicRoom = !!snapshot.magicRoom;
+        field.isWonderRoom = !!snapshot.wonderRoom;
+
+        return field;
+    }
+
     /**
      * Create a BattleStateSnapshot from current calculator state
      */
     function createStateFromCalculator(p1Pokemon, p2Pokemon, field) {
         var state = new BattlePlanner.BattleStateSnapshot();
-        
+
         if (p1Pokemon) {
             state.p1.active = new BattlePlanner.PokemonSnapshot(p1Pokemon);
             state.p1.team = [state.p1.active.clone()];
@@ -1099,13 +1125,13 @@
             state.p2.team = [state.p2.active.clone()];
             state.p2.teamSlot = 0;
         }
-        
+
         if (field) {
             state.field.weather = field.weather || 'None';
             state.field.terrain = field.terrain || 'None';
             state.field.trickRoom = !!field.isTrickRoom;
             state.field.gravity = !!field.isGravity;
-            
+
             if (field.attackerSide) {
                 var as = field.attackerSide;
                 state.sides.p1.spikes = as.spikes || 0;
@@ -1114,7 +1140,7 @@
                 state.sides.p1.lightScreen = !!as.isLightScreen;
                 state.sides.p1.tailwind = !!as.isTailwind;
             }
-            
+
             if (field.defenderSide) {
                 var ds = field.defenderSide;
                 state.sides.p2.spikes = ds.spikes || 0;
@@ -1124,10 +1150,10 @@
                 state.sides.p2.tailwind = !!ds.isTailwind;
             }
         }
-        
+
         return state;
     }
-    
+
     /**
      * Format probability as percentage
      */
@@ -1138,7 +1164,7 @@
         if (percent >= 10) return percent.toFixed(1) + '%';
         return percent.toFixed(2) + '%';
     }
-    
+
     /**
      * Format damage as percentage of max HP
      */
@@ -1147,29 +1173,29 @@
         var percent = (damage / maxHP) * 100;
         return percent.toFixed(1) + '%';
     }
-    
+
     /**
      * Get sprite URL for a Pokemon
      */
     function getSpriteUrl(pokemonName, shiny) {
         if (!pokemonName) return '';
-        
+
         // Normalize name for URL
         var spriteName = pokemonName.toLowerCase()
             .replace(/[^a-z0-9-]/g, '-')
             .replace(/--+/g, '-')
             .replace(/^-|-$/g, '');
-        
+
         // Try multiple sprite sources
         var sources = [
             'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/' + getPokedexNumber(pokemonName) + '.png',
             'https://play.pokemonshowdown.com/sprites/gen5/' + spriteName + '.png',
             'https://raw.githubusercontent.com/msPokemon/images/master/sprites/pokemon/other/official-artwork/' + getPokedexNumber(pokemonName) + '.png'
         ];
-        
+
         return sources[0];
     }
-    
+
     // Simple Pokedex number lookup
     function getPokedexNumber(name) {
         var numbers = {
@@ -1181,11 +1207,11 @@
             'houndoom': 229, 'minccino': 572
             // Add more as needed
         };
-        
+
         var normalized = name.toLowerCase().replace(/[^a-z]/g, '');
         return numbers[normalized] || 0;
     }
-    
+
     // Export
     window.BattlePlanner.CalcIntegration = {
         calculateAllOutcomes: calculateAllOutcomes,
@@ -1195,6 +1221,7 @@
         getDamageRange: getDamageRange,
         applyOutcomeToState: applyOutcomeToState,
         snapshotToPokemon: snapshotToPokemon,
+        snapshotToField: snapshotToField,
         createStateFromCalculator: createStateFromCalculator,
         formatProbability: formatProbability,
         formatDamagePercent: formatDamagePercent,
@@ -1207,5 +1234,5 @@
         getSecondaryEffects: getSecondaryEffects,
         getSpriteUrl: getSpriteUrl
     };
-    
+
 })(window);
