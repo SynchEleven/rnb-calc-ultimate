@@ -1073,12 +1073,15 @@
 
         // AI tie branching
         $(document).on('click', '.ai-tie-branch-btn', function () {
-            var currentNode = uiState.tree ? uiState.tree.getCurrentNode() : null;
-            if (!currentNode || !uiState.p1Action) return;
-            var state = currentNode.state;
+            var parentNode = uiState.tree ? uiState.tree.getCurrentNode() : null;
+            if (!parentNode || !uiState.p1Action) return;
+            var parentNodeId = parentNode.id;
+            var state = parentNode.state;
             var pokemon = state.p2.active;
             var defender = state.p1.active;
             if (!pokemon || !defender || !BattlePlannerLogic || !BattlePlannerLogic.scoreAIMoves) return;
+
+            var savedP1Action = JSON.parse(JSON.stringify(uiState.p1Action));
 
             var calcDmgForAI = function (attacker, target, moveName) {
                 try {
@@ -1097,7 +1100,20 @@
             var tiedMoves = aiScores.filter(function (s) { return s.score === bestScore; });
 
             if (tiedMoves.length > 1) {
-                tiedMoves.forEach(function (tm) {
+                var branchIdx = 0;
+                function executeNextAITieBranch() {
+                    if (branchIdx >= tiedMoves.length) {
+                        $('#ai-tie-banner').hide();
+                        uiState.tree.navigate(parentNodeId);
+                        renderTree();
+                        renderStage();
+                        return;
+                    }
+                    var tm = tiedMoves[branchIdx];
+                    branchIdx++;
+
+                    uiState.tree.navigate(parentNodeId);
+                    uiState.p1Action = JSON.parse(JSON.stringify(savedP1Action));
                     uiState.p2Action = {
                         type: 'move',
                         index: (pokemon.moves || []).indexOf(tm.moveName),
@@ -1106,9 +1122,13 @@
                         hits: 3,
                         applyEffect: false
                     };
-                    executeTurn();
-                });
-                $('#ai-tie-banner').hide();
+
+                    setTimeout(function () {
+                        executeTurn();
+                        setTimeout(executeNextAITieBranch, 100);
+                    }, 50);
+                }
+                executeNextAITieBranch();
             }
         });
         $(document).on('change', '#inspector-notes', function () {
@@ -2084,6 +2104,16 @@
         });
     }
 
+    function countTreeDepth(node) {
+        if (!node || node.children.length === 0) return 0;
+        var maxDepth = 0;
+        node.children.forEach(function (childId) {
+            var child = uiState.tree.getNode(childId);
+            if (child) maxDepth = Math.max(maxDepth, 1 + countTreeDepth(child));
+        });
+        return maxDepth;
+    }
+
     function generateScriptForNode(node, step) {
         if (!node) return '';
         var html = '';
@@ -2115,7 +2145,7 @@
                 var p1Act = child.actions.p1;
                 var p2Act = child.actions.p2;
                 var yourMove = p1Act ? (p1Act.type === 'switch' ? '→ ' + (p1Act.targetName || '?') : (p1Act.moveName || '?')) : '—';
-                var probStr = child.outcome && child.outcome.probability < 1 ? ' <span class="script-prob">' + Math.round(child.outcome.probability * 100) + '%</span>' : '';
+                var probStr = child.outcome && child.outcome.probability < 1 ? ' <span class="script-prob">' + CalcIntegration.formatProbability(child.outcome.probability) + '</span>' : '';
 
                 html += '<div class="script-step">';
                 html += '<span class="script-step-num">' + step + '</span>';
@@ -2151,9 +2181,23 @@
                 var child = uiState.tree.getNode(childId);
                 if (!child) return;
                 var desc = child.outcome ? child.outcome.description : '?';
-                var prob = child.outcome && child.outcome.probability < 1 ? ' (' + Math.round(child.outcome.probability * 100) + '%)' : '';
+                var prob = child.outcome && child.outcome.probability < 1 ? ' (' + CalcIntegration.formatProbability(child.outcome.probability) + ')' : '';
+                var cp1 = child.state.p1.active;
+                var cp2 = child.state.p2.active;
+                var branchHPInfo = '';
+                if (cp1 && cp2) {
+                    var p1HPPct = cp1.maxHP > 0 ? Math.round((cp1.currentHP / cp1.maxHP) * 100) : 0;
+                    var p2HPPct = cp2.maxHP > 0 ? Math.round((cp2.currentHP / cp2.maxHP) * 100) : 0;
+                    branchHPInfo = '<div class="script-branch-hp">' +
+                        '<span class="script-hp-p1">' + cp1.name + ': ' + cp1.currentHP + '/' + cp1.maxHP + ' (' + p1HPPct + '%)</span>' +
+                        '<span class="script-hp-p2">' + cp2.name + ': ' + cp2.currentHP + '/' + cp2.maxHP + ' (' + p2HPPct + '%)</span>' +
+                        '</div>';
+                }
+                var branchSteps = child.children.length > 0 ? '<span class="script-branch-depth">' + countTreeDepth(child) + ' turns planned</span>' : '<span class="script-branch-depth script-branch-unplanned">not planned</span>';
                 html += '<div class="script-branch-option">';
-                html += '<button class="planner-btn planner-btn-xs script-branch-btn" data-node-id="' + childId + '">' + desc + prob + '</button>';
+                html += '<button class="planner-btn planner-btn-sm script-branch-btn" data-node-id="' + childId + '">' + desc + prob + '</button>';
+                html += branchHPInfo;
+                html += branchSteps;
                 html += '<div class="script-branch-sub" style="display:none">';
                 html += generateScriptForNode(child, step + 1);
                 html += '</div>';
@@ -2238,9 +2282,8 @@
         if (node.outcome && node.outcome.description) {
             branchName = node.outcome.description;
             if (node.outcome.probability && node.outcome.probability < 1) {
-                var pctStr = Math.round(node.outcome.probability * 100);
-                if (pctStr < 1) pctStr = '<1';
-                branchName += ' <span class="tree-probability">' + pctStr + '%</span>';
+                var pctStr = CalcIntegration.formatProbability(node.outcome.probability);
+                branchName += ' <span class="tree-probability">' + pctStr + '</span>';
             }
         }
 
@@ -2317,7 +2360,11 @@
                     html += '<span class="tree-action-name p1-name">' + parentP1Name + '</span>';
                 }
                 html += '<span class="tree-action-move">' + p1ActionText + '</span>';
-                html += '<span class="tree-action-hp ' + p1Color + '">' + p1Active.currentHP + '/' + p1Active.maxHP + ' (' + p1HP + '%)</span>';
+                if (p1KO && parentP1Name !== p1Name) {
+                    html += '<span class="tree-action-hp hp-ko-transition"><span class="ko-old-name">' + parentP1Name + ' ✗</span> → <span class="ko-new-name">' + p1Name + '</span> ' + p1Active.currentHP + '/' + p1Active.maxHP + '</span>';
+                } else {
+                    html += '<span class="tree-action-hp ' + p1Color + '">' + p1Active.currentHP + '/' + p1Active.maxHP + ' (' + p1HP + '%)</span>';
+                }
                 html += '</div>';
             }
             if (p2ActionText) {
@@ -2326,7 +2373,11 @@
                     html += '<span class="tree-action-name p2-name">' + parentP2Name + '</span>';
                 }
                 html += '<span class="tree-action-move">' + p2ActionText + '</span>';
-                html += '<span class="tree-action-hp ' + p2Color + '">' + p2Active.currentHP + '/' + p2Active.maxHP + ' (' + p2HP + '%)</span>';
+                if (p2KO && parentP2Name !== p2Name) {
+                    html += '<span class="tree-action-hp hp-ko-transition"><span class="ko-old-name">' + parentP2Name + ' ✗</span> → <span class="ko-new-name">' + p2Name + '</span> ' + p2Active.currentHP + '/' + p2Active.maxHP + '</span>';
+                } else {
+                    html += '<span class="tree-action-hp ' + p2Color + '">' + p2Active.currentHP + '/' + p2Active.maxHP + ' (' + p2HP + '%)</span>';
+                }
                 html += '</div>';
             }
             html += '</div>';
@@ -2575,7 +2626,14 @@
                 valueClass += ' lowered';
                 boostIndicator = '<span class="stat-boost-arrow">↓' + Math.abs(boost) + '</span>';
             }
-            if (sd.key === 'spe') statClass += ' stat-speed';
+            if (sd.key === 'spe') {
+                statClass += ' stat-speed';
+                var mySpeed = calcEffectiveSpeed(pokemon);
+                var theirSpeed = defender ? calcEffectiveSpeed(defender) : 0;
+                if (mySpeed > theirSpeed) statClass += ' stat-speed-faster';
+                else if (mySpeed < theirSpeed) statClass += ' stat-speed-slower';
+                else statClass += ' stat-speed-tie';
+            }
 
             statsHtml += '<div class="' + statClass + '">' +
                 '<span class="stat-label">' + sd.label + '</span>' +
@@ -2717,25 +2775,19 @@
                 }
                 movesHtml += '</div>';
 
-                // Show individual rolls as mini bar
+                // Show all 16 damage rolls as comma-separated list (like base calc)
                 if (normalDamage.rolls && Array.isArray(normalDamage.rolls) && normalDamage.rolls.length > 1) {
-                    var rolls = normalDamage.rolls;
-                    var uniqueRolls = [];
-                    var rollCounts = {};
-                    for (var r = 0; r < rolls.length; r++) {
-                        var rv = rolls[r];
-                        if (!rollCounts[rv]) { rollCounts[rv] = 0; uniqueRolls.push(rv); }
-                        rollCounts[rv]++;
-                    }
-                    uniqueRolls.sort(function(a,b){return a-b;});
-                    var rollParts = uniqueRolls.map(function(v) {
+                    var rolls = normalDamage.rolls.slice().sort(function(a,b){return a-b;});
+                    var rollSpans = rolls.map(function(v) {
                         var isKO = v >= defenderHP;
                         var cls = isKO ? 'roll-ko' : '';
-                        var count = rollCounts[v];
-                        var pct = Math.round((count / rolls.length) * 100);
-                        return '<span class="dmg-roll ' + cls + '" title="' + v + ' (' + pct + '% chance, ' + Math.round((v/defHP)*100) + '% HP)">' + v + '</span>';
+                        return '<span class="dmg-roll ' + cls + '">' + v + '</span>';
                     });
-                    movesHtml += '<div class="move-cell-rolls">' + rollParts.join('') + '</div>';
+                    var koCount = rolls.filter(function(v) { return v >= defenderHP; }).length;
+                    var koInfo = koCount > 0 && koCount < rolls.length
+                        ? ' <span class="rolls-ko-info">(' + koCount + '/' + rolls.length + ' KO)</span>'
+                        : '';
+                    movesHtml += '<div class="move-cell-rolls">' + rollSpans.join(', ') + koInfo + '</div>';
                 }
 
                 if (critDamage && critDamage.rawMin !== undefined) {
@@ -5184,8 +5236,20 @@
             branchable.forEach(function (b) {
                 createSingleVarianceBranch(b.warning, parentNodeId, currentNodeId);
             });
+            // Remove the original turn node since it's now replaced by branches
+            var parentNode = uiState.tree.getNode(parentNodeId);
+            if (parentNode) {
+                var idx = parentNode.children.indexOf(currentNodeId);
+                if (idx !== -1) {
+                    parentNode.children.splice(idx, 1);
+                }
+                // Normalize sibling probabilities to sum to 1.0
+                normalizeSiblingProbabilities(parentNodeId);
+            }
+            uiState.tree.navigate(parentNodeId);
             $('#variance-banner').remove();
             renderTree();
+            renderStage();
         });
 
         $('.variance-branch-single').on('click', function () {
@@ -5193,11 +5257,49 @@
             var match = branchable.find(function (b) { return b.idx === vidx; });
             if (match) {
                 createSingleVarianceBranch(match.warning, parentNodeId, currentNodeId);
+                // Remove the original turn node since it's replaced by branches
+                var parentNode = uiState.tree.getNode(parentNodeId);
+                if (parentNode) {
+                    var idx = parentNode.children.indexOf(currentNodeId);
+                    if (idx !== -1) {
+                        parentNode.children.splice(idx, 1);
+                    }
+                    normalizeSiblingProbabilities(parentNodeId);
+                }
                 $(this).closest('.variance-line').addClass('variance-branched');
                 $(this).prop('disabled', true).text('Done');
+                uiState.tree.navigate(parentNodeId);
                 renderTree();
+                renderStage();
             }
         });
+    }
+
+    /**
+     * Normalize sibling branch probabilities to sum to 1.0
+     */
+    function normalizeSiblingProbabilities(parentNodeId) {
+        var parentNode = uiState.tree.getNode(parentNodeId);
+        if (!parentNode || parentNode.children.length === 0) return;
+
+        var total = 0;
+        var children = [];
+        parentNode.children.forEach(function (childId) {
+            var child = uiState.tree.getNode(childId);
+            if (child) {
+                var prob = child.outcome ? child.outcome.probability : 1.0;
+                total += prob;
+                children.push(child);
+            }
+        });
+
+        if (total > 0 && Math.abs(total - 1.0) > 0.001) {
+            children.forEach(function (child) {
+                if (child.outcome) {
+                    child.outcome.probability = child.outcome.probability / total;
+                }
+            });
+        }
     }
 
     /**
@@ -5232,10 +5334,10 @@
             syncActiveToTeam(minState);
             var survProb = d.surviveChance || 0.5;
             var koProb = d.koChance || 0.5;
-            var survPct = Math.round(survProb * 100);
-            var koPct = Math.round(koProb * 100);
+            var survPct = CalcIntegration.formatProbability(survProb);
+            var koPct = CalcIntegration.formatProbability(koProb);
             var minN = uiState.tree.addBranch(parentNodeId, minState, currentNode.actions,
-                new BattlePlanner.BattleOutcome('Survives (' + w.move + ', ' + survPct + '%)', survProb, 0, { rollType: 'min' }));
+                new BattlePlanner.BattleOutcome('Survives (' + w.move + ', ' + survPct + ')', survProb, 0, { rollType: 'min' }));
             markBranchKOs(minN, minState);
 
             var maxState = currentNode.state.clone();
@@ -5246,7 +5348,7 @@
             if (d.maxResult.itemConsumed) maxState[defSide].active.item = '';
             syncActiveToTeam(maxState);
             var maxN = uiState.tree.addBranch(parentNodeId, maxState, currentNode.actions,
-                new BattlePlanner.BattleOutcome('KO (' + w.move + ', ' + koPct + '%)', koProb, 0, { rollType: 'max' }));
+                new BattlePlanner.BattleOutcome('KO (' + w.move + ', ' + koPct + ')', koProb, 0, { rollType: 'max' }));
             markBranchKOs(maxN, maxState);
 
         } else if (d.isCrit) {
@@ -6123,13 +6225,19 @@
     function applyGuaranteedMoveEffects(attacker, defender, moveData, state, moveResult) {
         if (!moveData) return;
 
-        if (moveData.status && (!defender.status || defender.status === 'Healthy')) {
+        var isSelfTarget = moveData.target === 'self' || moveData.target === 'allySide' || moveData.target === 'allyTeam';
+
+        if (moveData.status && !isSelfTarget && (!defender.status || defender.status === 'Healthy')) {
             defender.status = normalizeStatus(moveData.status);
         }
 
-        // Guaranteed boosts on target (e.g. Leer → -1 def)
+        // Guaranteed boosts: self-targeting moves boost the attacker, others boost the defender
         if (moveData.boosts) {
-            applyBoosts(defender, moveData.boosts);
+            if (isSelfTarget) {
+                applyBoosts(attacker, moveData.boosts);
+            } else {
+                applyBoosts(defender, moveData.boosts);
+            }
         }
 
         // Self boosts (e.g. Close Combat → -1 def, -1 spd on user)
