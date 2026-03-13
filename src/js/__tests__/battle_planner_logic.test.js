@@ -1,0 +1,658 @@
+/**
+ * Tests for battle_planner_logic.js - Extracted Pure Battle Logic
+ *
+ * Covers: speed resolution, end-of-turn effects, entry hazards,
+ *         move effects, switch mechanics, weather/screen/status decay.
+ */
+const { setupBattlePlanner, setupCalcIntegration, setupLogic, makePokemon, makeState } = require('./setup');
+
+let BP, CI, Logic;
+
+beforeAll(() => {
+  BP = setupBattlePlanner();
+  CI = setupCalcIntegration();
+  Logic = setupLogic();
+});
+
+// ---------------------------------------------------------------------------
+// resolveSpeedOrder
+// ---------------------------------------------------------------------------
+describe('resolveSpeedOrder', () => {
+  test('higher priority moves first regardless of speed', () => {
+    const result = Logic.resolveSpeedOrder(1, 0, 100, 400, false);
+    expect(result.firstMover).toBe('p1');
+    expect(result.reason).toBe('priority');
+  });
+
+  test('switches (priority 6) go before regular moves', () => {
+    const result = Logic.resolveSpeedOrder(6, 0, 50, 300, false);
+    expect(result.firstMover).toBe('p1');
+  });
+
+  test('faster Pokemon moves first at equal priority', () => {
+    const result = Logic.resolveSpeedOrder(0, 0, 300, 200, false);
+    expect(result.firstMover).toBe('p1');
+    expect(result.reason).toBe('speed');
+  });
+
+  test('slower Pokemon moves first at equal priority when opposite is faster', () => {
+    const result = Logic.resolveSpeedOrder(0, 0, 100, 200, false);
+    expect(result.firstMover).toBe('p2');
+  });
+
+  test('Trick Room reverses speed order', () => {
+    const result = Logic.resolveSpeedOrder(0, 0, 300, 200, true);
+    expect(result.firstMover).toBe('p2');
+    expect(result.reason).toBe('trick_room');
+  });
+
+  test('Trick Room: slower Pokemon moves first', () => {
+    const result = Logic.resolveSpeedOrder(0, 0, 100, 200, true);
+    expect(result.firstMover).toBe('p1');
+  });
+
+  test('speed tie is resolved by random value', () => {
+    const resultP1 = Logic.resolveSpeedOrder(0, 0, 200, 200, false, 0.3);
+    expect(resultP1.firstMover).toBe('p1');
+    expect(resultP1.reason).toBe('speed_tie');
+
+    const resultP2 = Logic.resolveSpeedOrder(0, 0, 200, 200, false, 0.7);
+    expect(resultP2.firstMover).toBe('p2');
+  });
+
+  test('priority trumps Trick Room', () => {
+    const result = Logic.resolveSpeedOrder(1, 0, 100, 300, true);
+    expect(result.firstMover).toBe('p1');
+    expect(result.reason).toBe('priority');
+  });
+
+  test('negative priority moves go last', () => {
+    const result = Logic.resolveSpeedOrder(-6, 0, 300, 100, false);
+    expect(result.firstMover).toBe('p2');
+  });
+
+  test('secondMover is the opposite of firstMover', () => {
+    const result = Logic.resolveSpeedOrder(0, 0, 300, 100, false);
+    expect(result.secondMover).toBe('p2');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getMovePriority
+// ---------------------------------------------------------------------------
+describe('getMovePriority', () => {
+  test('Quick Attack has +1 priority', () => {
+    expect(Logic.getMovePriority('Quick Attack')).toBe(1);
+  });
+
+  test('Extreme Speed has +2 priority', () => {
+    expect(Logic.getMovePriority('Extreme Speed')).toBe(2);
+  });
+
+  test('Fake Out has +3 priority', () => {
+    expect(Logic.getMovePriority('Fake Out')).toBe(3);
+  });
+
+  test('Protect has +4 priority', () => {
+    expect(Logic.getMovePriority('Protect')).toBe(4);
+  });
+
+  test('Roar has -6 priority', () => {
+    expect(Logic.getMovePriority('Roar')).toBe(-6);
+  });
+
+  test('Trick Room has -7 priority', () => {
+    expect(Logic.getMovePriority('Trick Room')).toBe(-7);
+  });
+
+  test('unknown move returns 0', () => {
+    expect(Logic.getMovePriority('Tackle')).toBe(0);
+  });
+
+  test('null returns 0', () => {
+    expect(Logic.getMovePriority(null)).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyEndOfTurnEffects - Status damage
+// ---------------------------------------------------------------------------
+describe('applyEndOfTurnEffects - status damage', () => {
+  test('Poison deals 1/8 max HP', () => {
+    const state = makeState({ currentHP: 300, maxHP: 300, status: 'Poisoned' });
+    const effects = Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(300 - Math.floor(300 / 8));
+    expect(effects).toContainEqual(expect.stringContaining('Poison'));
+  });
+
+  test('Toxic deals escalating damage', () => {
+    const state = makeState({ currentHP: 300, maxHP: 300, status: 'Badly Poisoned', toxicCounter: 1 });
+    Logic.applyEndOfTurnEffects(state, 3);
+    // Turn 1: 1/16 * 300 = 18
+    expect(state.p1.active.currentHP).toBe(300 - Math.floor(300 / 16));
+    expect(state.p1.active.toxicCounter).toBe(2);
+
+    Logic.applyEndOfTurnEffects(state, 3);
+    // Turn 2: 2/16 * 300 = 37
+    expect(state.p1.active.currentHP).toBe(300 - 18 - Math.floor(300 * 2 / 16));
+    expect(state.p1.active.toxicCounter).toBe(3);
+  });
+
+  test('Toxic counter caps at 15', () => {
+    const state = makeState({ currentHP: 9999, maxHP: 9999, status: 'Badly Poisoned', toxicCounter: 14 });
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.toxicCounter).toBe(15);
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.toxicCounter).toBe(15); // stays at 15
+  });
+
+  test('Burn deals 1/8 in gen 3', () => {
+    const state = makeState({ currentHP: 320, maxHP: 320, status: 'Burned' });
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(320 - Math.floor(320 / 8));
+  });
+
+  test('Burn deals 1/16 in gen 7+', () => {
+    const state = makeState({ currentHP: 320, maxHP: 320, status: 'Burned' });
+    Logic.applyEndOfTurnEffects(state, 7);
+    expect(state.p1.active.currentHP).toBe(320 - Math.floor(320 / 16));
+  });
+
+  test('fainted Pokemon skip status damage', () => {
+    const state = makeState({ currentHP: 0, maxHP: 300, status: 'Poisoned' });
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(0);
+  });
+
+  test('Magic Guard blocks status damage', () => {
+    const state = makeState({ currentHP: 300, maxHP: 300, status: 'Burned', ability: 'Magic Guard' });
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(300);
+  });
+
+  test('status damage cannot drop below 0', () => {
+    const state = makeState({ currentHP: 1, maxHP: 300, status: 'Poisoned' });
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(0);
+    expect(state.p1.active.hasFainted).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyEndOfTurnEffects - Weather damage
+// ---------------------------------------------------------------------------
+describe('applyEndOfTurnEffects - weather damage', () => {
+  test('Sandstorm damages non-immune types', () => {
+    const state = makeState(
+      { currentHP: 300, maxHP: 300, types: ['Fire'] },
+      null,
+      { weather: 'Sand' }
+    );
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(300 - Math.max(1, Math.floor(300 / 16)));
+  });
+
+  test('Ground types are immune to Sandstorm', () => {
+    const state = makeState(
+      { currentHP: 300, maxHP: 300, types: ['Ground'] },
+      null,
+      { weather: 'Sand' }
+    );
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(300);
+  });
+
+  test('Rock types are immune to Sandstorm', () => {
+    const state = makeState(
+      { currentHP: 300, maxHP: 300, types: ['Rock'] },
+      null,
+      { weather: 'Sand' }
+    );
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(300);
+  });
+
+  test('Steel types are immune to Sandstorm', () => {
+    const state = makeState(
+      { currentHP: 300, maxHP: 300, types: ['Steel'] },
+      null,
+      { weather: 'Sand' }
+    );
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(300);
+  });
+
+  test('Hail damages non-Ice types', () => {
+    const state = makeState(
+      { currentHP: 300, maxHP: 300, types: ['Fire'] },
+      null,
+      { weather: 'Hail' }
+    );
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(300 - Math.max(1, Math.floor(300 / 16)));
+  });
+
+  test('Ice types are immune to Hail', () => {
+    const state = makeState(
+      { currentHP: 300, maxHP: 300, types: ['Ice'] },
+      null,
+      { weather: 'Hail' }
+    );
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(300);
+  });
+
+  test('Magic Guard blocks weather damage', () => {
+    const state = makeState(
+      { currentHP: 300, maxHP: 300, types: ['Fire'], ability: 'Magic Guard' },
+      null,
+      { weather: 'Sand' }
+    );
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(300);
+  });
+
+  test('Sand Veil grants immunity to Sandstorm damage', () => {
+    const state = makeState(
+      { currentHP: 300, maxHP: 300, types: ['Normal'], ability: 'Sand Veil' },
+      null,
+      { weather: 'Sand' }
+    );
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(300);
+  });
+
+  test('Overcoat grants immunity to weather damage', () => {
+    const state = makeState(
+      { currentHP: 300, maxHP: 300, types: ['Normal'], ability: 'Overcoat' },
+      null,
+      { weather: 'Hail' }
+    );
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(300);
+  });
+
+  test('both Pokemon take weather damage', () => {
+    const state = makeState(
+      { currentHP: 300, maxHP: 300, types: ['Fire'] },
+      { currentHP: 340, maxHP: 340, types: ['Normal'] },
+      { weather: 'Hail' }
+    );
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBeLessThan(300);
+    expect(state.p2.active.currentHP).toBeLessThan(340);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyEndOfTurnEffects - Items (Leftovers, Black Sludge, Berries)
+// ---------------------------------------------------------------------------
+describe('applyEndOfTurnEffects - item healing', () => {
+  test('Leftovers heals 1/16 max HP', () => {
+    const state = makeState({ currentHP: 200, maxHP: 320, item: 'Leftovers' });
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(200 + Math.max(1, Math.floor(320 / 16)));
+  });
+
+  test('Leftovers does not over-heal', () => {
+    const state = makeState({ currentHP: 320, maxHP: 320, item: 'Leftovers' });
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(320);
+  });
+
+  test('Black Sludge heals Poison types', () => {
+    const state = makeState({ currentHP: 200, maxHP: 320, item: 'Black Sludge', types: ['Poison'] });
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(200 + Math.max(1, Math.floor(320 / 16)));
+  });
+
+  test('Black Sludge damages non-Poison types', () => {
+    const state = makeState({ currentHP: 200, maxHP: 320, item: 'Black Sludge', types: ['Water'] });
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(200 - Math.max(1, Math.floor(320 / 8)));
+  });
+
+  test('Sitrus Berry heals at <=50% HP', () => {
+    const state = makeState({ currentHP: 150, maxHP: 400, item: 'Sitrus Berry' });
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(150 + Math.floor(400 / 4));
+    expect(state.p1.active.item).toBe('');
+  });
+
+  test('Sitrus Berry does not trigger above 50%', () => {
+    const state = makeState({ currentHP: 250, maxHP: 400, item: 'Sitrus Berry' });
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(250);
+    expect(state.p1.active.item).toBe('Sitrus Berry');
+  });
+
+  test('Oran Berry heals 10 HP at <=50%', () => {
+    const state = makeState({ currentHP: 30, maxHP: 100, item: 'Oran Berry' });
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(40);
+    expect(state.p1.active.item).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyEndOfTurnEffects - Weather/Screen/Trick Room decay
+// ---------------------------------------------------------------------------
+describe('applyEndOfTurnEffects - turn counter decay', () => {
+  test('weather turns decrement and expire', () => {
+    const state = makeState(null, null, { weather: 'Rain', weatherTurns: 1 });
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.field.weather).toBe('None');
+    expect(state.field.weatherTurns).toBe(0);
+  });
+
+  test('weather persists when turns remain', () => {
+    const state = makeState(null, null, { weather: 'Rain', weatherTurns: 3 });
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.field.weather).toBe('Rain');
+    expect(state.field.weatherTurns).toBe(2);
+  });
+
+  test('Reflect expires after turns run out', () => {
+    const state = makeState(null, null, null, { p1: { reflect: true, reflectTurns: 1 } });
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.sides.p1.reflect).toBe(false);
+  });
+
+  test('Light Screen expires after turns run out', () => {
+    const state = makeState(null, null, null, { p1: { lightScreen: true, lightScreenTurns: 1 } });
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.sides.p1.lightScreen).toBe(false);
+  });
+
+  test('Tailwind expires after turns run out', () => {
+    const state = makeState(null, null, null, { p1: { tailwind: true, tailwindTurns: 1 } });
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.sides.p1.tailwind).toBe(false);
+  });
+
+  test('Trick Room expires after turns run out', () => {
+    const state = makeState(null, null, { trickRoom: true, trickRoomTurns: 1 });
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.field.trickRoom).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyEntryHazards
+// ---------------------------------------------------------------------------
+describe('applyEntryHazards', () => {
+  test('Stealth Rock deals type-based damage', () => {
+    const pokemon = makePokemon({ currentHP: 300, maxHP: 300, types: ['Fire'] });
+    const side = { stealthRock: true, spikes: 0, toxicSpikes: 0, stickyWeb: false };
+    const effects = Logic.applyEntryHazards(pokemon, side);
+
+    // Fire is weak to Rock (2x), so SR deals 1/8 * 2 = 25% damage
+    const expectedDamage = Math.floor(300 * 2 / 8);
+    expect(pokemon.currentHP).toBe(300 - expectedDamage);
+    expect(effects).toHaveLength(1);
+  });
+
+  test('Stealth Rock deals 4x to Fire/Flying', () => {
+    const pokemon = makePokemon({ currentHP: 300, maxHP: 300, types: ['Fire', 'Flying'] });
+    const side = { stealthRock: true, spikes: 0, toxicSpikes: 0, stickyWeb: false };
+    Logic.applyEntryHazards(pokemon, side);
+
+    // Fire/Flying is 4x weak to Rock, so SR deals 1/8 * 4 = 50% damage
+    const expectedDamage = Math.floor(300 * 4 / 8);
+    expect(pokemon.currentHP).toBe(300 - expectedDamage);
+  });
+
+  test('Stealth Rock deals 1/32 to Fighting/Steel (resists Rock)', () => {
+    const pokemon = makePokemon({ currentHP: 300, maxHP: 300, types: ['Fighting', 'Steel'] });
+    const side = { stealthRock: true, spikes: 0, toxicSpikes: 0, stickyWeb: false };
+    Logic.applyEntryHazards(pokemon, side);
+
+    // Fighting resists Rock (0.5), Steel resists Rock (0.5) => 0.25x => 0.25/8 of maxHP
+    const expectedDamage = Math.max(1, Math.floor(300 * 0.25 / 8));
+    expect(pokemon.currentHP).toBe(300 - expectedDamage);
+  });
+
+  test('1 layer of Spikes deals 1/8 HP', () => {
+    const pokemon = makePokemon({ currentHP: 300, maxHP: 300, types: ['Normal'] });
+    const side = { stealthRock: false, spikes: 1, toxicSpikes: 0, stickyWeb: false };
+    Logic.applyEntryHazards(pokemon, side);
+    expect(pokemon.currentHP).toBe(300 - Math.max(1, Math.floor(300 / 8)));
+  });
+
+  test('2 layers of Spikes deals 1/6 HP', () => {
+    const pokemon = makePokemon({ currentHP: 300, maxHP: 300, types: ['Normal'] });
+    const side = { stealthRock: false, spikes: 2, toxicSpikes: 0, stickyWeb: false };
+    Logic.applyEntryHazards(pokemon, side);
+    expect(pokemon.currentHP).toBe(300 - Math.max(1, Math.floor(300 / 6)));
+  });
+
+  test('3 layers of Spikes deals 1/4 HP', () => {
+    const pokemon = makePokemon({ currentHP: 300, maxHP: 300, types: ['Normal'] });
+    const side = { stealthRock: false, spikes: 3, toxicSpikes: 0, stickyWeb: false };
+    Logic.applyEntryHazards(pokemon, side);
+    expect(pokemon.currentHP).toBe(300 - Math.max(1, Math.floor(300 / 4)));
+  });
+
+  test('Flying types are immune to Spikes', () => {
+    const pokemon = makePokemon({ currentHP: 300, maxHP: 300, types: ['Flying'] });
+    const side = { stealthRock: false, spikes: 3, toxicSpikes: 0, stickyWeb: false };
+    Logic.applyEntryHazards(pokemon, side);
+    expect(pokemon.currentHP).toBe(300);
+  });
+
+  test('Levitate grants immunity to Spikes', () => {
+    const pokemon = makePokemon({ currentHP: 300, maxHP: 300, types: ['Ghost'], ability: 'Levitate' });
+    const side = { stealthRock: false, spikes: 3, toxicSpikes: 0, stickyWeb: false };
+    Logic.applyEntryHazards(pokemon, side);
+    expect(pokemon.currentHP).toBe(300);
+  });
+
+  test('1 layer Toxic Spikes inflicts Poison', () => {
+    const pokemon = makePokemon({ currentHP: 300, maxHP: 300, types: ['Normal'] });
+    const side = { stealthRock: false, spikes: 0, toxicSpikes: 1, stickyWeb: false };
+    Logic.applyEntryHazards(pokemon, side);
+    expect(pokemon.status).toBe('Poisoned');
+  });
+
+  test('2 layers Toxic Spikes inflicts Badly Poisoned', () => {
+    const pokemon = makePokemon({ currentHP: 300, maxHP: 300, types: ['Normal'] });
+    const side = { stealthRock: false, spikes: 0, toxicSpikes: 2, stickyWeb: false };
+    Logic.applyEntryHazards(pokemon, side);
+    expect(pokemon.status).toBe('Badly Poisoned');
+    expect(pokemon.toxicCounter).toBe(1);
+  });
+
+  test('Poison type absorbs Toxic Spikes', () => {
+    const pokemon = makePokemon({ currentHP: 300, maxHP: 300, types: ['Poison'] });
+    const side = { stealthRock: false, spikes: 0, toxicSpikes: 2, stickyWeb: false };
+    Logic.applyEntryHazards(pokemon, side);
+    expect(side.toxicSpikes).toBe(0);
+    expect(pokemon.status).toBe('Healthy');
+  });
+
+  test('Steel type is immune to Toxic Spikes', () => {
+    const pokemon = makePokemon({ currentHP: 300, maxHP: 300, types: ['Steel'] });
+    const side = { stealthRock: false, spikes: 0, toxicSpikes: 2, stickyWeb: false };
+    Logic.applyEntryHazards(pokemon, side);
+    expect(pokemon.status).toBe('Healthy');
+    expect(side.toxicSpikes).toBe(2); // not absorbed
+  });
+
+  test('Toxic Spikes do not overwrite existing status', () => {
+    const pokemon = makePokemon({ currentHP: 300, maxHP: 300, types: ['Normal'], status: 'Burned' });
+    const side = { stealthRock: false, spikes: 0, toxicSpikes: 2, stickyWeb: false };
+    Logic.applyEntryHazards(pokemon, side);
+    expect(pokemon.status).toBe('Burned');
+  });
+
+  test('Sticky Web drops Speed by 1', () => {
+    const pokemon = makePokemon({ currentHP: 300, maxHP: 300, types: ['Normal'], boosts: { spe: 0 } });
+    const side = { stealthRock: false, spikes: 0, toxicSpikes: 0, stickyWeb: true };
+    Logic.applyEntryHazards(pokemon, side);
+    expect(pokemon.boosts.spe).toBe(-1);
+  });
+
+  test('Flying types are immune to Sticky Web', () => {
+    const pokemon = makePokemon({ currentHP: 300, maxHP: 300, types: ['Flying'], boosts: { spe: 0 } });
+    const side = { stealthRock: false, spikes: 0, toxicSpikes: 0, stickyWeb: true };
+    Logic.applyEntryHazards(pokemon, side);
+    expect(pokemon.boosts.spe).toBe(0);
+  });
+
+  test('Magic Guard blocks all hazard damage but not status', () => {
+    const pokemon = makePokemon({ currentHP: 300, maxHP: 300, types: ['Fire'], ability: 'Magic Guard' });
+    const side = { stealthRock: true, spikes: 3, toxicSpikes: 0, stickyWeb: false };
+    Logic.applyEntryHazards(pokemon, side);
+    expect(pokemon.currentHP).toBe(300);
+  });
+
+  test('combined Stealth Rock + Spikes damage stacks', () => {
+    const pokemon = makePokemon({ currentHP: 300, maxHP: 300, types: ['Normal'] });
+    const side = { stealthRock: true, spikes: 2, toxicSpikes: 0, stickyWeb: false };
+    Logic.applyEntryHazards(pokemon, side);
+
+    const srDamage = Math.max(1, Math.floor(300 * 1 / 8)); // Normal takes neutral SR
+    const spikeDamage = Math.max(1, Math.floor(300 / 6));
+    expect(pokemon.currentHP).toBe(300 - srDamage - spikeDamage);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyMoveEffects
+// ---------------------------------------------------------------------------
+describe('applyMoveEffects', () => {
+  test('applies status to defender', () => {
+    const attacker = makePokemon();
+    const defender = makePokemon();
+    Logic.applyMoveEffects(attacker, defender, { status: 'par' });
+    expect(defender.status).toBe('par');
+  });
+
+  test('does not overwrite existing status', () => {
+    const attacker = makePokemon();
+    const defender = makePokemon({ status: 'Burned' });
+    Logic.applyMoveEffects(attacker, defender, { status: 'par' });
+    expect(defender.status).toBe('Burned');
+  });
+
+  test('applies stat boosts to defender', () => {
+    const attacker = makePokemon();
+    const defender = makePokemon();
+    Logic.applyMoveEffects(attacker, defender, { boosts: { atk: -1, def: -1 } });
+    expect(defender.boosts.atk).toBe(-1);
+    expect(defender.boosts.def).toBe(-1);
+  });
+
+  test('applies self boosts to attacker', () => {
+    const attacker = makePokemon();
+    const defender = makePokemon();
+    Logic.applyMoveEffects(attacker, defender, { self: { boosts: { atk: -1, def: -1 } } });
+    expect(attacker.boosts.atk).toBe(-1);
+    expect(attacker.boosts.def).toBe(-1);
+  });
+
+  test('applies secondary status effect', () => {
+    const attacker = makePokemon();
+    const defender = makePokemon();
+    Logic.applyMoveEffects(attacker, defender, { secondary: { status: 'brn' } });
+    expect(defender.status).toBe('brn');
+  });
+
+  test('clamps stat boosts at +6/-6', () => {
+    const attacker = makePokemon({ boosts: { atk: 5 } });
+    const defender = makePokemon();
+    Logic.applyMoveEffects(attacker, defender, { self: { boosts: { atk: 3 } } });
+    expect(attacker.boosts.atk).toBe(6);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// performSwitch
+// ---------------------------------------------------------------------------
+describe('performSwitch', () => {
+  test('switches in a new Pokemon and resets boosts', () => {
+    const state = makeState();
+    const secondPokemon = makePokemon({ name: 'Salamence', types: ['Dragon', 'Flying'], boosts: { atk: 2 } });
+    state.p1.team.push(secondPokemon);
+
+    Logic.performSwitch(state, 'p1', 1);
+
+    expect(state.p1.active.name).toBe('Salamence');
+    expect(state.p1.active.boosts.atk).toBe(0); // boosts reset
+    expect(state.p1.teamSlot).toBe(1);
+  });
+
+  test('syncs previous active HP back to team', () => {
+    const state = makeState({ currentHP: 150, maxHP: 300 });
+    const secondPokemon = makePokemon({ name: 'Salamence' });
+    state.p1.team.push(secondPokemon);
+
+    Logic.performSwitch(state, 'p1', 1);
+
+    expect(state.p1.team[0].currentHP).toBe(150);
+  });
+
+  test('applies entry hazards on switch-in', () => {
+    const state = makeState();
+    state.sides.p1.stealthRock = true;
+    const secondPokemon = makePokemon({ name: 'Charizard', types: ['Fire', 'Flying'], currentHP: 300, maxHP: 300 });
+    state.p1.team.push(secondPokemon);
+
+    const effects = Logic.performSwitch(state, 'p1', 1);
+
+    // Charizard is 4x weak to Rock, SR deals 50% = 150 damage
+    expect(state.p1.active.currentHP).toBe(300 - Math.floor(300 * 4 / 8));
+    expect(effects.length).toBeGreaterThan(0);
+  });
+
+  test('switch-in with Spikes', () => {
+    const state = makeState();
+    state.sides.p1.spikes = 2;
+    const secondPokemon = makePokemon({ name: 'Metagross', types: ['Steel', 'Psychic'], currentHP: 300, maxHP: 300 });
+    state.p1.team.push(secondPokemon);
+
+    Logic.performSwitch(state, 'p1', 1);
+
+    expect(state.p1.active.currentHP).toBe(300 - Math.max(1, Math.floor(300 / 6)));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Integration: Status + Weather + Items in single end-of-turn
+// ---------------------------------------------------------------------------
+describe('end-of-turn integration', () => {
+  test('Toxic + Sandstorm + Leftovers all apply', () => {
+    const state = makeState(
+      {
+        currentHP: 300, maxHP: 300,
+        status: 'Badly Poisoned', toxicCounter: 1,
+        types: ['Fire'],
+        item: 'Leftovers'
+      },
+      null,
+      { weather: 'Sand' }
+    );
+
+    Logic.applyEndOfTurnEffects(state, 3);
+
+    const toxDamage = Math.max(1, Math.floor(300 / 16));
+    const sandDamage = Math.max(1, Math.floor(300 / 16));
+    const leftoverHeal = Math.max(1, Math.floor(300 / 16));
+    const expected = 300 - toxDamage - sandDamage + leftoverHeal;
+    expect(state.p1.active.currentHP).toBe(expected);
+  });
+
+  test('Poison + Black Sludge on non-Poison type both damage', () => {
+    const state = makeState({
+      currentHP: 300, maxHP: 300,
+      status: 'Poisoned', types: ['Water'],
+      item: 'Black Sludge'
+    });
+
+    Logic.applyEndOfTurnEffects(state, 3);
+
+    const poisonDamage = Math.max(1, Math.floor(300 / 8));
+    const sludgeDamage = Math.max(1, Math.floor(300 / 8));
+    expect(state.p1.active.currentHP).toBe(300 - poisonDamage - sludgeDamage);
+  });
+});

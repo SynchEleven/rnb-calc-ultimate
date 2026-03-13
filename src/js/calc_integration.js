@@ -848,7 +848,7 @@
 
         // Focus Sash - Survives OHKO at full HP
         if (item === 'Focus Sash' && currentHP === maxHP && newHP <= 0) {
-            effects.healed = 1 - newHP; // Restore to 1 HP
+            effects.healed = 1; // applyDamage clamps to 0, so healing 1 leaves at 1 HP
             effects.itemConsumed = true;
             effects.itemEffect = 'Focus Sash kept the Pokemon at 1 HP';
         }

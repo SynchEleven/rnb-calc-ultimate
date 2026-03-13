@@ -16,6 +16,7 @@
 
     var BattlePlanner = window.BattlePlanner;
     var CalcIntegration = null;
+    var BattlePlannerLogic = null;
 
     /**
      * Helper to get the generation number from window.GENERATION
@@ -70,6 +71,7 @@
             return;
         }
         CalcIntegration = BattlePlanner.CalcIntegration;
+        BattlePlannerLogic = window.BattlePlannerLogic || null;
 
         createPlannerUI();
         setupEventHandlers();
@@ -3953,144 +3955,10 @@
      * Apply end-of-turn effects (poison, burn, weather, etc.)
      */
     function applyEndOfTurnEffects(state, gen) {
-        var effects = [];
-
-        // Apply to both Pokemon
-        ['p1', 'p2'].forEach(function (side) {
-            var pokemon = state[side].active;
-            if (!pokemon || pokemon.currentHP <= 0) return;
-
-            // Status damage
-            if (pokemon.status) {
-                var statusDamage = 0;
-                var statusName = '';
-
-                switch (pokemon.status.toLowerCase()) {
-                    case 'psn':
-                    case 'poison':
-                        // 1/8 max HP (gen 3+)
-                        statusDamage = Math.floor(pokemon.maxHP / 8);
-                        statusName = 'Poison';
-                        break;
-                    case 'tox':
-                    case 'toxic':
-                        // Toxic increases each turn - simplified to 1/16 * turn counter
-                        var toxicCounter = pokemon.toxicCounter || 1;
-                        statusDamage = Math.floor(pokemon.maxHP * toxicCounter / 16);
-                        pokemon.toxicCounter = Math.min(15, toxicCounter + 1);
-                        statusName = 'Toxic';
-                        break;
-                    case 'brn':
-                    case 'burn':
-                        // 1/16 max HP (gen 7+) or 1/8 (earlier)
-                        statusDamage = gen >= 7 ? Math.floor(pokemon.maxHP / 16) : Math.floor(pokemon.maxHP / 8);
-                        statusName = 'Burn';
-                        break;
-                }
-
-                if (statusDamage > 0) {
-                    pokemon.currentHP = Math.max(0, pokemon.currentHP - statusDamage);
-                    effects.push(pokemon.name + ' takes ' + statusDamage + ' damage from ' + statusName);
-                }
-            }
-        });
-
-        // Weather damage
-        if (state.field && state.field.weather) {
-            var weather = state.field.weather.toLowerCase();
-
-            ['p1', 'p2'].forEach(function (side) {
-                var pokemon = state[side].active;
-                if (!pokemon || pokemon.currentHP <= 0) return;
-
-                var types = pokemon.types || [];
-                var isImmune = false;
-                var weatherDamage = 0;
-                var weatherName = '';
-
-                if (weather === 'sand' || weather === 'sandstorm') {
-                    // Ground, Rock, Steel immune
-                    isImmune = types.includes('Ground') || types.includes('Rock') || types.includes('Steel');
-                    // Magic Guard, Sand Veil, Sand Force, Sand Rush, Overcoat immunities
-                    var ability = (pokemon.ability || '').toLowerCase();
-                    if (['magicguard', 'sandveil', 'sandforce', 'sandrush', 'overcoat'].includes(ability.replace(/\s/g, ''))) {
-                        isImmune = true;
-                    }
-                    if (!isImmune) {
-                        weatherDamage = Math.floor(pokemon.maxHP / 16);
-                        weatherName = 'Sandstorm';
-                    }
-                } else if (weather === 'hail') {
-                    // Ice immune
-                    isImmune = types.includes('Ice');
-                    // Various ability immunities
-                    var ability = (pokemon.ability || '').toLowerCase();
-                    if (['magicguard', 'icebody', 'snowcloak', 'overcoat', 'slushush'].includes(ability.replace(/\s/g, ''))) {
-                        isImmune = true;
-                    }
-                    if (!isImmune) {
-                        weatherDamage = Math.floor(pokemon.maxHP / 16);
-                        weatherName = 'Hail';
-                    }
-                }
-
-                if (weatherDamage > 0) {
-                    pokemon.currentHP = Math.max(0, pokemon.currentHP - weatherDamage);
-                    effects.push(pokemon.name + ' takes ' + weatherDamage + ' damage from ' + weatherName);
-                }
-            });
+        if (BattlePlannerLogic) {
+            return BattlePlannerLogic.applyEndOfTurnEffects(state, gen);
         }
-
-        // Leftovers/Black Sludge healing
-        ['p1', 'p2'].forEach(function (side) {
-            var pokemon = state[side].active;
-            if (!pokemon || pokemon.currentHP <= 0) return;
-
-            var item = (pokemon.item || '').toLowerCase().replace(/\s/g, '');
-            var types = pokemon.types || [];
-
-            if (item === 'leftovers') {
-                var heal = Math.floor(pokemon.maxHP / 16);
-                pokemon.currentHP = Math.min(pokemon.maxHP, pokemon.currentHP + heal);
-                effects.push(pokemon.name + ' recovers ' + heal + ' HP from Leftovers');
-            } else if (item === 'blacksludge') {
-                if (types.includes('Poison')) {
-                    var heal = Math.floor(pokemon.maxHP / 16);
-                    pokemon.currentHP = Math.min(pokemon.maxHP, pokemon.currentHP + heal);
-                    effects.push(pokemon.name + ' recovers ' + heal + ' HP from Black Sludge');
-                } else {
-                    var damage = Math.floor(pokemon.maxHP / 8);
-                    pokemon.currentHP = Math.max(0, pokemon.currentHP - damage);
-                    effects.push(pokemon.name + ' takes ' + damage + ' damage from Black Sludge');
-                }
-            }
-        });
-
-        // Berry consumption (at low HP)
-        ['p1', 'p2'].forEach(function (side) {
-            var pokemon = state[side].active;
-            if (!pokemon || pokemon.currentHP <= 0) return;
-
-            var item = (pokemon.item || '').toLowerCase().replace(/\s/g, '');
-            var hpPercent = pokemon.currentHP / pokemon.maxHP;
-
-            // Sitrus Berry: Heals 25% at 50% HP or less
-            if (item === 'sitrusberry' && hpPercent <= 0.5) {
-                var heal = Math.floor(pokemon.maxHP / 4);
-                pokemon.currentHP = Math.min(pokemon.maxHP, pokemon.currentHP + heal);
-                pokemon.item = ''; // Berry consumed
-                effects.push(pokemon.name + ' ate its Sitrus Berry and recovered ' + heal + ' HP');
-            }
-            // Oran Berry: Heals 10 HP at 50% HP or less (gen 3)
-            else if (item === 'oranberry' && hpPercent <= 0.5) {
-                var heal = 10;
-                pokemon.currentHP = Math.min(pokemon.maxHP, pokemon.currentHP + heal);
-                pokemon.item = ''; // Berry consumed
-                effects.push(pokemon.name + ' ate its Oran Berry and recovered ' + heal + ' HP');
-            }
-        });
-
-        return effects;
+        return [];
     }
 
     var isExecutingTurn = false;
@@ -4123,20 +3991,20 @@
             var p1IsSwitch = uiState.p1Action.type === 'switch';
             var p2IsSwitch = uiState.p2Action.type === 'switch';
 
-            // Helper to perform a switch
             function performSwitch(side, action, stateObj) {
-                var sideData = stateObj[side];
-                // Sync current active back to team first
-                if (sideData.team && sideData.teamSlot !== undefined && sideData.team[sideData.teamSlot]) {
-                    sideData.team[sideData.teamSlot].currentHP = sideData.active.currentHP;
-                    sideData.team[sideData.teamSlot].status = sideData.active.status;
-                    sideData.team[sideData.teamSlot].boosts = {};
+                if (BattlePlannerLogic) {
+                    BattlePlannerLogic.performSwitch(stateObj, side, action.targetSlot);
+                } else {
+                    var sideData = stateObj[side];
+                    if (sideData.team && sideData.teamSlot !== undefined && sideData.team[sideData.teamSlot]) {
+                        sideData.team[sideData.teamSlot].currentHP = sideData.active.currentHP;
+                        sideData.team[sideData.teamSlot].status = sideData.active.status;
+                        sideData.team[sideData.teamSlot].boosts = {};
+                    }
+                    sideData.teamSlot = action.targetSlot;
+                    sideData.active = sideData.team[action.targetSlot].clone();
+                    sideData.active.boosts = { atk: 0, def: 0, spa: 0, spd: 0, spe: 0 };
                 }
-                // Switch in new Pokemon
-                sideData.teamSlot = action.targetSlot;
-                sideData.active = sideData.team[action.targetSlot].clone();
-                // Reset boosts on switch-in
-                sideData.active.boosts = { atk: 0, def: 0, spa: 0, spd: 0, spe: 0 };
             }
 
             // Get priorities - switches have priority +6, also check custom priority modifiers
@@ -4145,9 +4013,9 @@
             var p1Priority = p1IsSwitch ? 6 : (getMovePriority(uiState.p1Action.moveName) + p1CustomPriority);
             var p2Priority = p2IsSwitch ? 6 : (getMovePriority(uiState.p2Action.moveName) + p2CustomPriority);
 
-            // Determine speed order
-            var p1Speed = newState.p1.active.getEffectiveSpeed ? newState.p1.active.getEffectiveSpeed(newState.field) : (newState.p1.active.stats ? newState.p1.active.stats.spe : 100);
-            var p2Speed = newState.p2.active.getEffectiveSpeed ? newState.p2.active.getEffectiveSpeed(newState.field) : (newState.p2.active.stats ? newState.p2.active.stats.spe : 100);
+            // Determine speed order (pass the side data which contains tailwind)
+            var p1Speed = newState.p1.active.getEffectiveSpeed ? newState.p1.active.getEffectiveSpeed(newState.sides.p1) : (newState.p1.active.stats ? newState.p1.active.stats.spe : 100);
+            var p2Speed = newState.p2.active.getEffectiveSpeed ? newState.p2.active.getEffectiveSpeed(newState.sides.p2) : (newState.p2.active.stats ? newState.p2.active.stats.spe : 100);
 
             var firstMover, secondMover;
             var isTrickRoom = newState.field && (newState.field.trickRoom || newState.field.isTrickRoom);
@@ -4350,14 +4218,21 @@
 
                 // Function to complete the turn after replacements
                 var completeTurn = function (p1Replacement, p2Replacement) {
-                    // Apply replacements
                     if (p1Replacement !== null && p1Replacement !== undefined) {
-                        newState.p1.teamSlot = p1Replacement;
-                        newState.p1.active = newState.p1.team[p1Replacement].clone();
+                        if (BattlePlannerLogic) {
+                            BattlePlannerLogic.performSwitch(newState, 'p1', p1Replacement);
+                        } else {
+                            newState.p1.teamSlot = p1Replacement;
+                            newState.p1.active = newState.p1.team[p1Replacement].clone();
+                        }
                     }
                     if (p2Replacement !== null && p2Replacement !== undefined) {
-                        newState.p2.teamSlot = p2Replacement;
-                        newState.p2.active = newState.p2.team[p2Replacement].clone();
+                        if (BattlePlannerLogic) {
+                            BattlePlannerLogic.performSwitch(newState, 'p2', p2Replacement);
+                        } else {
+                            newState.p2.teamSlot = p2Replacement;
+                            newState.p2.active = newState.p2.team[p2Replacement].clone();
+                        }
                     }
 
                     console.log('Completing turn. P1 Slot:', newState.p1.teamSlot, 'P1 Active HP:', newState.p1.active.currentHP);
@@ -4812,7 +4687,9 @@
         var newState = currentNode.state.clone();
         newState.turnNumber++;
 
-        if (side === 'p1') {
+        if (BattlePlannerLogic) {
+            BattlePlannerLogic.performSwitch(newState, side, index);
+        } else if (side === 'p1') {
             newState.p1.active = team[index].clone();
             newState.p1.teamSlot = index;
         } else {
