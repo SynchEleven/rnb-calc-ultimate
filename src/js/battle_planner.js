@@ -560,7 +560,7 @@ BattleAction.prototype.describe = function() {
         case 'move':
             return this.moveName || 'Attack';
         case 'switch':
-            return 'Switch → ' + (this.switchTo || '?');
+            return '→ ' + (this.targetName || this.switchTo || '?');
         case 'item':
             return 'Use ' + (this.itemName || 'Item');
         case 'skip':
@@ -968,10 +968,7 @@ BattleTree.prototype.analyzeOutcomes = function() {
     analysis.sort(function(a, b) { return b.advantage - a.advantage; });
     
     if (analysis.length > 0) {
-        var bestNode = this.getNode(analysis[0].nodeId);
-        var worstNode = this.getNode(analysis[analysis.length - 1].nodeId);
-        if (bestNode) bestNode.isBestCase = true;
-        if (worstNode && worstNode !== bestNode) worstNode.isWorstCase = true;
+        // Outcomes are sorted but we no longer visually mark best/worst
     }
     
     return {

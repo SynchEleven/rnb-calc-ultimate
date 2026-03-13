@@ -340,8 +340,8 @@ describe('BattleAction', () => {
   });
 
   test('describes a switch action', () => {
-    const a = new BP.BattleAction('switch', { switchTo: 'Salamence' });
-    expect(a.describe()).toBe('Switch → Salamence');
+    const a = new BP.BattleAction('switch', { switchTo: 'Salamence', targetName: 'Salamence' });
+    expect(a.describe()).toBe('→ Salamence');
   });
 
   test('describes a skip action', () => {

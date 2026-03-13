@@ -1428,21 +1428,69 @@
      * Handle Pokemon drag & drop - just updates UI state, does NOT create tree branches
      * Tree branches are only created when "Confirm Team" is clicked
      */
+    function applyTeamChange(state, source, target, pokemon) {
+        if (source.source === 'team' && target.destination === 'box') {
+            state.p1.team.splice(source.index, 1);
+            uiState.p1Box.push(pokemon);
+        } else if (source.source === 'box' && target.destination === 'team') {
+            if (state.p1.team.length >= 6 && (target.index === undefined || target.index >= state.p1.team.length)) {
+                alert('Maximum team size is 6 Pokemon!');
+                return false;
+            }
+            uiState.p1Box.splice(source.index, 1);
+            if (target.index !== undefined && target.index < state.p1.team.length) {
+                var oldPoke = state.p1.team[target.index];
+                state.p1.team[target.index] = pokemon;
+                uiState.p1Box.push(oldPoke);
+            } else {
+                state.p1.team.push(pokemon);
+            }
+        } else if (source.source === 'team' && target.destination === 'team') {
+            if (source.index !== target.index && target.index !== undefined) {
+                if (target.index < state.p1.team.length) {
+                    var temp = state.p1.team[source.index];
+                    state.p1.team[source.index] = state.p1.team[target.index];
+                    state.p1.team[target.index] = temp;
+                } else {
+                    state.p1.team.splice(source.index, 1);
+                    state.p1.team.push(pokemon);
+                }
+            }
+        }
+        state.p1.team = state.p1.team.filter(function (p) { return !!p; });
+        if (state.p1.teamSlot >= state.p1.team.length) {
+            state.p1.teamSlot = Math.max(0, state.p1.team.length - 1);
+        }
+        if (state.p1.team.length > 0) {
+            state.p1.active = state.p1.team[state.p1.teamSlot];
+        }
+        return true;
+    }
+
+    function propagateTeamToAllNodes(pokemon, isAdd) {
+        if (!uiState.tree) return;
+        var allNodes = uiState.tree.nodes;
+        Object.keys(allNodes).forEach(function (nid) {
+            var n = allNodes[nid];
+            if (!n || !n.state || !n.state.p1) return;
+            var team = n.state.p1.team;
+            if (isAdd) {
+                var alreadyHas = team.some(function (p) { return p && p.name === pokemon.name; });
+                if (!alreadyHas && team.length < 6) {
+                    team.push(pokemon.clone ? pokemon.clone() : Object.assign({}, pokemon));
+                }
+            }
+        });
+    }
+
     function handlePokemonDrop(source, target) {
         var currentNode = uiState.tree.getCurrentNode();
         if (!currentNode) return;
-
         var state = currentNode.state;
 
-        // Only allow P1 team/box manipulation - P2 team is fixed
-        if (target.side === 'p2') {
-            console.log('Cannot modify opponent team via drag/drop');
-            return;
-        }
+        if (target.side === 'p2') return;
 
         var pokemon = null;
-
-        // Get the pokemon from source
         if (source.source === 'team') {
             pokemon = state.p1.team[source.index];
         } else {
@@ -1450,55 +1498,25 @@
         }
         if (!pokemon) return;
 
-        if (source.source === 'team' && target.destination === 'box') {
-            // Move from team to box
-            state.p1.team.splice(source.index, 1);
-            uiState.p1Box.push(pokemon);
-        } else if (source.source === 'box' && target.destination === 'team') {
-            // Move from box to team
-            if (state.p1.team.length >= 6 && (target.index === undefined || target.index >= state.p1.team.length)) {
-                alert('Maximum team size is 6 Pokemon!');
-                return;
-            }
+        var isAddingToTeam = source.source === 'box' && target.destination === 'team';
+        var isNotRoot = currentNode.parentId;
 
-            uiState.p1Box.splice(source.index, 1);
-
-            if (target.index !== undefined && target.index < state.p1.team.length) {
-                // Swap box pokemon with team pokemon
-                var oldPoke = state.p1.team[target.index];
-                state.p1.team[target.index] = pokemon;
-                uiState.p1Box.push(oldPoke);
+        if (isAddingToTeam && isNotRoot) {
+            var choice = confirm(
+                'You are adding ' + pokemon.name + ' to your team mid-battle.\n\n' +
+                'OK = Add retroactively (appears in all turns)\n' +
+                'Cancel = Only add from this turn onward'
+            );
+            if (choice) {
+                if (!applyTeamChange(state, source, target, pokemon)) return;
+                propagateTeamToAllNodes(pokemon, true);
             } else {
-                // Add to team
-                state.p1.team.push(pokemon);
+                if (!applyTeamChange(state, source, target, pokemon)) return;
             }
-        } else if (source.source === 'team' && target.destination === 'team') {
-            // Swap within team
-            if (source.index !== target.index && target.index !== undefined) {
-                if (target.index < state.p1.team.length) {
-                    var temp = state.p1.team[source.index];
-                    state.p1.team[source.index] = state.p1.team[target.index];
-                    state.p1.team[target.index] = temp;
-                } else {
-                    // Moving to an empty slot at the end
-                    state.p1.team.splice(source.index, 1);
-                    state.p1.team.push(pokemon);
-                }
-            }
+        } else {
+            if (!applyTeamChange(state, source, target, pokemon)) return;
         }
 
-        // Clean up any undefined in team
-        state.p1.team = state.p1.team.filter(function (p) { return !!p; });
-
-        // Update active/slot if needed
-        if (state.p1.teamSlot >= state.p1.team.length) {
-            state.p1.teamSlot = Math.max(0, state.p1.team.length - 1);
-        }
-        if (state.p1.team.length > 0) {
-            state.p1.active = state.p1.team[state.p1.teamSlot];
-        }
-
-        // Just re-render
         renderStage();
     }
 
@@ -1996,8 +2014,6 @@
 
         var nodeClasses = ['tree-node'];
         if (isCurrentNode) nodeClasses.push('tree-node-current');
-        if (node.isBestCase) nodeClasses.push('tree-node-best');
-        if (node.isWorstCase) nodeClasses.push('tree-node-worst');
 
         var p1Active = node.state.p1.active;
         var p2Active = node.state.p2.active;
@@ -3377,14 +3393,14 @@
             var parts = [];
             if (node.actions.p1) {
                 var p1Desc = node.actions.p1.type === 'switch' ?
-                    'P1 switches to ' + (node.actions.p1.data.targetName || 'Pokemon') :
+                    'P1 → ' + (node.actions.p1.data.targetName || node.actions.p1.targetName || 'Pokemon') :
                     'P1: ' + (node.actions.p1.data.moveName || 'Attack');
                 if (node.actions.p1.data.isCrit) p1Desc += ' (Crit)';
                 parts.push(p1Desc);
             }
             if (node.actions.p2) {
                 var p2Desc = node.actions.p2.type === 'switch' ?
-                    'P2 switches to ' + (node.actions.p2.data.targetName || 'Pokemon') :
+                    'P2 → ' + (node.actions.p2.data.targetName || node.actions.p2.targetName || 'Pokemon') :
                     'P2: ' + (node.actions.p2.data.moveName || 'Attack');
                 if (node.actions.p2.data.isCrit) p2Desc += ' (Crit)';
                 parts.push(p2Desc);
@@ -3436,18 +3452,24 @@
                 '<div id="inspector-legend" class="inspector-section">' +
                 '<h4>Legend</h4>' +
                 '<div class="legend-items">' +
-                '<span class="legend-item"><span class="tree-ko-marker p2-ko">✓</span> Best Outcome</span>' +
-                '<span class="legend-item"><span class="tree-ko-marker p1-ko">✗</span> Worst Outcome</span>' +
+                '<span class="legend-item"><span class="tree-ko-marker p1-ko">✗</span> Your Pokemon KO\'d</span>' +
+                '<span class="legend-item"><span class="tree-ko-marker p2-ko">✓</span> Opponent Pokemon KO\'d</span>' +
                 '<div class="legend-divider"></div>' +
                 '<span class="legend-item"><span class="legend-swatch match-dmg-1"></span> Guaranteed OHKO</span>' +
                 '<span class="legend-item"><span class="legend-swatch match-dmg-2"></span> Possible OHKO</span>' +
                 '<span class="legend-item"><span class="legend-swatch match-dmg-3"></span> Risk of KO</span>' +
                 '<span class="legend-item"><span class="legend-swatch match-dmg-4"></span> Guaranteed Faint</span>' +
                 '<div class="legend-divider"></div>' +
-                '<span class="legend-item"><span class="legend-swatch match-dmg-W"></span> Walling Defender (White)</span>' +
-                '<span class="legend-item"><span class="legend-swatch match-speed-f"></span> Outspeeds (Blue)</span>' +
-                '<span class="legend-item"><span class="legend-swatch match-speed-s"></span> Slower (Gray)</span>' +
-                '<span class="legend-item"><span class="legend-swatch match-speed-t"></span> Speed Tie (Purple)</span>' +
+                '<span class="legend-item"><span class="legend-swatch match-dmg-W"></span> Walling Defender</span>' +
+                '<span class="legend-item"><span class="legend-swatch match-speed-f"></span> Outspeeds</span>' +
+                '<span class="legend-item"><span class="legend-swatch match-speed-s"></span> Slower</span>' +
+                '<span class="legend-item"><span class="legend-swatch match-speed-t"></span> Speed Tie</span>' +
+                '<div class="legend-divider"></div>' +
+                '<span class="legend-item"><span class="ai-move-badge" style="position:static;font-size:10px;">AI +6</span> AI recommended move (score)</span>' +
+                '<span class="legend-item"><span class="priority-badge" style="font-size:10px;">+1</span> Priority move bracket</span>' +
+                '<span class="legend-item">⚠ Roll variance detected</span>' +
+                '<span class="legend-item">💫 Flinch occurred</span>' +
+                '<span class="legend-item">🔄 KO switch-in needed</span>' +
                 '</div></div>'
             );
         }
@@ -4351,7 +4373,7 @@
         if (uiState.p1Action) {
             var p1Html;
             if (uiState.p1Action.type === 'switch') {
-                p1Html = '<span class="turn-switch">🔄 Switch to <strong>' + uiState.p1Action.targetName + '</strong></span>';
+                p1Html = '<span class="turn-switch">🔄 → <strong>' + uiState.p1Action.targetName + '</strong></span>';
                 $('#p1-action-modifiers').hide();
             } else {
                 var p1Damage = getMovePreviewInfo('p1', state.p1.active, uiState.p1Action.moveName, state.p2.active, uiState.p1Action.isCrit);
@@ -4379,7 +4401,7 @@
         if (uiState.p2Action) {
             var p2Html;
             if (uiState.p2Action.type === 'switch') {
-                p2Html = '<span class="turn-switch">🔄 Switch to <strong>' + uiState.p2Action.targetName + '</strong></span>';
+                p2Html = '<span class="turn-switch">🔄 → <strong>' + uiState.p2Action.targetName + '</strong></span>';
                 $('#p2-action-modifiers').hide();
             } else {
                 var p2Damage = getMovePreviewInfo('p2', state.p2.active, uiState.p2Action.moveName, state.p1.active, uiState.p2Action.isCrit);
@@ -4856,8 +4878,6 @@
             syncActiveToTeam(minState);
             var minN = uiState.tree.addBranch(parentNodeId, minState, currentNode.actions,
                 new BattlePlanner.BattleOutcome('Min Roll (' + w.move + ')', 0.5, 0, { rollType: 'min' }));
-            minN.isBestCase = defSide === 'p2';
-            minN.isWorstCase = defSide === 'p1';
             markBranchKOs(minN, minState);
 
             var maxState = currentNode.state.clone();
@@ -4869,8 +4889,6 @@
             syncActiveToTeam(maxState);
             var maxN = uiState.tree.addBranch(parentNodeId, maxState, currentNode.actions,
                 new BattlePlanner.BattleOutcome('Max Roll (' + w.move + ')', 0.5, 0, { rollType: 'max' }));
-            maxN.isBestCase = defSide === 'p1';
-            maxN.isWorstCase = defSide === 'p2';
             markBranchKOs(maxN, maxState);
 
         } else if (d.isCrit) {
@@ -4889,8 +4907,6 @@
             syncActiveToTeam(critState);
             var critN = uiState.tree.addBranch(parentNodeId, critState, currentNode.actions,
                 new BattlePlanner.BattleOutcome('Crit! (' + w.move + ')', 0.0625, 0, { rollType: 'crit' }));
-            critN.isWorstCase = defSide === 'p1';
-            critN.isBestCase = defSide === 'p2';
             markBranchKOs(critN, critState);
 
         } else if (d.isSecondary && d.secondaryEffect) {
@@ -5969,11 +5985,93 @@
         }
     }
 
+    /**
+     * Restore the Turn Actions panel from a node's first child's actions.
+     * This lets users see what was done on this turn and modify it to create branches.
+     */
+    function restoreActionsFromNode(node) {
+        if (!node || node.children.length === 0) {
+            uiState.p1Action = null;
+            uiState.p2Action = null;
+            updateTurnActionsPanel();
+            return;
+        }
+
+        var childNode = uiState.tree.getNode(node.children[0]);
+        if (!childNode || !childNode.actions) {
+            uiState.p1Action = null;
+            uiState.p2Action = null;
+            updateTurnActionsPanel();
+            return;
+        }
+
+        var acts = childNode.actions;
+
+        // Restore P1 action
+        if (acts.p1) {
+            if (acts.p1.type === 'switch') {
+                uiState.p1Action = {
+                    type: 'switch',
+                    targetSlot: acts.p1.targetSlot || (acts.p1.data && acts.p1.data.targetSlot) || 0,
+                    targetName: acts.p1.targetName || (acts.p1.data && acts.p1.data.targetName) || '?'
+                };
+            } else {
+                uiState.p1Action = {
+                    type: 'move',
+                    index: acts.p1.moveIndex || (acts.p1.data && acts.p1.data.moveIndex) || 0,
+                    moveName: acts.p1.moveName || (acts.p1.data && acts.p1.data.moveName) || '',
+                    isCrit: acts.p1.data ? !!acts.p1.data.isCrit : false,
+                    hits: (acts.p1.data && acts.p1.data.hits) || 3,
+                    applyEffect: false
+                };
+            }
+        } else {
+            uiState.p1Action = null;
+        }
+
+        // Restore P2 action
+        if (acts.p2) {
+            if (acts.p2.type === 'switch') {
+                uiState.p2Action = {
+                    type: 'switch',
+                    targetSlot: acts.p2.targetSlot || (acts.p2.data && acts.p2.data.targetSlot) || 0,
+                    targetName: acts.p2.targetName || (acts.p2.data && acts.p2.data.targetName) || '?'
+                };
+            } else {
+                uiState.p2Action = {
+                    type: 'move',
+                    index: acts.p2.moveIndex || (acts.p2.data && acts.p2.data.moveIndex) || 0,
+                    moveName: acts.p2.moveName || (acts.p2.data && acts.p2.data.moveName) || '',
+                    isCrit: acts.p2.data ? !!acts.p2.data.isCrit : false,
+                    hits: (acts.p2.data && acts.p2.data.hits) || 3,
+                    applyEffect: false
+                };
+            }
+        } else {
+            uiState.p2Action = null;
+        }
+
+        updateTurnActionsPanel();
+        updateExecuteTurnButton();
+
+        // Re-apply visual selection on move rows
+        $('#p1-move-list .move-row, #p2-move-list .move-row').removeClass('selected');
+        if (uiState.p1Action && uiState.p1Action.type === 'move') {
+            $('#p1-move-list .move-row[data-index="' + uiState.p1Action.index + '"]').addClass('selected');
+        }
+        if (uiState.p2Action && uiState.p2Action.type === 'move') {
+            $('#p2-move-list .move-row[data-index="' + uiState.p2Action.index + '"]').addClass('selected');
+        }
+    }
+
     function selectNode(nodeId) {
         uiState.tree.navigate(nodeId);
+        var node = uiState.tree.getNode(nodeId);
+
+        // Restore actions from this node's children or this node itself
+        restoreActionsFromNode(node);
 
         // Check if this branch has a pending KO that needs switch resolution
-        var node = uiState.tree.getNode(nodeId);
         if (node && node.pendingKO) {
             var ko = node.pendingKO;
             delete node.pendingKO;

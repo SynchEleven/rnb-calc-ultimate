@@ -189,8 +189,8 @@ body.planner-active {
 }
 
 .planner-tree-panel {
-    flex: 0 0 280px;
-    min-width: 200px;
+    flex: 0 0 340px;
+    min-width: 260px;
 }
 
 .planner-stage-panel {
@@ -365,13 +365,7 @@ body.planner-active {
     background: rgba(29, 155, 240, 0.1);
 }
 
-.tree-node-best .tree-node-card {
-    border-left: 3px solid var(--planner-success);
-}
 
-.tree-node-worst .tree-node-card {
-    border-left: 3px solid var(--planner-danger);
-}
 
 /* -- Header -- */
 .tree-node-header {
@@ -3176,8 +3170,8 @@ body.planner-active {
 .planner-timeline-panel {
     resize: horizontal;
     overflow: hidden;
-    min-width: 150px;
-    max-width: 400px;
+    min-width: 260px;
+    max-width: 500px;
 }
 
 .planner-timeline-panel::-webkit-resizer {
