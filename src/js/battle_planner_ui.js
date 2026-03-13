@@ -369,6 +369,7 @@
                             <div class="turn-actions-panel" id="turn-actions-panel">
                                 <div class="turn-header">
                                     <span class="turn-title">TURN ACTIONS</span>
+                                    <label class="ai-branch-toggle" title="When ticked, AI tied moves auto-branch on execute"><input type="checkbox" id="ai-branch-checkbox"> AI Branch</label>
                                     <button class="turn-execute-btn" id="execute-turn" disabled>Execute Turn</button>
                                 </div>
                                 <div class="turn-selections">
@@ -1083,7 +1084,14 @@
         $(document).on('click', '#inspector-reopen', toggleInspectorPanel);
         $(document).on('click', '#inspector-delete-node', deleteCurrentNode);
 
-        // AI tie branching now handled automatically in executeTurn()
+        // Update AI tie banner hint when checkbox changes
+        $(document).on('change', '#ai-branch-checkbox', function () {
+            var $hint = $('.ai-tie-hint');
+            if ($hint.length) {
+                $hint.text($(this).is(':checked') ? 'will branch on execute' : 'tick AI Branch to auto-branch');
+            }
+        });
+
         $(document).on('change', '#inspector-notes', function () {
             updateNodeNotes($(this).val());
         });
@@ -1201,8 +1209,40 @@
             if (type && eid) showDexDetail(type, eid);
         });
 
-        // Execute Turn button
+        // Execute Turn button — checks AI Branch checkbox for tied-move branching
         $(document).on('click', '#execute-turn', function () {
+            var aiBranchChecked = $('#ai-branch-checkbox').is(':checked');
+
+            if (aiBranchChecked && uiState.p2Action && uiState.p2Action.type === 'move') {
+                var currentNode = uiState.tree ? uiState.tree.getCurrentNode() : null;
+                if (currentNode && BattlePlannerLogic && BattlePlannerLogic.scoreAIMoves) {
+                    var state = currentNode.state;
+                    var aiPokemon = state.p2.active;
+                    var playerPokemon = state.p1.active;
+                    if (aiPokemon && playerPokemon) {
+                        var calcDmgForAI = function (attacker, target, moveName) {
+                            try {
+                                var aSide = attacker === aiPokemon ? 'p2' : 'p1';
+                                var preview = getMovePreviewInfo(aSide, attacker, moveName, target, false);
+                                if (!preview) return null;
+                                return { min: preview.rawMin || 0, max: preview.rawMax || 0 };
+                            } catch (e) { return null; }
+                        };
+                        var aiScores = BattlePlannerLogic.scoreAIMoves(aiPokemon, playerPokemon, state, calcDmgForAI);
+                        if (aiScores) {
+                            var bestScore = -999;
+                            aiScores.forEach(function (s) { if (s.score > bestScore) bestScore = s.score; });
+                            var tiedMoves = aiScores.filter(function (s) { return s.score === bestScore; });
+
+                            if (tiedMoves.length > 1) {
+                                executeAITieBranches(tiedMoves, currentNode);
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+
             executeTurn();
         });
 
@@ -2060,16 +2100,14 @@
     }
 
     /**
-     * Generate and show a battle script modal for step-by-step playthrough.
-     * Navigation model: clicking a branch replaces the modal content with that path.
+     * Battle script modal — sequential walk-through of the battle plan.
+     * Past decisions shown as resolved history above, current choices at the bottom.
      */
     function showBattleScript() {
         if (!uiState.tree || !uiState.tree.rootId) {
             alert('No battle plan to generate script from.');
             return;
         }
-
-        var scriptHistory = [];
 
         var html = '<div class="battle-script-overlay" id="battle-script-overlay">';
         html += '<div class="battle-script-panel">';
@@ -2083,16 +2121,176 @@
 
         $('body').append(html);
 
-        function renderScriptFrom(nodeId, step) {
-            var node = uiState.tree.getNode(nodeId);
-            if (!node) node = uiState.tree.getRootNode();
-            var content = generateScriptForNode(node, step || 1);
+        // State: the path of chosen nodes from root to current frontier
+        var chosenPath = [];  // array of { nodeId, childId } pairs representing past decisions
+        var stepCounter = 1;
+
+        function buildScriptView() {
+            var content = '';
+            stepCounter = 1;
+            var currentNode = uiState.tree.getRootNode();
+
+            // Walk through all resolved history steps
+            var pathIdx = 0;
+            while (currentNode) {
+                if (currentNode.children.length === 0) {
+                    content += renderLeafStep(currentNode, stepCounter);
+                    break;
+                }
+
+                if (currentNode.children.length === 1) {
+                    var child = uiState.tree.getNode(currentNode.children[0]);
+                    if (child) {
+                        content += renderTurnStep(currentNode, child, stepCounter, false);
+                        stepCounter++;
+                        currentNode = child;
+                        continue;
+                    }
+                    break;
+                }
+
+                // Multiple children = branch point
+                if (pathIdx < chosenPath.length && chosenPath[pathIdx].nodeId === currentNode.id) {
+                    // Already decided: show as resolved history
+                    var chosenChildId = chosenPath[pathIdx].childId;
+                    var chosenChild = uiState.tree.getNode(chosenChildId);
+                    if (chosenChild) {
+                        content += renderBranchResolved(currentNode, chosenChild, stepCounter);
+                        stepCounter++;
+                        pathIdx++;
+                        currentNode = chosenChild;
+                        continue;
+                    }
+                    break;
+                }
+
+                // Not yet decided: show as active choice
+                content += renderBranchChoice(currentNode, stepCounter);
+                break;
+            }
+
             $('#script-content').html(content);
-            $('#script-back').toggle(scriptHistory.length > 0);
+            $('#script-back').toggle(chosenPath.length > 0);
+
+            // Auto-scroll to bottom
+            var $sc = $('#script-content');
+            $sc.scrollTop($sc[0].scrollHeight);
         }
 
-        var rootNode = uiState.tree.getRootNode();
-        renderScriptFrom(rootNode.id, 1);
+        function renderTurnStep(parentNode, child, step, isResolved) {
+            var p1 = parentNode.state.p1.active;
+            var p2 = parentNode.state.p2.active;
+            var p1Name = p1 ? p1.name : '?';
+            var p2Name = p2 ? p2.name : '?';
+
+            var p1Act = child.actions ? child.actions.p1 : null;
+            var p2Act = child.actions ? child.actions.p2 : null;
+            var yourMove = p1Act ? (p1Act.type === 'switch' ? '→ ' + (p1Act.targetName || '?') : (p1Act.moveName || '?')) : '—';
+
+            var stepClass = isResolved ? 'script-step script-step-resolved' : 'script-step';
+            var h = '<div class="' + stepClass + '">';
+            h += '<span class="script-step-num">' + step + '</span>';
+            h += '<div class="script-step-body">';
+            h += '<div class="script-you">Your ' + p1Name + ': <strong>' + yourMove + '</strong></div>';
+            if (p2Act) {
+                var enemyMove = p2Act.type === 'switch' ? '→ ' + (p2Act.targetName || '?') : (p2Act.moveName || '?');
+                h += '<div class="script-enemy">Enemy ' + p2Name + ': <strong>' + enemyMove + '</strong></div>';
+            }
+
+            var cp1 = child.state.p1.active;
+            var cp2 = child.state.p2.active;
+            if (cp1 && cp2) {
+                h += '<div class="script-result">';
+                h += cp1.name + ': ' + cp1.currentHP + '/' + cp1.maxHP + ' HP';
+                h += ' | ' + cp2.name + ': ' + cp2.currentHP + '/' + cp2.maxHP + ' HP';
+                if (child.outcome && child.outcome.probability < 1) {
+                    h += ' <span class="script-prob">' + CalcIntegration.formatProbability(child.outcome.probability) + '</span>';
+                }
+                h += '</div>';
+            }
+            h += '</div></div>';
+            return h;
+        }
+
+        function renderBranchResolved(parentNode, chosenChild, step) {
+            var desc = chosenChild.outcome ? chosenChild.outcome.description : '?';
+            var prob = chosenChild.outcome && chosenChild.outcome.probability < 1
+                ? ' (' + CalcIntegration.formatProbability(chosenChild.outcome.probability) + ')' : '';
+
+            var h = '<div class="script-step script-step-resolved script-step-choice-made">';
+            h += '<span class="script-step-num">' + step + '</span>';
+            h += '<div class="script-step-body">';
+            h += '<div class="script-chosen-label">⑂ ' + desc + prob + '</div>';
+
+            var cp1 = chosenChild.state.p1.active;
+            var cp2 = chosenChild.state.p2.active;
+            if (cp1 && cp2) {
+                var p1HPPct = cp1.maxHP > 0 ? Math.round((cp1.currentHP / cp1.maxHP) * 100) : 0;
+                var p2HPPct = cp2.maxHP > 0 ? Math.round((cp2.currentHP / cp2.maxHP) * 100) : 0;
+                h += '<div class="script-result">';
+                h += cp1.name + ': ' + cp1.currentHP + '/' + cp1.maxHP + ' (' + p1HPPct + '%)';
+                h += ' | ' + cp2.name + ': ' + cp2.currentHP + '/' + cp2.maxHP + ' (' + p2HPPct + '%)';
+                h += '</div>';
+            }
+            h += '</div></div>';
+            return h;
+        }
+
+        function renderBranchChoice(parentNode, step) {
+            var h = '<div class="script-step script-branch-point">';
+            h += '<span class="script-step-num">' + step + '</span>';
+            h += '<div class="script-step-body">';
+            h += '<div class="script-branch-header">⑂ What happened? (' + parentNode.children.length + ' outcomes)</div>';
+            h += '<div class="script-branches">';
+
+            parentNode.children.forEach(function (childId) {
+                var child = uiState.tree.getNode(childId);
+                if (!child) return;
+                var desc = child.outcome ? child.outcome.description : '?';
+                var prob = child.outcome && child.outcome.probability < 1
+                    ? ' (' + CalcIntegration.formatProbability(child.outcome.probability) + ')' : '';
+
+                var cp1 = child.state.p1.active;
+                var cp2 = child.state.p2.active;
+                var branchHPInfo = '';
+                if (cp1 && cp2) {
+                    var p1HPPct = cp1.maxHP > 0 ? Math.round((cp1.currentHP / cp1.maxHP) * 100) : 0;
+                    var p2HPPct = cp2.maxHP > 0 ? Math.round((cp2.currentHP / cp2.maxHP) * 100) : 0;
+                    branchHPInfo = '<div class="script-branch-hp">' +
+                        '<span class="script-hp-p1">' + cp1.name + ': ' + cp1.currentHP + '/' + cp1.maxHP + ' (' + p1HPPct + '%)</span>' +
+                        '<span class="script-hp-p2">' + cp2.name + ': ' + cp2.currentHP + '/' + cp2.maxHP + ' (' + p2HPPct + '%)</span>' +
+                        '</div>';
+                }
+                var depthCount = countTreeDepth(child);
+                var branchSteps = depthCount > 0
+                    ? '<span class="script-branch-depth">' + depthCount + ' turns planned</span>'
+                    : '<span class="script-branch-depth script-branch-unplanned">not planned</span>';
+
+                h += '<div class="script-branch-option">';
+                h += '<button class="planner-btn planner-btn-sm script-branch-btn" data-node-id="' + childId + '" data-parent-id="' + parentNode.id + '">' + desc + prob + '</button>';
+                h += branchHPInfo;
+                h += branchSteps;
+                h += '</div>';
+            });
+
+            h += '</div></div></div>';
+            return h;
+        }
+
+        function renderLeafStep(node, step) {
+            var allP2KO = node.state.p2.team.every(function (p) { return p && p.currentHP <= 0; });
+            var allP1KO = node.state.p1.team.every(function (p) { return p && p.currentHP <= 0; });
+            if (allP2KO) {
+                return '<div class="script-step script-end script-win"><span class="script-step-num">' + step + '</span> <strong>Victory!</strong></div>';
+            } else if (allP1KO) {
+                return '<div class="script-step script-end script-loss"><span class="script-step-num">' + step + '</span> <strong>Defeat</strong></div>';
+            }
+            return '<div class="script-step script-unplanned"><span class="script-step-num">' + step + '</span> Not planned beyond here. ' +
+                '<button class="planner-btn planner-btn-xs script-plan-btn" data-node-id="' + node.id + '">Plan from here</button></div>';
+        }
+
+        // Initial render
+        buildScriptView();
 
         $(document).off('click.battleScript');
 
@@ -2101,27 +2299,24 @@
             $(document).off('click.battleScript');
         });
 
-        // Branch selection: replace content with that branch's path
+        // Branch selection: record choice, rebuild view with it in history
         $(document).on('click.battleScript', '.script-branch-btn', function (e) {
             e.stopPropagation();
-            var nodeId = $(this).data('node-id');
-            var node = uiState.tree.getNode(nodeId);
-            if (!node) return;
-            var currentHtml = $('#script-content').html();
-            scriptHistory.push(currentHtml);
-            renderScriptFrom(nodeId, 1);
+            var childId = $(this).data('node-id');
+            var parentId = $(this).data('parent-id');
+            if (!childId || !parentId) return;
+            chosenPath.push({ nodeId: parentId, childId: childId });
+            buildScriptView();
         });
 
-        // Back button: restore previous view
+        // Back: undo last choice
         $(document).on('click.battleScript', '#script-back', function () {
-            if (scriptHistory.length > 0) {
-                var prev = scriptHistory.pop();
-                $('#script-content').html(prev);
-                $('#script-back').toggle(scriptHistory.length > 0);
+            if (chosenPath.length > 0) {
+                chosenPath.pop();
+                buildScriptView();
             }
         });
 
-        // "Plan from here" goes back to the planner
         $(document).on('click.battleScript', '.script-plan-btn', function () {
             var nodeId = $(this).data('node-id');
             $('#battle-script-overlay').remove();
@@ -2129,7 +2324,6 @@
             selectNode(nodeId);
         });
 
-        // "Go to planner" for a specific node
         $(document).on('click.battleScript', '.script-goto-planner', function () {
             var nodeId = $(this).data('node-id');
             $('#battle-script-overlay').remove();
@@ -2146,99 +2340,6 @@
             if (child) maxDepth = Math.max(maxDepth, 1 + countTreeDepth(child));
         });
         return maxDepth;
-    }
-
-    function generateScriptForNode(node, step) {
-        if (!node) return '';
-        var html = '';
-
-        var p1 = node.state.p1.active;
-        var p2 = node.state.p2.active;
-        var p1Name = p1 ? p1.name : '?';
-        var p2Name = p2 ? p2.name : '?';
-
-        if (node.children.length === 0) {
-            // Leaf node
-            var allP2KO = node.state.p2.team.every(function(p) { return p && p.currentHP <= 0; });
-            var allP1KO = node.state.p1.team.every(function(p) { return p && p.currentHP <= 0; });
-            if (allP2KO) {
-                html += '<div class="script-step script-end script-win"><span class="script-step-num">' + step + '</span> 🏆 <strong>Victory!</strong></div>';
-            } else if (allP1KO) {
-                html += '<div class="script-step script-end script-loss"><span class="script-step-num">' + step + '</span> 💀 <strong>Defeat</strong></div>';
-            } else {
-                html += '<div class="script-step script-unplanned"><span class="script-step-num">' + step + '</span> ⚠ Not planned beyond here. ';
-                html += '<button class="planner-btn planner-btn-xs script-plan-btn" data-node-id="' + node.id + '">Plan from here</button></div>';
-            }
-            return html;
-        }
-
-        // Current turn info
-        if (node.children.length === 1) {
-            var child = uiState.tree.getNode(node.children[0]);
-            if (child && child.actions) {
-                var p1Act = child.actions.p1;
-                var p2Act = child.actions.p2;
-                var yourMove = p1Act ? (p1Act.type === 'switch' ? '→ ' + (p1Act.targetName || '?') : (p1Act.moveName || '?')) : '—';
-                var probStr = child.outcome && child.outcome.probability < 1 ? ' <span class="script-prob">' + CalcIntegration.formatProbability(child.outcome.probability) + '</span>' : '';
-
-                html += '<div class="script-step">';
-                html += '<span class="script-step-num">' + step + '</span>';
-                html += '<div class="script-step-body">';
-                html += '<div class="script-you">Your ' + p1Name + ': <strong>' + yourMove + '</strong></div>';
-                if (p2Act) {
-                    var enemyMove = p2Act.type === 'switch' ? '→ ' + (p2Act.targetName || '?') : (p2Act.moveName || '?');
-                    html += '<div class="script-enemy">Enemy ' + p2Name + ': <strong>' + enemyMove + '</strong></div>';
-                }
-
-                // Show expected HP after
-                var cp1 = child.state.p1.active;
-                var cp2 = child.state.p2.active;
-                if (cp1 && cp2) {
-                    html += '<div class="script-result">';
-                    html += cp1.name + ': ' + cp1.currentHP + '/' + cp1.maxHP + ' HP';
-                    html += ' | ' + cp2.name + ': ' + cp2.currentHP + '/' + cp2.maxHP + ' HP';
-                    html += probStr;
-                    html += '</div>';
-                }
-                html += '</div></div>';
-            }
-            html += generateScriptForNode(child, step + 1);
-        } else {
-            // Branch point
-            html += '<div class="script-step script-branch-point">';
-            html += '<span class="script-step-num">' + step + '</span>';
-            html += '<div class="script-step-body">';
-            html += '<div class="script-branch-header">⑂ What happened? (' + node.children.length + ' outcomes)</div>';
-            html += '<div class="script-branches">';
-
-            node.children.forEach(function (childId) {
-                var child = uiState.tree.getNode(childId);
-                if (!child) return;
-                var desc = child.outcome ? child.outcome.description : '?';
-                var prob = child.outcome && child.outcome.probability < 1 ? ' (' + CalcIntegration.formatProbability(child.outcome.probability) + ')' : '';
-                var cp1 = child.state.p1.active;
-                var cp2 = child.state.p2.active;
-                var branchHPInfo = '';
-                if (cp1 && cp2) {
-                    var p1HPPct = cp1.maxHP > 0 ? Math.round((cp1.currentHP / cp1.maxHP) * 100) : 0;
-                    var p2HPPct = cp2.maxHP > 0 ? Math.round((cp2.currentHP / cp2.maxHP) * 100) : 0;
-                    branchHPInfo = '<div class="script-branch-hp">' +
-                        '<span class="script-hp-p1">' + cp1.name + ': ' + cp1.currentHP + '/' + cp1.maxHP + ' (' + p1HPPct + '%)</span>' +
-                        '<span class="script-hp-p2">' + cp2.name + ': ' + cp2.currentHP + '/' + cp2.maxHP + ' (' + p2HPPct + '%)</span>' +
-                        '</div>';
-                }
-                var branchSteps = child.children.length > 0 ? '<span class="script-branch-depth">' + countTreeDepth(child) + ' turns planned</span>' : '<span class="script-branch-depth script-branch-unplanned">not planned</span>';
-                html += '<div class="script-branch-option">';
-                html += '<button class="planner-btn planner-btn-sm script-branch-btn" data-node-id="' + childId + '">' + desc + prob + '</button>';
-                html += branchHPInfo;
-                html += branchSteps;
-                html += '</div>';
-            });
-
-            html += '</div></div></div>';
-        }
-
-        return html;
     }
 
     /**
@@ -4183,7 +4284,8 @@
                 $('#turn-actions-panel').append($banner);
             }
             $banner.html(
-                '<span class="ai-tie-text">AI Tie: ' + tiedMoves.length + ' moves scored +' + bestScore + ' (' + moveNames + ') — will auto-branch on execute</span>'
+                '<span class="ai-tie-text">AI Tie: ' + tiedMoves.length + ' moves scored +' + bestScore + ' (' + moveNames + ')</span>' +
+                '<span class="ai-tie-hint">' + ($('#ai-branch-checkbox').is(':checked') ? 'will branch on execute' : 'tick AI Branch to auto-branch') + '</span>'
             ).show();
         } else {
             $('#ai-tie-banner').hide();
@@ -5610,24 +5712,26 @@
     }
 
     var isExecutingTurn = false;
-    var isExecutingAITieBranches = false;
 
     /**
-     * When AI has tied moves, execute the turn once per tied move to create branches.
-     * Each branch represents a different AI choice with equal probability.
+     * When "AI Branch" checkbox is ticked and AI has tied moves,
+     * execute the turn once per tied move to create sibling branches.
+     * Each branch gets full variance detection; switch-ins deferred as pendingKO.
      */
     function executeAITieBranches(tiedMoves, parentNode) {
         var savedP1Action = JSON.parse(JSON.stringify(uiState.p1Action));
         var parentNodeId = parentNode.id;
         var aiPokemon = parentNode.state.p2.active;
         var branchIdx = 0;
-        isExecutingAITieBranches = true;
+
+        // Suppress interactive modals during multi-execution
+        uiState._aiBranchingActive = true;
 
         function executeNextBranch() {
             if (branchIdx >= tiedMoves.length) {
                 $('#ai-tie-banner').hide();
                 isExecutingTurn = false;
-                isExecutingAITieBranches = false;
+                uiState._aiBranchingActive = false;
                 uiState.tree.navigate(parentNodeId);
                 renderTree();
                 renderStage();
@@ -5660,7 +5764,6 @@
 
     /**
      * Execute the full turn with both moves.
-     * If the AI has tied moves, automatically creates branches for each tied move.
      */
     function executeTurn() {
         if (isExecutingTurn) {
@@ -5673,36 +5776,7 @@
             return;
         }
 
-        // Check for AI tied moves and auto-branch (skip if already executing tie branches)
         var currentNode = uiState.tree.getCurrentNode();
-        if (!isExecutingAITieBranches && currentNode && uiState.p2Action.type === 'move' && BattlePlannerLogic && BattlePlannerLogic.scoreAIMoves) {
-            var state = currentNode.state;
-            var aiPokemon = state.p2.active;
-            var playerPokemon = state.p1.active;
-            if (aiPokemon && playerPokemon) {
-                var calcDmgForAI = function (attacker, target, moveName) {
-                    try {
-                        var aSide = attacker === aiPokemon ? 'p2' : 'p1';
-                        var preview = getMovePreviewInfo(aSide, attacker, moveName, target, false);
-                        if (!preview) return null;
-                        return { min: preview.rawMin || 0, max: preview.rawMax || 0 };
-                    } catch (e) { return null; }
-                };
-                var aiScores = BattlePlannerLogic.scoreAIMoves(aiPokemon, playerPokemon, state, calcDmgForAI);
-                if (aiScores) {
-                    var bestScore = -999;
-                    aiScores.forEach(function (s) { if (s.score > bestScore) bestScore = s.score; });
-                    var tiedMoves = aiScores.filter(function (s) { return s.score === bestScore; });
-
-                    if (tiedMoves.length > 1) {
-                        executeAITieBranches(tiedMoves, currentNode);
-                        return;
-                    }
-                }
-            }
-        }
-
-        if (!currentNode) currentNode = uiState.tree.getCurrentNode();
         if (!currentNode) return;
 
         var state = currentNode.state;
@@ -6116,8 +6190,8 @@
                     renderTree();
                     renderStage();
 
-                    // Show variance warnings if any (skip popup during AI tie branching)
-                    if (varianceWarnings.length > 0 && !isExecutingAITieBranches) {
+                    // Show variance warnings if any (skip banner during AI tie multi-exec)
+                    if (varianceWarnings.length > 0 && !uiState._aiBranchingActive) {
                         showVarianceNotification(varianceWarnings, currentNode.id, newNode.id);
                     }
 
@@ -6138,8 +6212,8 @@
                     }
                 };
 
-                // During AI tie branching, defer all switch-ins as pendingKO
-                if (isExecutingAITieBranches && (needsP1Replacement || needsP2Replacement)) {
+                // During AI tie multi-execution, defer switch-ins as pendingKO
+                if (uiState._aiBranchingActive && (needsP1Replacement || needsP2Replacement)) {
                     completeTurn(null, null);
                     var lastNode = uiState.tree.getNode(uiState.tree.currentNodeId);
                     if (lastNode) {
@@ -6181,7 +6255,7 @@
             // This switch happens IMMEDIATELY, before the second mover attacks
             var firstMoverNeedsSwitchNow = pendingSwitchAfterMove[firstMover] && !firstKO && newState[firstMover].active.currentHP > 0;
 
-            if (firstMoverNeedsSwitchNow && !isExecutingAITieBranches) {
+            if (firstMoverNeedsSwitchNow && !uiState._aiBranchingActive) {
                 var switchTitle = "Select Pokemon to switch to (U-turn/Volt Switch):";
                 showKOReplacementModal(firstMover, newState, function (switchChoice) {
                     if (switchChoice !== null && switchChoice !== undefined) {

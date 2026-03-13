@@ -1583,6 +1583,22 @@ body.planner-active {
     letter-spacing: 0.5px;
 }
 
+.ai-branch-toggle {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--planner-text-muted);
+    cursor: pointer;
+    user-select: none;
+}
+
+.ai-branch-toggle input[type="checkbox"] {
+    accent-color: var(--planner-accent);
+    cursor: pointer;
+    margin: 0;
+}
+
 .turn-execute-btn {
     background: linear-gradient(135deg, var(--planner-accent), #0080ff);
     color: white;
@@ -2938,6 +2954,12 @@ body.planner-active {
 .ai-tie-text {
     color: var(--planner-warning);
     font-weight: 600;
+}
+
+.ai-tie-hint {
+    font-size: 10px;
+    color: var(--planner-text-muted);
+    font-style: italic;
 }
 
 .ai-score-row {
@@ -4963,6 +4985,21 @@ body.planner-active {
 
 .script-branch-point .script-step-num {
     background: var(--planner-warning);
+}
+
+/* Resolved steps in battle script history */
+.script-step-resolved {
+    opacity: 0.7;
+}
+
+.script-step-choice-made .script-step-num {
+    background: #6a6a8a;
+}
+
+.script-chosen-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: #b0b0d0;
 }
 
 /* Planner Tooltip */
