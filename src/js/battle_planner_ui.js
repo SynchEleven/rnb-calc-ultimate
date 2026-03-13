@@ -36,6 +36,7 @@
         selectedMoveP2: null,  // Move index for P2's selected move this turn
         currentOutcomes: null,
         expandedNodes: {},
+        collapsedBranches: {},
         viewMode: 'split',
         animationsEnabled: true,
         showTeamPanel: true,
@@ -219,6 +220,7 @@
                             <button class="dex-tab-btn" data-dex-tab="pokemon">Pokemon</button>
                             <button class="dex-tab-btn" data-dex-tab="moves">Moves</button>
                             <button class="dex-tab-btn" data-dex-tab="items">Items</button>
+                            <button class="dex-tab-btn" data-dex-tab="abilities">Abilities</button>
                         </div>
                         <div class="dex-overlay-results" id="dex-results">
                             <p class="dex-placeholder">Type to search the Pokedex...</p>
@@ -244,6 +246,7 @@
                         <button class="planner-btn planner-btn-action" id="planner-new" title="New Battle">New</button>
                         <button class="planner-btn planner-btn-action" id="planner-import" title="Import State">Import</button>
                         <button class="planner-btn planner-btn-action" id="planner-export" title="Export Plan">Export</button>
+                        <button class="planner-btn planner-btn-action" id="planner-script" title="Battle Script - Play through your plan">Script</button>
                         <button class="planner-btn planner-btn-help" id="planner-help" title="How to Use">?</button>
                         <button class="planner-btn planner-btn-close" id="planner-close" title="Close Planner">×</button>
                     </div>
@@ -286,8 +289,7 @@
                         <div class="panel-content" id="stage-container">
                             <!-- Pokedex Floating Button -->
                             <div class="dex-tab" id="dex-tab">DEX</div>
-                            <!-- Speed Comparison Bar -->
-                            <div class="speed-comparison-bar" id="speed-comparison">--</div>
+                            <!-- Speed info moved to move cards -->
                             
                             <div class="stage-field">
                                 <!-- P1 Pokemon Card -->
@@ -1006,6 +1008,7 @@
         // Import/Export
         $(document).on('click', '#planner-import', importState);
         $(document).on('click', '#planner-export', exportPlan);
+        $(document).on('click', '#planner-script', showBattleScript);
 
         // Tree navigation
         $(document).on('click', '#tree-expand-all', expandAllNodes);
@@ -1030,6 +1033,14 @@
         $(document).on('click', '.tree-node-toggle', function (e) {
             e.stopPropagation();
             toggleNodeExpand($(this).closest('.tree-node').data('node-id'));
+        });
+
+        $(document).on('click', '.tree-branch-label', function (e) {
+            e.stopPropagation();
+            var parentId = $(this).data('branch-parent');
+            if (!uiState.collapsedBranches) uiState.collapsedBranches = {};
+            uiState.collapsedBranches[parentId] = !uiState.collapsedBranches[parentId];
+            renderTree();
         });
 
         // Inline tree node delete
@@ -1057,7 +1068,49 @@
 
         // Inspector
         $(document).on('click', '#inspector-collapse', toggleInspectorPanel);
+        $(document).on('click', '#inspector-reopen', toggleInspectorPanel);
         $(document).on('click', '#inspector-delete-node', deleteCurrentNode);
+
+        // AI tie branching
+        $(document).on('click', '.ai-tie-branch-btn', function () {
+            var currentNode = uiState.tree ? uiState.tree.getCurrentNode() : null;
+            if (!currentNode || !uiState.p1Action) return;
+            var state = currentNode.state;
+            var pokemon = state.p2.active;
+            var defender = state.p1.active;
+            if (!pokemon || !defender || !BattlePlannerLogic || !BattlePlannerLogic.scoreAIMoves) return;
+
+            var calcDmgForAI = function (attacker, target, moveName) {
+                try {
+                    var aSide = attacker === pokemon ? 'p2' : 'p1';
+                    var preview = getMovePreviewInfo(aSide, attacker, moveName, target, false);
+                    if (!preview) return null;
+                    return { min: preview.rawMin || 0, max: preview.rawMax || 0 };
+                } catch (e) { return null; }
+            };
+
+            var aiScores = BattlePlannerLogic.scoreAIMoves(pokemon, defender, state, calcDmgForAI);
+            if (!aiScores) return;
+
+            var bestScore = -999;
+            aiScores.forEach(function (s) { if (s.score > bestScore) bestScore = s.score; });
+            var tiedMoves = aiScores.filter(function (s) { return s.score === bestScore; });
+
+            if (tiedMoves.length > 1) {
+                tiedMoves.forEach(function (tm) {
+                    uiState.p2Action = {
+                        type: 'move',
+                        index: (pokemon.moves || []).indexOf(tm.moveName),
+                        moveName: tm.moveName,
+                        isCrit: false,
+                        hits: 3,
+                        applyEffect: false
+                    };
+                    executeTurn();
+                });
+                $('#ai-tie-banner').hide();
+            }
+        });
         $(document).on('change', '#inspector-notes', function () {
             updateNodeNotes($(this).val());
         });
@@ -1101,15 +1154,28 @@
             }
             if (desc) {
                 var offset = $el.offset();
-                var plannerOffset = $('#battle-planner').offset();
-                $('#planner-tooltip')
-                    .text(desc)
-                    .css({
+                var plannerOffset = $('#battle-planner').offset() || { top: 0, left: 0 };
+                var $tooltip = $('#planner-tooltip');
+                $tooltip.text(desc);
+                var isInsideOverlay = $el.closest('.dex-overlay').length > 0;
+                if (isInsideOverlay) {
+                    $tooltip.css({
+                        position: 'fixed',
+                        top: (offset.top - $(window).scrollTop() - 8) + 'px',
+                        left: (offset.left - $(window).scrollLeft()) + 'px',
+                        transform: 'translateY(-100%)',
+                        zIndex: 100010
+                    });
+                } else {
+                    $tooltip.css({
+                        position: 'absolute',
                         top: (offset.top - plannerOffset.top - 8) + 'px',
                         left: (offset.left - plannerOffset.left) + 'px',
-                        transform: 'translateY(-100%)'
-                    })
-                    .show();
+                        transform: 'translateY(-100%)',
+                        zIndex: ''
+                    });
+                }
+                $tooltip.show();
             }
         });
         $(document).on('mouseleave', '.item-badge, .card-ability, .move-cell-name, .status-badge', function () {
@@ -1972,6 +2038,130 @@
     }
 
     /**
+     * Generate and show a battle script modal for step-by-step playthrough.
+     */
+    function showBattleScript() {
+        if (!uiState.tree || !uiState.tree.rootId) {
+            alert('No battle plan to generate script from.');
+            return;
+        }
+
+        var html = '<div class="battle-script-overlay" id="battle-script-overlay">';
+        html += '<div class="battle-script-panel">';
+        html += '<div class="battle-script-header">';
+        html += '<h3>Battle Script</h3>';
+        html += '<button class="dex-overlay-close" id="script-close">&times;</button>';
+        html += '</div>';
+        html += '<div class="battle-script-content" id="script-content">';
+
+        // Walk the tree from root, generating step-by-step instructions
+        var rootNode = uiState.tree.getRootNode();
+        html += generateScriptForNode(rootNode, 1);
+
+        html += '</div></div></div>';
+
+        $('body').append(html);
+
+        $(document).on('click', '#script-close', function () {
+            $('#battle-script-overlay').remove();
+        });
+
+        $(document).on('click', '.script-branch-btn', function () {
+            var nodeId = $(this).data('node-id');
+            $('#battle-script-overlay').remove();
+            selectNode(nodeId);
+        });
+
+        $(document).on('click', '.script-plan-btn', function () {
+            var nodeId = $(this).data('node-id');
+            $('#battle-script-overlay').remove();
+            selectNode(nodeId);
+        });
+    }
+
+    function generateScriptForNode(node, step) {
+        if (!node) return '';
+        var html = '';
+
+        var p1 = node.state.p1.active;
+        var p2 = node.state.p2.active;
+        var p1Name = p1 ? p1.name : '?';
+        var p2Name = p2 ? p2.name : '?';
+
+        if (node.children.length === 0) {
+            // Leaf node
+            var allP2KO = node.state.p2.team.every(function(p) { return p && p.currentHP <= 0; });
+            var allP1KO = node.state.p1.team.every(function(p) { return p && p.currentHP <= 0; });
+            if (allP2KO) {
+                html += '<div class="script-step script-end script-win"><span class="script-step-num">' + step + '</span> 🏆 <strong>Victory!</strong></div>';
+            } else if (allP1KO) {
+                html += '<div class="script-step script-end script-loss"><span class="script-step-num">' + step + '</span> 💀 <strong>Defeat</strong></div>';
+            } else {
+                html += '<div class="script-step script-unplanned"><span class="script-step-num">' + step + '</span> ⚠ Not planned beyond here. ';
+                html += '<button class="planner-btn planner-btn-xs script-plan-btn" data-node-id="' + node.id + '">Plan from here</button></div>';
+            }
+            return html;
+        }
+
+        // Current turn info
+        if (node.children.length === 1) {
+            var child = uiState.tree.getNode(node.children[0]);
+            if (child && child.actions) {
+                var p1Act = child.actions.p1;
+                var p2Act = child.actions.p2;
+                var yourMove = p1Act ? (p1Act.type === 'switch' ? '→ ' + (p1Act.targetName || '?') : (p1Act.moveName || '?')) : '—';
+                var probStr = child.outcome && child.outcome.probability < 1 ? ' <span class="script-prob">' + Math.round(child.outcome.probability * 100) + '%</span>' : '';
+
+                html += '<div class="script-step">';
+                html += '<span class="script-step-num">' + step + '</span>';
+                html += '<div class="script-step-body">';
+                html += '<div class="script-you">Your ' + p1Name + ': <strong>' + yourMove + '</strong></div>';
+                if (p2Act) {
+                    var enemyMove = p2Act.type === 'switch' ? '→ ' + (p2Act.targetName || '?') : (p2Act.moveName || '?');
+                    html += '<div class="script-enemy">Enemy ' + p2Name + ': <strong>' + enemyMove + '</strong></div>';
+                }
+
+                // Show expected HP after
+                var cp1 = child.state.p1.active;
+                var cp2 = child.state.p2.active;
+                if (cp1 && cp2) {
+                    html += '<div class="script-result">';
+                    html += cp1.name + ': ' + cp1.currentHP + '/' + cp1.maxHP + ' HP';
+                    html += ' | ' + cp2.name + ': ' + cp2.currentHP + '/' + cp2.maxHP + ' HP';
+                    html += probStr;
+                    html += '</div>';
+                }
+                html += '</div></div>';
+            }
+            html += generateScriptForNode(child, step + 1);
+        } else {
+            // Branch point
+            html += '<div class="script-step script-branch-point">';
+            html += '<span class="script-step-num">' + step + '</span>';
+            html += '<div class="script-step-body">';
+            html += '<div class="script-branch-header">⑂ What happened? (' + node.children.length + ' outcomes)</div>';
+            html += '<div class="script-branches">';
+
+            node.children.forEach(function (childId) {
+                var child = uiState.tree.getNode(childId);
+                if (!child) return;
+                var desc = child.outcome ? child.outcome.description : '?';
+                var prob = child.outcome && child.outcome.probability < 1 ? ' (' + Math.round(child.outcome.probability * 100) + '%)' : '';
+                html += '<div class="script-branch-option">';
+                html += '<button class="planner-btn planner-btn-xs script-branch-btn" data-node-id="' + childId + '">' + desc + prob + '</button>';
+                html += '<div class="script-branch-sub" style="display:none">';
+                html += generateScriptForNode(child, step + 1);
+                html += '</div>';
+                html += '</div>';
+            });
+
+            html += '</div></div></div>';
+        }
+
+        return html;
+    }
+
+    /**
      * Render tree visualization
      */
     function renderTree() {
@@ -2038,10 +2228,15 @@
 
         var turnLabel = 'T' + (node.state.turnNumber || 0);
 
-        // Get branch name from outcome description
+        // Get branch name from outcome description, with probability
         var branchName = '';
         if (node.outcome && node.outcome.description) {
             branchName = node.outcome.description;
+            if (node.outcome.probability && node.outcome.probability < 1) {
+                var pctStr = Math.round(node.outcome.probability * 100);
+                if (pctStr < 1) pctStr = '<1';
+                branchName += ' <span class="tree-probability">' + pctStr + '%</span>';
+            }
         }
 
         var p1ActionText = '';
@@ -2072,8 +2267,20 @@
         if (branchName) html += '<span class="tree-branch-name">' + branchName + '</span>';
 
         var icons = '';
-        if (p1KO) icons += '<span class="tree-ko-marker p1-ko">✗ ' + p1Name + '</span>';
-        if (p2KO) icons += '<span class="tree-ko-marker p2-ko">✓ ' + p2Name + '</span>';
+        if (p1KO) {
+            var p1KOLabel = p1Name;
+            if (node.outcome && node.outcome.effects && node.outcome.effects.p1KOName && node.outcome.effects.p1KOName !== p1Name) {
+                p1KOLabel = node.outcome.effects.p1KOName + ' ✗ → ' + p1Name;
+            }
+            icons += '<span class="tree-ko-marker p1-ko">✗ ' + p1KOLabel + '</span>';
+        }
+        if (p2KO) {
+            var p2KOLabel = p2Name;
+            if (node.outcome && node.outcome.effects && node.outcome.effects.p2KOName && node.outcome.effects.p2KOName !== p2Name) {
+                p2KOLabel = node.outcome.effects.p2KOName + ' ✗ → ' + p2Name;
+            }
+            icons += '<span class="tree-ko-marker p2-ko">✓ ' + p2KOLabel + '</span>';
+        }
         if (node.pendingKO) icons += '<span class="tree-switch-needed" title="Click to resolve KO switch-in">🔄</span>';
         if (node.outcome && node.outcome.varianceWarnings && node.outcome.varianceWarnings.length > 0) {
             icons += '<span class="tree-variance-icon" title="Variance detected">⚠</span>';
@@ -2128,20 +2335,39 @@
             html += '<div class="tree-node-meta">' + statusLine + boostLine + '</div>';
         }
 
+        // Battle end check: if all pokemon on one side are fainted
+        if (!hasChildren) {
+            var allP1KO = node.state.p1.team.every(function(p) { return p && p.currentHP <= 0; });
+            var allP2KO = node.state.p2.team.every(function(p) { return p && p.currentHP <= 0; });
+            if (allP2KO) {
+                html += '<div class="tree-battle-end tree-battle-win">🏆 Victory!</div>';
+            } else if (allP1KO) {
+                html += '<div class="tree-battle-end tree-battle-loss">💀 Defeat</div>';
+            }
+        }
+
         html += '</div></div>';
 
         // Children: flat list, NO indentation. Branch groups get a label.
         if (hasChildren && isExpanded) {
             var isBranching = node.children.length > 1;
             if (isBranching) {
-                html += '<div class="tree-branch-group">';
-                html += '<div class="tree-branch-label">⑂ ' + node.children.length + ' Branches</div>';
-            }
-            node.children.forEach(function (childId) {
-                html += renderTreeNode(childId, depth + 1);
-            });
-            if (isBranching) {
+                var branchGroupId = 'branch-' + nodeId;
+                var branchCollapsed = uiState.collapsedBranches && uiState.collapsedBranches[nodeId];
+                html += '<div class="tree-branch-group" id="' + branchGroupId + '">';
+                html += '<div class="tree-branch-label" data-branch-parent="' + nodeId + '">';
+                html += '<span class="tree-branch-toggle">' + (branchCollapsed ? '▶' : '▼') + '</span>';
+                html += ' ⑂ ' + node.children.length + ' Branches</div>';
+                if (!branchCollapsed) {
+                    node.children.forEach(function (childId) {
+                        html += renderTreeNode(childId, depth + 1);
+                    });
+                }
                 html += '</div>';
+            } else {
+                node.children.forEach(function (childId) {
+                    html += renderTreeNode(childId, depth + 1);
+                });
             }
         }
 
@@ -2474,6 +2700,27 @@
                     movesHtml += '<span class="eff-icon">' + normalDamage.effectivenessIcon + '</span>';
                 }
                 movesHtml += '</div>';
+
+                // Show individual rolls as mini bar
+                if (normalDamage.rolls && Array.isArray(normalDamage.rolls) && normalDamage.rolls.length > 1) {
+                    var rolls = normalDamage.rolls;
+                    var uniqueRolls = [];
+                    var rollCounts = {};
+                    for (var r = 0; r < rolls.length; r++) {
+                        var rv = rolls[r];
+                        if (!rollCounts[rv]) { rollCounts[rv] = 0; uniqueRolls.push(rv); }
+                        rollCounts[rv]++;
+                    }
+                    uniqueRolls.sort(function(a,b){return a-b;});
+                    var rollParts = uniqueRolls.map(function(v) {
+                        var isKO = v >= defenderHP;
+                        var cls = isKO ? 'roll-ko' : '';
+                        var count = rollCounts[v];
+                        var pct = Math.round((count / rolls.length) * 100);
+                        return '<span class="dmg-roll ' + cls + '" title="' + v + ' (' + pct + '% chance, ' + Math.round((v/defHP)*100) + '% HP)">' + v + '</span>';
+                    });
+                    movesHtml += '<div class="move-cell-rolls">' + rollParts.join('') + '</div>';
+                }
 
                 if (critDamage && critDamage.rawMin !== undefined) {
                     var critMinPct = Math.round((critDamage.rawMin / defHP) * 100);
@@ -2972,49 +3219,8 @@
         return speed;
     }
 
-    function renderSpeedComparison(state, p1ActiveOverride, p2ActiveOverride) {
-        var $bar = $('#speed-comparison');
-        var p1Active = p1ActiveOverride || (state.p1 ? state.p1.active : null);
-        var p2Active = p2ActiveOverride || (state.p2 ? state.p2.active : null);
-
-        var p1Field = state.sides ? state.sides.p1 : (state.field || {});
-        var p2Field = state.sides ? state.sides.p2 : (state.field || {});
-        var p1Speed = calcEffectiveSpeed(p1Active, p1Field);
-        var p2Speed = calcEffectiveSpeed(p2Active, p2Field);
-
-        var trickRoom = state.field && state.field.trickRoom;
-        var p1First, speedTie;
-        if (trickRoom) {
-            p1First = p1Speed < p2Speed;
-            speedTie = p1Speed === p2Speed;
-        } else {
-            p1First = p1Speed > p2Speed;
-            speedTie = p1Speed === p2Speed;
-        }
-
-        var p1Name = p1Active ? p1Active.name : 'P1';
-        var p2Name = p2Active ? p2Active.name : 'P2';
-
-        var p1Boost = (p1Active && p1Active.boosts && p1Active.boosts.spe) || 0;
-        var p2Boost = (p2Active && p2Active.boosts && p2Active.boosts.spe) || 0;
-        var p1BoostStr = p1Boost !== 0 ? ' (' + (p1Boost > 0 ? '+' : '') + p1Boost + ')' : '';
-        var p2BoostStr = p2Boost !== 0 ? ' (' + (p2Boost > 0 ? '+' : '') + p2Boost + ')' : '';
-
-        var html = '';
-        if (speedTie) {
-            html = '<span class="speed-first speed-tie">⚡ Speed Tie (' + p1Speed + ')</span>';
-        } else if (p1First) {
-            html = '<span class="speed-first speed-p1-first">▶ ' + p1Name + '</span>' +
-                '<span class="speed-vals">' + p1Speed + p1BoostStr + ' vs ' + p2Speed + p2BoostStr + '</span>' +
-                '<span class="speed-second">◇ ' + p2Name + '</span>';
-        } else {
-            html = '<span class="speed-second">◇ ' + p1Name + '</span>' +
-                '<span class="speed-vals">' + p1Speed + p1BoostStr + ' vs ' + p2Speed + p2BoostStr + '</span>' +
-                '<span class="speed-first speed-p2-first">▶ ' + p2Name + '</span>';
-        }
-        if (trickRoom) html += ' <span class="trick-room-badge">Trick Room</span>';
-
-        $bar.html(html);
+    function renderSpeedComparison() {
+        // Speed banner removed - info shown inline on cards
     }
 
     function updateTeamSlotHighlights(side, activeSlot, opponentSnapshot) {
@@ -3774,6 +3980,52 @@
 
         updateTurnActionsPanel();
         updateExecuteTurnButton();
+
+        // AI tie detection: when P2 move selected, check for ties
+        if (side === 'p2') {
+            checkAIMoveTies();
+        }
+    }
+
+    function checkAIMoveTies() {
+        var currentNode = uiState.tree ? uiState.tree.getCurrentNode() : null;
+        if (!currentNode) return;
+        var state = currentNode.state;
+        var pokemon = state.p2.active;
+        var defender = state.p1.active;
+
+        if (!pokemon || !defender || !BattlePlannerLogic || !BattlePlannerLogic.scoreAIMoves) return;
+
+        var calcDmgForAI = function (attacker, target, moveName) {
+            try {
+                var aSide = attacker === pokemon ? 'p2' : 'p1';
+                var preview = getMovePreviewInfo(aSide, attacker, moveName, target, false);
+                if (!preview) return null;
+                return { min: preview.rawMin || 0, max: preview.rawMax || 0 };
+            } catch (e) { return null; }
+        };
+
+        var aiScores = BattlePlannerLogic.scoreAIMoves(pokemon, defender, state, calcDmgForAI);
+        if (!aiScores || aiScores.length < 2) return;
+
+        var bestScore = -999;
+        aiScores.forEach(function (s) { if (s.score > bestScore) bestScore = s.score; });
+        var tiedMoves = aiScores.filter(function (s) { return s.score === bestScore; });
+
+        if (tiedMoves.length > 1) {
+            var moveNames = tiedMoves.map(function (s) { return s.moveName; }).join(', ');
+            var $banner = $('#ai-tie-banner');
+            if (!$banner.length) {
+                $banner = $('<div id="ai-tie-banner" class="ai-tie-banner"></div>');
+                $('#turn-actions-panel').append($banner);
+            }
+            $banner.html(
+                '<span class="ai-tie-text">AI Tie: ' + tiedMoves.length + ' moves scored +' + bestScore + ' (' + moveNames + ')</span>' +
+                '<button class="planner-btn-xs ai-tie-branch-btn">Branch All</button>'
+            ).show();
+        } else {
+            $('#ai-tie-banner').hide();
+        }
     }
 
     /**
@@ -3871,6 +4123,29 @@
                     html += '<div class="dex-result-row" data-dex-type="item" data-dex-id="' + (it.name || '').toLowerCase().replace(/[^a-z0-9]/g, '') + '">';
                     html += '<span class="dex-res-name">' + it.name + '</span>';
                     html += '<span class="dex-res-desc">' + (it.desc || it.shortDesc || '') + '</span>';
+                    html += '</div>';
+                    count++;
+                });
+            }
+        }
+
+        // Abilities
+        if ((tab === 'all' || tab === 'abilities') && window.BattleAbilities) {
+            var abilMatches = [];
+            for (var aid in window.BattleAbilities) {
+                var ab = window.BattleAbilities[aid];
+                if (!ab || !ab.name) continue;
+                if (ab.name.toLowerCase().indexOf(query) !== -1 || aid.indexOf(query) !== -1) {
+                    abilMatches.push(ab);
+                    if (abilMatches.length >= maxResults) break;
+                }
+            }
+            if (abilMatches.length > 0) {
+                html += '<div class="dex-section-header">Abilities</div>';
+                abilMatches.forEach(function (ab) {
+                    html += '<div class="dex-result-row" data-dex-type="ability" data-dex-id="' + (ab.name || '').toLowerCase().replace(/[^a-z0-9]/g, '') + '">';
+                    html += '<span class="dex-res-name">' + ab.name + '</span>';
+                    html += '<span class="dex-res-desc">' + (ab.shortDesc || ab.desc || '') + '</span>';
                     html += '</div>';
                     count++;
                 });
@@ -4086,6 +4361,34 @@
             if (!item) { $detail.html('<p>Not found</p>'); return; }
             html += '<h3>' + (item.name || id) + '</h3>';
             if (item.desc) html += '<div class="dex-row dex-desc">' + item.desc + '</div>';
+        } else if (type === 'ability') {
+            var ab = null;
+            if (window.BattleAbilities) {
+                var abId = id.toLowerCase().replace(/[^a-z0-9]/g, '');
+                ab = window.BattleAbilities[abId];
+            }
+            if (!ab) { $detail.html('<p>Not found</p>'); return; }
+            html += '<h3>' + (ab.name || id) + '</h3>';
+            if (ab.desc) html += '<div class="dex-row dex-desc">' + ab.desc + '</div>';
+            else if (ab.shortDesc) html += '<div class="dex-row dex-desc">' + ab.shortDesc + '</div>';
+            // Show which Pokemon have this ability
+            if (window.BattlePokedex) {
+                var holders = [];
+                for (var pid in window.BattlePokedex) {
+                    var pp = window.BattlePokedex[pid];
+                    if (!pp || !pp.abilities) continue;
+                    if ((pp.abilities['0'] || '').toLowerCase() === (ab.name || '').toLowerCase() ||
+                        (pp.abilities['1'] || '').toLowerCase() === (ab.name || '').toLowerCase() ||
+                        (pp.abilities.H || '').toLowerCase() === (ab.name || '').toLowerCase()) {
+                        holders.push(pp.name || pid);
+                    }
+                }
+                if (holders.length > 0 && holders.length <= 30) {
+                    html += '<div class="dex-row"><span class="dex-label">Pokemon</span><span>' + holders.join(', ') + '</span></div>';
+                } else if (holders.length > 30) {
+                    html += '<div class="dex-row"><span class="dex-label">Pokemon</span><span>' + holders.length + ' Pokemon have this ability</span></div>';
+                }
+            }
         }
 
         $detail.html(html);
@@ -4876,8 +5179,12 @@
             minState[defSide].active.hasFainted = minState[defSide].active.currentHP <= 0;
             if (d.minResult.itemConsumed) minState[defSide].active.item = '';
             syncActiveToTeam(minState);
+            var survProb = d.surviveChance || 0.5;
+            var koProb = d.koChance || 0.5;
+            var survPct = Math.round(survProb * 100);
+            var koPct = Math.round(koProb * 100);
             var minN = uiState.tree.addBranch(parentNodeId, minState, currentNode.actions,
-                new BattlePlanner.BattleOutcome('Min Roll (' + w.move + ')', 0.5, 0, { rollType: 'min' }));
+                new BattlePlanner.BattleOutcome('Survives (' + w.move + ', ' + survPct + '%)', survProb, 0, { rollType: 'min' }));
             markBranchKOs(minN, minState);
 
             var maxState = currentNode.state.clone();
@@ -4888,7 +5195,7 @@
             if (d.maxResult.itemConsumed) maxState[defSide].active.item = '';
             syncActiveToTeam(maxState);
             var maxN = uiState.tree.addBranch(parentNodeId, maxState, currentNode.actions,
-                new BattlePlanner.BattleOutcome('Max Roll (' + w.move + ')', 0.5, 0, { rollType: 'max' }));
+                new BattlePlanner.BattleOutcome('KO (' + w.move + ', ' + koPct + '%)', koProb, 0, { rollType: 'max' }));
             markBranchKOs(maxN, maxState);
 
         } else if (d.isCrit) {
@@ -5242,12 +5549,19 @@
                     p2: createBattleAction(uiState.p2Action)
                 };
 
+                // Track KO'd Pokemon names for better display
+                var p1KOName = null, p2KOName = null;
+                if (newState.p1.active.currentHP <= 0) p1KOName = newState.p1.active.name;
+                if (newState.p2.active.currentHP <= 0) p2KOName = newState.p2.active.name;
+
                 var outcome = new BattlePlanner.BattleOutcome(actionDesc, 1.0, 0, {
                     firstMover: firstMover,
                     firstKO: firstKO,
                     secondKO: secondKO,
                     endOfTurnEffects: endOfTurnEffects,
-                    flinchResult: flinchResult
+                    flinchResult: flinchResult,
+                    p1KOName: p1KOName,
+                    p2KOName: p2KOName
                 });
 
                 // Variance detection: check if min/max rolls produce different outcomes
@@ -5256,7 +5570,8 @@
                     var firstDef = newState[secondMover].active;
                     var v1 = BattlePlannerLogic.detectMeaningfulVariance(
                         { currentHP: state[secondMover].active.currentHP, maxHP: firstDef.maxHP, item: state[secondMover].active.item },
-                        firstMoveResult.range.min, firstMoveResult.range.max
+                        firstMoveResult.range.min, firstMoveResult.range.max,
+                        firstMoveResult.range.rolls
                     );
                     if (v1) varianceWarnings.push({ move: firstAction.moveName, mover: firstMover, detail: v1 });
                 }
@@ -5264,7 +5579,8 @@
                     var secondDef = newState[firstMover].active;
                     var v2 = BattlePlannerLogic.detectMeaningfulVariance(
                         { currentHP: state[firstMover].active.currentHP, maxHP: secondDef.maxHP, item: state[firstMover].active.item },
-                        secondMoveResult.range.min, secondMoveResult.range.max
+                        secondMoveResult.range.min, secondMoveResult.range.max,
+                        secondMoveResult.range.rolls
                     );
                     if (v2) varianceWarnings.push({ move: secondAction.moveName, mover: secondMover, detail: v2 });
                 }
@@ -6159,7 +6475,16 @@
 
     function toggleInspectorPanel() {
         $inspectorPanel.toggleClass('collapsed');
-        $('#inspector-collapse').text($inspectorPanel.hasClass('collapsed') ? '▶' : '◀');
+        var isCollapsed = $inspectorPanel.hasClass('collapsed');
+        $('#inspector-collapse').text(isCollapsed ? '▶' : '◀');
+        if (isCollapsed) {
+            if (!$('#inspector-reopen').length) {
+                $inspectorPanel.after('<button id="inspector-reopen" class="inspector-reopen-btn" title="Open Inspector">▶</button>');
+            }
+            $('#inspector-reopen').show();
+        } else {
+            $('#inspector-reopen').hide();
+        }
     }
 
     function deleteCurrentNode() {

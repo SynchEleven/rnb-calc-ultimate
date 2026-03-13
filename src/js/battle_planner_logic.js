@@ -685,7 +685,7 @@
      *   { reason: string, minResult: { hp, fainted, itemConsumed },
      *     maxResult: { hp, fainted, itemConsumed } }
      */
-    function detectMeaningfulVariance(defender, minDamage, maxDamage) {
+    function detectMeaningfulVariance(defender, minDamage, maxDamage, rolls) {
         if (!defender || minDamage === maxDamage) return null;
 
         var item = defender.item || '';
@@ -695,12 +695,30 @@
         var minResult = simulateHPAfterDamage(hp, maxHP, minDamage, item);
         var maxResult = simulateHPAfterDamage(hp, maxHP, maxDamage, item);
 
+        // Calculate actual probabilities from rolls array (16 equally likely rolls)
+        var koProb = 0.5;
+        var surviveProb = 0.5;
+        if (rolls && Array.isArray(rolls) && rolls.length > 1) {
+            var koCount = 0;
+            var itemTriggerCount = 0;
+            for (var ri = 0; ri < rolls.length; ri++) {
+                var rollResult = simulateHPAfterDamage(hp, maxHP, rolls[ri], item);
+                if (rollResult.fainted) koCount++;
+                if (rollResult.itemConsumed) itemTriggerCount++;
+            }
+            koProb = koCount / rolls.length;
+            surviveProb = 1 - koProb;
+        }
+
         // KO difference
         if (minResult.fainted !== maxResult.fainted) {
+            var koPct = Math.round(koProb * 100);
             return {
-                reason: maxResult.fainted ? 'Max roll KOs, min roll survives' : 'Min roll KOs, max roll survives',
+                reason: koPct + '% chance to KO (' + (rolls ? rolls.length : '?') + ' rolls)',
                 minResult: minResult,
-                maxResult: maxResult
+                maxResult: maxResult,
+                koChance: koProb,
+                surviveChance: surviveProb
             };
         }
 
@@ -709,7 +727,9 @@
             return {
                 reason: (maxResult.itemConsumed ? 'Max' : 'Min') + ' roll triggers ' + item,
                 minResult: minResult,
-                maxResult: maxResult
+                maxResult: maxResult,
+                koChance: koProb,
+                surviveChance: surviveProb
             };
         }
 
