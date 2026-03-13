@@ -1055,6 +1055,17 @@
             }
         });
 
+        // Variance icon click: retrigger branch creation
+        $(document).on('click', '.tree-variance-icon', function (e) {
+            e.stopPropagation();
+            var nodeId = $(this).data('node-id');
+            var node = uiState.tree ? uiState.tree.getNode(nodeId) : null;
+            if (node && node.outcome && node.outcome.varianceWarnings && node.outcome.varianceWarnings.length > 0) {
+                var parentNodeId = node.parentId || nodeId;
+                showVarianceNotification(node.outcome.varianceWarnings, parentNodeId, nodeId);
+            }
+        });
+
         // Move selection (from Pokemon cards - redirect to move details panel)
         $(document).on('click', '.move-pill', function () {
             var moveIndex = $(this).data('move-index');
@@ -2099,6 +2110,7 @@
 
     /**
      * Generate and show a battle script modal for step-by-step playthrough.
+     * Navigation model: clicking a branch replaces the modal content with that path.
      */
     function showBattleScript() {
         if (!uiState.tree || !uiState.tree.rootId) {
@@ -2106,23 +2118,31 @@
             return;
         }
 
+        var scriptHistory = [];
+
         var html = '<div class="battle-script-overlay" id="battle-script-overlay">';
         html += '<div class="battle-script-panel">';
         html += '<div class="battle-script-header">';
+        html += '<button class="planner-btn planner-btn-xs" id="script-back" style="display:none">← Back</button>';
         html += '<h3>Battle Script</h3>';
         html += '<button class="dex-overlay-close" id="script-close">&times;</button>';
         html += '</div>';
-        html += '<div class="battle-script-content" id="script-content">';
-
-        // Walk the tree from root, generating step-by-step instructions
-        var rootNode = uiState.tree.getRootNode();
-        html += generateScriptForNode(rootNode, 1);
-
-        html += '</div></div></div>';
+        html += '<div class="battle-script-content" id="script-content"></div>';
+        html += '</div></div>';
 
         $('body').append(html);
 
-        // Clean up old handlers to prevent duplication
+        function renderScriptFrom(nodeId, step) {
+            var node = uiState.tree.getNode(nodeId);
+            if (!node) node = uiState.tree.getRootNode();
+            var content = generateScriptForNode(node, step || 1);
+            $('#script-content').html(content);
+            $('#script-back').toggle(scriptHistory.length > 0);
+        }
+
+        var rootNode = uiState.tree.getRootNode();
+        renderScriptFrom(rootNode.id, 1);
+
         $(document).off('click.battleScript');
 
         $(document).on('click.battleScript', '#script-close', function () {
@@ -2130,19 +2150,24 @@
             $(document).off('click.battleScript');
         });
 
-        // Branch selection: reveal inline sub-steps, highlight chosen branch
+        // Branch selection: replace content with that branch's path
         $(document).on('click.battleScript', '.script-branch-btn', function (e) {
             e.stopPropagation();
-            var $option = $(this).closest('.script-branch-option');
-            var $branches = $option.closest('.script-branches');
+            var nodeId = $(this).data('node-id');
+            var node = uiState.tree.getNode(nodeId);
+            if (!node) return;
+            var currentHtml = $('#script-content').html();
+            scriptHistory.push(currentHtml);
+            renderScriptFrom(nodeId, 1);
+        });
 
-            // Deselect other branches at the same level
-            $branches.find('> .script-branch-option').removeClass('script-branch-active');
-            $branches.find('> .script-branch-option > .script-branch-sub').slideUp(200);
-
-            // Toggle this one
-            $option.addClass('script-branch-active');
-            $option.find('> .script-branch-sub').slideDown(200);
+        // Back button: restore previous view
+        $(document).on('click.battleScript', '#script-back', function () {
+            if (scriptHistory.length > 0) {
+                var prev = scriptHistory.pop();
+                $('#script-content').html(prev);
+                $('#script-back').toggle(scriptHistory.length > 0);
+            }
         });
 
         // "Plan from here" goes back to the planner
@@ -2256,10 +2281,6 @@
                 html += '<button class="planner-btn planner-btn-sm script-branch-btn" data-node-id="' + childId + '">' + desc + prob + '</button>';
                 html += branchHPInfo;
                 html += branchSteps;
-                html += '<div class="script-branch-sub" style="display:none">';
-                html += generateScriptForNode(child, step + 1);
-                html += '<div class="script-branch-nav"><button class="planner-btn planner-btn-xs script-goto-planner" data-node-id="' + childId + '">Open in Planner</button></div>';
-                html += '</div>';
                 html += '</div>';
             });
 
@@ -2328,6 +2349,12 @@
 
         var p1KO = p1Active && p1Active.currentHP <= 0;
         var p2KO = p2Active && p2Active.currentHP <= 0;
+        // Also check stored KO flags (persist even after replacement switch)
+        var storedKO = node.outcome && node.outcome.effects && node.outcome.effects.hadKO;
+        if (storedKO) {
+            if (storedKO.p1) p1KO = true;
+            if (storedKO.p2) p2KO = true;
+        }
         if (p1KO) nodeClasses.push('tree-node-p1ko');
         if (p2KO) nodeClasses.push('tree-node-p2ko');
 
@@ -2395,7 +2422,7 @@
         }
         if (node.pendingKO) icons += '<span class="tree-switch-needed" title="Click to resolve KO switch-in">🔄</span>';
         if (node.outcome && node.outcome.varianceWarnings && node.outcome.varianceWarnings.length > 0) {
-            icons += '<span class="tree-variance-icon" title="Variance detected">⚠</span>';
+            icons += '<span class="tree-variance-icon" data-node-id="' + nodeId + '" title="Click to create variance branches">⚠</span>';
         }
         if (node.outcome && node.outcome.effects && node.outcome.effects.flinchResult &&
             node.outcome.effects.flinchResult.flinches && node.outcome.effects.flinchResult.isGuaranteed) {
@@ -2544,6 +2571,22 @@
 
         renderPokemonCard('p1', p1Active, p2Active);
         renderPokemonCard('p2', p2Active, p1Active);
+
+        // Show KO info banner if this node had a KO that was resolved
+        $('#stage-ko-banner').remove();
+        var effects = currentNode.outcome && currentNode.outcome.effects;
+        if (effects && effects.hadKO && !currentNode.pendingKO) {
+            var koBannerParts = [];
+            if (effects.hadKO.p2 && effects.p2KOName && effects.p2KOName !== (state.p2.active ? state.p2.active.name : '')) {
+                koBannerParts.push('<span class="ko-banner-enemy">' + effects.p2KOName + ' was KO\'d → ' + (state.p2.active ? state.p2.active.name : '?') + ' switched in</span>');
+            }
+            if (effects.hadKO.p1 && effects.p1KOName && effects.p1KOName !== (state.p1.active ? state.p1.active.name : '')) {
+                koBannerParts.push('<span class="ko-banner-player">' + effects.p1KOName + ' was KO\'d → ' + (state.p1.active ? state.p1.active.name : '?') + ' switched in</span>');
+            }
+            if (koBannerParts.length > 0) {
+                $('#stage-container').prepend('<div id="stage-ko-banner" class="stage-ko-banner">' + koBannerParts.join(' | ') + '</div>');
+            }
+        }
 
         // Convert to real Pokemon objects for matchup and speed logic
         var p1ActiveObj = CalcIntegration.snapshotToPokemon(p1Active, gen);
@@ -5541,6 +5584,11 @@
         var p2KO = branchState.p2.active && branchState.p2.active.currentHP <= 0;
         if (p1KO || p2KO) {
             node.pendingKO = { p1: p1KO, p2: p2KO };
+            if (!node.outcome) node.outcome = {};
+            if (!node.outcome.effects) node.outcome.effects = {};
+            if (p1KO) node.outcome.effects.p1KOName = branchState.p1.active.name;
+            if (p2KO) node.outcome.effects.p2KOName = branchState.p2.active.name;
+            node.outcome.effects.hadKO = { p1: p1KO, p2: p2KO };
         }
     }
 
@@ -5853,8 +5901,9 @@
 
                 // Track KO'd Pokemon names for better display
                 var p1KOName = null, p2KOName = null;
-                if (newState.p1.active.currentHP <= 0) p1KOName = newState.p1.active.name;
-                if (newState.p2.active.currentHP <= 0) p2KOName = newState.p2.active.name;
+                var hadKO = { p1: false, p2: false };
+                if (newState.p1.active.currentHP <= 0) { p1KOName = newState.p1.active.name; hadKO.p1 = true; }
+                if (newState.p2.active.currentHP <= 0) { p2KOName = newState.p2.active.name; hadKO.p2 = true; }
 
                 var outcome = new BattlePlanner.BattleOutcome(actionDesc, 1.0, 0, {
                     firstMover: firstMover,
@@ -5863,7 +5912,8 @@
                     endOfTurnEffects: endOfTurnEffects,
                     flinchResult: flinchResult,
                     p1KOName: p1KOName,
-                    p2KOName: p2KOName
+                    p2KOName: p2KOName,
+                    hadKO: (hadKO.p1 || hadKO.p2) ? hadKO : undefined
                 });
 
                 // Variance detection: check if min/max rolls produce different outcomes
@@ -7365,12 +7415,10 @@
      * Update the trainer label in the header
      */
     function updateTrainerLabel() {
-        var $label = $('#planner-trainer-label');
+        $('#planner-trainer-label').hide();
         if (uiState.currentTrainer) {
-            $label.text('vs ' + uiState.currentTrainer).show();
             $('#p2-team-title').text('vs ' + uiState.currentTrainer);
         } else {
-            $label.hide();
             $('#p2-team-title').text("OPPONENT'S TEAM");
         }
     }
