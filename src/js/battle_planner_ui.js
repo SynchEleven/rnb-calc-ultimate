@@ -2122,35 +2122,42 @@
 
         $('body').append(html);
 
-        $(document).on('click', '#script-close', function () {
+        // Clean up old handlers to prevent duplication
+        $(document).off('click.battleScript');
+
+        $(document).on('click.battleScript', '#script-close', function () {
             $('#battle-script-overlay').remove();
+            $(document).off('click.battleScript');
         });
 
         // Branch selection: reveal inline sub-steps, highlight chosen branch
-        $(document).on('click', '.script-branch-btn', function () {
+        $(document).on('click.battleScript', '.script-branch-btn', function (e) {
+            e.stopPropagation();
             var $option = $(this).closest('.script-branch-option');
             var $branches = $option.closest('.script-branches');
 
             // Deselect other branches at the same level
-            $branches.find('.script-branch-option').removeClass('script-branch-active');
-            $branches.find('.script-branch-sub').slideUp(200);
+            $branches.find('> .script-branch-option').removeClass('script-branch-active');
+            $branches.find('> .script-branch-option > .script-branch-sub').slideUp(200);
 
             // Toggle this one
             $option.addClass('script-branch-active');
             $option.find('> .script-branch-sub').slideDown(200);
         });
 
-        // "Plan from here" still goes back to the planner
-        $(document).on('click', '.script-plan-btn', function () {
+        // "Plan from here" goes back to the planner
+        $(document).on('click.battleScript', '.script-plan-btn', function () {
             var nodeId = $(this).data('node-id');
             $('#battle-script-overlay').remove();
+            $(document).off('click.battleScript');
             selectNode(nodeId);
         });
 
         // "Go to planner" for a specific node
-        $(document).on('click', '.script-goto-planner', function () {
+        $(document).on('click.battleScript', '.script-goto-planner', function () {
             var nodeId = $(this).data('node-id');
             $('#battle-script-overlay').remove();
+            $(document).off('click.battleScript');
             selectNode(nodeId);
         });
     }
@@ -2412,12 +2419,14 @@
                     html += '<span class="tree-action-name p1-name">' + parentP1Name + '</span>';
                 }
                 html += '<span class="tree-action-move">' + p1ActionText + '</span>';
-                if (p1KO && parentP1Name !== p1Name) {
+                if (p1KO) {
                     html += '<span class="tree-action-hp hp-ko-transition"><span class="ko-old-name">' + parentP1Name + ' ✗</span></span>';
-                    html += '</div>';
-                    html += '<div class="tree-action-line tree-action-switchin">';
-                    html += '<span class="tree-action-name p1-name">→ ' + p1Name + '</span>';
-                    html += '<span class="tree-action-hp ' + p1Color + '">' + p1Active.currentHP + '/' + p1Active.maxHP + ' (' + p1HP + '%)</span>';
+                    if (parentP1Name !== p1Name) {
+                        html += '</div>';
+                        html += '<div class="tree-action-line tree-action-switchin">';
+                        html += '<span class="tree-action-name p1-name">→ ' + p1Name + '</span>';
+                        html += '<span class="tree-action-hp ' + p1Color + '">' + p1Active.currentHP + '/' + p1Active.maxHP + ' (' + p1HP + '%)</span>';
+                    }
                 } else {
                     html += '<span class="tree-action-hp ' + p1Color + '">' + p1Active.currentHP + '/' + p1Active.maxHP + ' (' + p1HP + '%)</span>';
                 }
@@ -2429,12 +2438,14 @@
                     html += '<span class="tree-action-name p2-name">' + parentP2Name + '</span>';
                 }
                 html += '<span class="tree-action-move">' + p2ActionText + '</span>';
-                if (p2KO && parentP2Name !== p2Name) {
+                if (p2KO) {
                     html += '<span class="tree-action-hp hp-ko-transition"><span class="ko-old-name">' + parentP2Name + ' ✗</span></span>';
-                    html += '</div>';
-                    html += '<div class="tree-action-line tree-action-switchin">';
-                    html += '<span class="tree-action-name p2-name">→ ' + p2Name + '</span>';
-                    html += '<span class="tree-action-hp ' + p2Color + '">' + p2Active.currentHP + '/' + p2Active.maxHP + ' (' + p2HP + '%)</span>';
+                    if (parentP2Name !== p2Name) {
+                        html += '</div>';
+                        html += '<div class="tree-action-line tree-action-switchin">';
+                        html += '<span class="tree-action-name p2-name">→ ' + p2Name + '</span>';
+                        html += '<span class="tree-action-hp ' + p2Color + '">' + p2Active.currentHP + '/' + p2Active.maxHP + ' (' + p2HP + '%)</span>';
+                    }
                 } else {
                     html += '<span class="tree-action-hp ' + p2Color + '">' + p2Active.currentHP + '/' + p2Active.maxHP + ' (' + p2HP + '%)</span>';
                 }
@@ -5240,25 +5251,50 @@
     }
 
     /**
-     * Show a notification banner about meaningful damage variance detected this turn.
-     * Includes a "Create Min/Max Branches" button that clones the current node
-     * into two sibling branches under the parent (one with min roll HP, one with max roll HP).
+     * Sort variance warnings by resolution priority:
+     * 1. Faster mover's damage rolls (KO variance) - highest
+     * 2. Faster mover's crit variance
+     * 3. Slower mover's damage rolls
+     * 4. Slower mover's crit variance
+     * 5. Secondary effects
+     * 6. Flinch
+     */
+    function sortVarianceByPriority(warnings, firstMover) {
+        return warnings.slice().sort(function (a, b) {
+            function getPriority(w) {
+                var d = w.detail || {};
+                if (d.minResult && d.maxResult && w.mover === firstMover) return 0;
+                if (d.isCrit && w.mover === firstMover) return 1;
+                if (d.minResult && d.maxResult && w.mover !== firstMover) return 2;
+                if (d.isCrit && w.mover !== firstMover) return 3;
+                if (d.isSecondary) return 4;
+                if (d.isFlinch) return 5;
+                return 6;
+            }
+            return getPriority(a) - getPriority(b);
+        });
+    }
+
+    /**
+     * Variance notification with priority-sorted warnings.
+     * "Branch All" creates hierarchical branches: faster mover resolves first,
+     * remaining variance becomes sub-branches under surviving outcomes.
      */
     function showVarianceNotification(warnings, parentNodeId, currentNodeId) {
-        var branchable = [];
-        var infoOnly = [];
+        var currentNode = uiState.tree.getNode(currentNodeId);
+        var firstMover = currentNode && currentNode.outcome && currentNode.outcome.effects
+            ? currentNode.outcome.effects.firstMover : 'p1';
 
-        warnings.forEach(function (w, idx) {
+        var sorted = sortVarianceByPriority(warnings, firstMover);
+
+        var branchable = [];
+        sorted.forEach(function (w, idx) {
             var d = w.detail || {};
             var canBranch = !!(d.minResult && d.maxResult) || d.isCrit || d.isSecondary || d.isFlinch;
-            if (canBranch) {
-                branchable.push({ warning: w, idx: idx });
-            } else {
-                infoOnly.push(w);
-            }
+            if (canBranch) branchable.push({ warning: w, idx: idx });
         });
 
-        var lines = warnings.map(function (w, idx) {
+        var lines = sorted.map(function (w, idx) {
             var moverLabel = w.mover === 'p1' ? 'Player' : 'Opponent';
             var icon = '';
             if (w.detail.isCrit) icon = '💥 ';
@@ -5266,20 +5302,29 @@
             else if (w.detail.isFlinch) icon = '💫 ';
             else if (w.detail.reason && w.detail.reason.indexOf('KO') !== -1) icon = '☠ ';
 
+            var priorityLabel = '';
+            if (branchable.length > 1) {
+                var bIdx = -1;
+                for (var bi = 0; bi < branchable.length; bi++) {
+                    if (branchable[bi].idx === idx) { bIdx = bi; break; }
+                }
+                if (bIdx === 0) priorityLabel = '<span class="variance-priority">1st</span> ';
+                else if (bIdx === 1) priorityLabel = '<span class="variance-priority">2nd</span> ';
+                else if (bIdx >= 2) priorityLabel = '<span class="variance-priority">' + (bIdx + 1) + 'th</span> ';
+            }
+
             var btnHtml = '';
             var isBranchable = branchable.some(function (b) { return b.idx === idx; });
             if (isBranchable) {
                 btnHtml = ' <button class="planner-btn planner-btn-xs variance-branch-single" data-vidx="' + idx + '">Branch</button>';
             }
 
-            return '<div class="variance-line">' + icon + '<strong>' + moverLabel + '</strong> ' +
+            return '<div class="variance-line">' + priorityLabel + icon + '<strong>' + moverLabel + '</strong> ' +
                 w.move + ': ' + w.detail.reason + btnHtml + '</div>';
         }).join('');
 
-        var hasMultiple = branchable.length > 1;
-
         var html = '<div class="variance-banner" id="variance-banner">' +
-            '<div class="variance-header">⚠ Variance Detected</div>' +
+            '<div class="variance-header">⚠ Variance Detected (ordered by speed priority)</div>' +
             '<div class="variance-body">' + lines + '</div>' +
             '<div class="variance-actions">' +
             (branchable.length > 0 ? '<button class="planner-btn planner-btn-sm planner-btn-accent" id="variance-branch-all">Branch All (' + branchable.length + ')</button>' : '') +
@@ -5293,18 +5338,14 @@
             $('#variance-banner').remove();
         });
 
+        // Hierarchical "Branch All": resolves faster mover first, nests remaining
         $('#variance-branch-all').on('click', function () {
-            branchable.forEach(function (b) {
-                createSingleVarianceBranch(b.warning, parentNodeId, currentNodeId);
-            });
-            // Remove the original turn node since it's now replaced by branches
+            var sortedWarnings = branchable.map(function (b) { return b.warning; });
+            createHierarchicalBranches(sortedWarnings, parentNodeId, currentNodeId);
             var parentNode = uiState.tree.getNode(parentNodeId);
             if (parentNode) {
                 var idx = parentNode.children.indexOf(currentNodeId);
-                if (idx !== -1) {
-                    parentNode.children.splice(idx, 1);
-                }
-                // Normalize sibling probabilities to sum to 1.0
+                if (idx !== -1) parentNode.children.splice(idx, 1);
                 normalizeSiblingProbabilities(parentNodeId);
             }
             uiState.tree.navigate(parentNodeId);
@@ -5318,13 +5359,10 @@
             var match = branchable.find(function (b) { return b.idx === vidx; });
             if (match) {
                 createSingleVarianceBranch(match.warning, parentNodeId, currentNodeId);
-                // Remove the original turn node since it's replaced by branches
                 var parentNode = uiState.tree.getNode(parentNodeId);
                 if (parentNode) {
                     var idx = parentNode.children.indexOf(currentNodeId);
-                    if (idx !== -1) {
-                        parentNode.children.splice(idx, 1);
-                    }
+                    if (idx !== -1) parentNode.children.splice(idx, 1);
                     normalizeSiblingProbabilities(parentNodeId);
                 }
                 $(this).closest('.variance-line').addClass('variance-branched');
@@ -5334,6 +5372,137 @@
                 renderStage();
             }
         });
+    }
+
+    /**
+     * Create hierarchical branches: process the first warning to create branches,
+     * then recursively attach remaining warnings as sub-branches under surviving outcomes.
+     */
+    function createHierarchicalBranches(sortedWarnings, parentNodeId, currentNodeId) {
+        if (sortedWarnings.length === 0) return;
+
+        var firstWarning = sortedWarnings[0];
+        var remaining = sortedWarnings.slice(1);
+
+        var branches = createVarianceBranchNodes(firstWarning, parentNodeId, currentNodeId);
+
+        if (remaining.length > 0 && branches.length > 0) {
+            branches.forEach(function (branch) {
+                if (!branch.node) return;
+                var defSide = firstWarning.mover === 'p1' ? 'p2' : 'p1';
+                var defAlive = branch.node.state[defSide].active && branch.node.state[defSide].active.currentHP > 0;
+                var atkAlive = branch.node.state[firstWarning.mover].active &&
+                    branch.node.state[firstWarning.mover].active.currentHP > 0;
+
+                if (defAlive && atkAlive) {
+                    var applicable = remaining.filter(function (w) {
+                        var wDefSide = w.mover === 'p1' ? 'p2' : 'p1';
+                        return branch.node.state[wDefSide].active &&
+                            branch.node.state[wDefSide].active.currentHP > 0;
+                    });
+                    if (applicable.length > 0) {
+                        createHierarchicalBranches(applicable, branch.node.id, branch.node.id);
+                    }
+                }
+            });
+        }
+    }
+
+    /**
+     * Create branch nodes for a single variance warning.
+     * Returns array of { node, isKO } objects for hierarchical branching.
+     */
+    function createVarianceBranchNodes(w, parentNodeId, currentNodeId) {
+        var currentNode = uiState.tree.getNode(currentNodeId);
+        if (!currentNode) return [];
+        var d = w.detail;
+        var defSide = w.mover === 'p1' ? 'p2' : 'p1';
+        var results = [];
+
+        if (d.minResult && d.maxResult) {
+            var minState = currentNode.state.clone();
+            minState[defSide].active.currentHP = Math.max(0, d.minResult.hp);
+            minState[defSide].active.percentHP = minState[defSide].active.maxHP > 0
+                ? Math.round((minState[defSide].active.currentHP / minState[defSide].active.maxHP) * 100) : 0;
+            minState[defSide].active.hasFainted = minState[defSide].active.currentHP <= 0;
+            if (d.minResult.itemConsumed) minState[defSide].active.item = '';
+            syncActiveToTeam(minState);
+            var survProb = d.surviveChance || 0.5;
+            var koProb = d.koChance || 0.5;
+            var survPct = CalcIntegration.formatProbability(survProb);
+            var koPct = CalcIntegration.formatProbability(koProb);
+            var minN = uiState.tree.addBranch(parentNodeId, minState, currentNode.actions,
+                new BattlePlanner.BattleOutcome('Survives (' + w.move + ', ' + survPct + ')', survProb, 0, { rollType: 'min' }));
+            markBranchKOs(minN, minState);
+            results.push({ node: minN, isKO: false });
+
+            var maxState = currentNode.state.clone();
+            maxState[defSide].active.currentHP = Math.max(0, d.maxResult.hp);
+            maxState[defSide].active.percentHP = maxState[defSide].active.maxHP > 0
+                ? Math.round((maxState[defSide].active.currentHP / maxState[defSide].active.maxHP) * 100) : 0;
+            maxState[defSide].active.hasFainted = maxState[defSide].active.currentHP <= 0;
+            if (d.maxResult.itemConsumed) maxState[defSide].active.item = '';
+            syncActiveToTeam(maxState);
+            var maxN = uiState.tree.addBranch(parentNodeId, maxState, currentNode.actions,
+                new BattlePlanner.BattleOutcome('KO (' + w.move + ', ' + koPct + ')', koProb, 0, { rollType: 'max' }));
+            markBranchKOs(maxN, maxState);
+            results.push({ node: maxN, isKO: true });
+
+        } else if (d.isCrit) {
+            var normState = currentNode.state.clone();
+            var normN = uiState.tree.addBranch(parentNodeId, normState, currentNode.actions,
+                new BattlePlanner.BattleOutcome('No Crit (' + w.move + ')', 0.9375, 0, { rollType: 'noCrit' }));
+            results.push({ node: normN, isKO: false });
+
+            var critState = currentNode.state.clone();
+            var critDef = critState[defSide].active;
+            var critDmg = Math.floor((d.critMin + d.critMax) / 2);
+            var normalDmg = Math.floor((d.normalMin + d.normalMax) / 2);
+            var dmgDiff = critDmg - normalDmg;
+            critDef.currentHP = Math.max(0, critDef.currentHP - dmgDiff);
+            critDef.percentHP = critDef.maxHP > 0 ? Math.round((critDef.currentHP / critDef.maxHP) * 100) : 0;
+            critDef.hasFainted = critDef.currentHP <= 0;
+            syncActiveToTeam(critState);
+            var critN = uiState.tree.addBranch(parentNodeId, critState, currentNode.actions,
+                new BattlePlanner.BattleOutcome('Crit! (' + w.move + ')', 0.0625, 0, { rollType: 'crit' }));
+            markBranchKOs(critN, critState);
+            results.push({ node: critN, isKO: critDef.currentHP <= 0 });
+
+        } else if (d.isSecondary && d.secondaryEffect) {
+            var sec = d.secondaryEffect;
+            var chance = sec.chance / 100;
+            var missState = currentNode.state.clone();
+            var missN = uiState.tree.addBranch(parentNodeId, missState, currentNode.actions,
+                new BattlePlanner.BattleOutcome('No Effect (' + w.move + ' ' + sec.chance + '%)', 1 - chance, 0, { rollType: 'noSecondary' }));
+            results.push({ node: missN, isKO: false });
+
+            var hitState = currentNode.state.clone();
+            var effTarget = hitState[defSide].active;
+            var effUser = hitState[w.mover].active;
+            if (sec.status && (!effTarget.status || effTarget.status === 'Healthy')) {
+                effTarget.status = normalizeStatus(sec.status);
+            }
+            if (sec.boosts) applyBoosts(effTarget, sec.boosts);
+            if (sec.selfBoosts) applyBoosts(effUser, sec.selfBoosts);
+            syncActiveToTeam(hitState);
+            var effectDesc = sec.status || (sec.boosts ? 'stat change' : sec.volatileStatus || 'effect');
+            var hitN = uiState.tree.addBranch(parentNodeId, hitState, currentNode.actions,
+                new BattlePlanner.BattleOutcome(effectDesc + ' (' + w.move + ' ' + sec.chance + '%)', chance, 0, { rollType: 'secondary' }));
+            results.push({ node: hitN, isKO: false });
+
+        } else if (d.isFlinch) {
+            var noFlinchState = currentNode.state.clone();
+            var noFlinchN = uiState.tree.addBranch(parentNodeId, noFlinchState, currentNode.actions,
+                new BattlePlanner.BattleOutcome('No Flinch (' + w.move + ')', 1 - d.flinchChance, 0, { rollType: 'noFlinch' }));
+            results.push({ node: noFlinchN, isKO: false });
+
+            var flinchState = currentNode.state.clone();
+            var flinchN = uiState.tree.addBranch(parentNodeId, flinchState, currentNode.actions,
+                new BattlePlanner.BattleOutcome('Flinch! (' + w.move + ' ' + Math.round(d.flinchChance * 100) + '%)', d.flinchChance, 0, { rollType: 'flinch' }));
+            results.push({ node: flinchN, isKO: false });
+        }
+
+        return results;
     }
 
     /**
@@ -5376,91 +5545,10 @@
     }
 
     /**
-     * Create branches for a single variance warning.
-     * Handles roll variance, crits, secondary effects, and flinch.
+     * Legacy wrapper: create branches for a single variance warning.
      */
     function createSingleVarianceBranch(w, parentNodeId, currentNodeId) {
-        var currentNode = uiState.tree.getNode(currentNodeId);
-        if (!currentNode) return;
-        var d = w.detail;
-        var defSide = w.mover === 'p1' ? 'p2' : 'p1';
-
-        if (d.minResult && d.maxResult) {
-            var minState = currentNode.state.clone();
-            minState[defSide].active.currentHP = Math.max(0, d.minResult.hp);
-            minState[defSide].active.percentHP = minState[defSide].active.maxHP > 0
-                ? Math.round((minState[defSide].active.currentHP / minState[defSide].active.maxHP) * 100) : 0;
-            minState[defSide].active.hasFainted = minState[defSide].active.currentHP <= 0;
-            if (d.minResult.itemConsumed) minState[defSide].active.item = '';
-            syncActiveToTeam(minState);
-            var survProb = d.surviveChance || 0.5;
-            var koProb = d.koChance || 0.5;
-            var survPct = CalcIntegration.formatProbability(survProb);
-            var koPct = CalcIntegration.formatProbability(koProb);
-            var minN = uiState.tree.addBranch(parentNodeId, minState, currentNode.actions,
-                new BattlePlanner.BattleOutcome('Survives (' + w.move + ', ' + survPct + ')', survProb, 0, { rollType: 'min' }));
-            markBranchKOs(minN, minState);
-
-            var maxState = currentNode.state.clone();
-            maxState[defSide].active.currentHP = Math.max(0, d.maxResult.hp);
-            maxState[defSide].active.percentHP = maxState[defSide].active.maxHP > 0
-                ? Math.round((maxState[defSide].active.currentHP / maxState[defSide].active.maxHP) * 100) : 0;
-            maxState[defSide].active.hasFainted = maxState[defSide].active.currentHP <= 0;
-            if (d.maxResult.itemConsumed) maxState[defSide].active.item = '';
-            syncActiveToTeam(maxState);
-            var maxN = uiState.tree.addBranch(parentNodeId, maxState, currentNode.actions,
-                new BattlePlanner.BattleOutcome('KO (' + w.move + ', ' + koPct + ')', koProb, 0, { rollType: 'max' }));
-            markBranchKOs(maxN, maxState);
-
-        } else if (d.isCrit) {
-            var normState = currentNode.state.clone();
-            var normOutcome = new BattlePlanner.BattleOutcome('No Crit (' + w.move + ')', 0.9375, 0, { rollType: 'noCrit' });
-            uiState.tree.addBranch(parentNodeId, normState, currentNode.actions, normOutcome);
-
-            var critState = currentNode.state.clone();
-            var critDef = critState[defSide].active;
-            var critDmg = Math.floor((d.critMin + d.critMax) / 2);
-            var normalDmg = Math.floor((d.normalMin + d.normalMax) / 2);
-            var dmgDiff = critDmg - normalDmg;
-            critDef.currentHP = Math.max(0, critDef.currentHP - dmgDiff);
-            critDef.percentHP = critDef.maxHP > 0 ? Math.round((critDef.currentHP / critDef.maxHP) * 100) : 0;
-            critDef.hasFainted = critDef.currentHP <= 0;
-            syncActiveToTeam(critState);
-            var critN = uiState.tree.addBranch(parentNodeId, critState, currentNode.actions,
-                new BattlePlanner.BattleOutcome('Crit! (' + w.move + ')', 0.0625, 0, { rollType: 'crit' }));
-            markBranchKOs(critN, critState);
-
-        } else if (d.isSecondary && d.secondaryEffect) {
-            var sec = d.secondaryEffect;
-            var chance = sec.chance / 100;
-
-            var missState = currentNode.state.clone();
-            uiState.tree.addBranch(parentNodeId, missState, currentNode.actions,
-                new BattlePlanner.BattleOutcome('No Effect (' + w.move + ' ' + sec.chance + '%)', 1 - chance, 0, { rollType: 'noSecondary' }));
-
-            var hitState = currentNode.state.clone();
-            var effTarget = hitState[defSide].active;
-            var effUser = hitState[w.mover].active;
-            if (sec.status && (!effTarget.status || effTarget.status === 'Healthy')) {
-                effTarget.status = normalizeStatus(sec.status);
-            }
-            if (sec.boosts) applyBoosts(effTarget, sec.boosts);
-            if (sec.selfBoosts) applyBoosts(effUser, sec.selfBoosts);
-            syncActiveToTeam(hitState);
-
-            var effectDesc = sec.status || (sec.boosts ? 'stat change' : sec.volatileStatus || 'effect');
-            uiState.tree.addBranch(parentNodeId, hitState, currentNode.actions,
-                new BattlePlanner.BattleOutcome(effectDesc + ' (' + w.move + ' ' + sec.chance + '%)', chance, 0, { rollType: 'secondary' }));
-
-        } else if (d.isFlinch) {
-            var noFlinchState = currentNode.state.clone();
-            uiState.tree.addBranch(parentNodeId, noFlinchState, currentNode.actions,
-                new BattlePlanner.BattleOutcome('No Flinch (' + w.move + ')', 1 - d.flinchChance, 0, { rollType: 'noFlinch' }));
-
-            var flinchState = currentNode.state.clone();
-            uiState.tree.addBranch(parentNodeId, flinchState, currentNode.actions,
-                new BattlePlanner.BattleOutcome('Flinch! (' + w.move + ' ' + Math.round(d.flinchChance * 100) + '%)', d.flinchChance, 0, { rollType: 'flinch' }));
-        }
+        createVarianceBranchNodes(w, parentNodeId, currentNodeId);
     }
 
     /**
@@ -5834,8 +5922,15 @@
                 }
 
                 // Secondary effect variance: moves with <100% chance effects
+                // Skip if the move guarantees a KO (secondary effects irrelevant on dead target)
                 function addSecondaryVariance(moveRes, moveName, mover) {
                     if (!moveRes || !moveRes.secondaryEffects) return;
+                    // If min roll KOs the target, secondary effects don't matter
+                    if (moveRes.range && moveRes.range.min > 0) {
+                        var defSide = mover === 'p1' ? 'p2' : 'p1';
+                        var defHP = state[defSide].active ? state[defSide].active.currentHP : 0;
+                        if (defHP > 0 && moveRes.range.min >= defHP) return;
+                    }
                     moveRes.secondaryEffects.forEach(function (sec) {
                         var desc = sec.chance + '% chance';
                         if (sec.status) desc += ' ' + sec.status;
@@ -6197,15 +6292,17 @@
             // Special case for moves like Rest
             if (moveName.toLowerCase() === 'rest') {
                 attacker.currentHP = attacker.maxHP;
-                attacker.status = 'slp'; // Rest puts you to sleep
+                attacker.status = 'slp';
             }
 
-            // Special case for Wish (would need turn tracking)
-            // For now just apply healing immediately if effect is toggled
+            // Special case for Wish
             if (moveName.toLowerCase() === 'wish' && applyEffect) {
                 var wishHeal = Math.floor(attacker.maxHP / 2);
                 attacker.currentHP = Math.min(attacker.maxHP, attacker.currentHP + wishHeal);
             }
+
+            // Edge case moves: item interaction
+            applyMoveItemEffects(attacker, defender, moveId, avgDamage);
 
             // Apply custom effects from the move effects modal
             // Pokemon can only have one status condition - don't overwrite existing status
@@ -6258,6 +6355,39 @@
     }
 
     /**
+     * Handle edge-case move effects: item stealing, removal, swapping.
+     * Bug Bite/Pluck steal + eat Berry, Knock Off removes item,
+     * Thief/Covet steal item, Trick/Switcheroo swap items, Incinerate destroys Berry.
+     */
+    function applyMoveItemEffects(attacker, defender, moveId, damage) {
+        if (!moveId || damage <= 0 || defender.currentHP < 0) return;
+        var defItem = defender.item || '';
+        var atkItem = attacker.item || '';
+        var isBerry = defItem && /berry/i.test(defItem);
+
+        var BERRY_STEAL_MOVES = { bugbite: 1, pluck: 1 };
+        var ITEM_REMOVE_MOVES = { knockoff: 1 };
+        var ITEM_STEAL_MOVES = { thief: 1, covet: 1 };
+        var ITEM_SWAP_MOVES = { trick: 1, switcheroo: 1 };
+        var BERRY_DESTROY_MOVES = { incinerate: 1 };
+
+        if (BERRY_STEAL_MOVES[moveId] && isBerry) {
+            defender.item = '';
+            // Berry is consumed by attacker (simplified: don't simulate berry effects on attacker)
+        } else if (ITEM_REMOVE_MOVES[moveId] && defItem) {
+            defender.item = '';
+        } else if (ITEM_STEAL_MOVES[moveId] && defItem && !atkItem) {
+            attacker.item = defItem;
+            defender.item = '';
+        } else if (ITEM_SWAP_MOVES[moveId]) {
+            attacker.item = defItem;
+            defender.item = atkItem;
+        } else if (BERRY_DESTROY_MOVES[moveId] && isBerry) {
+            defender.item = '';
+        }
+    }
+
+    /**
      * Apply move effects (status, stat changes, etc.)
      */
     function applyBoosts(pokemon, boostMap) {
@@ -6286,7 +6416,18 @@
     function applyGuaranteedMoveEffects(attacker, defender, moveData, state, moveResult) {
         if (!moveData) return;
 
-        var isSelfTarget = moveData.target === 'self' || moveData.target === 'allySide' || moveData.target === 'allyTeam';
+        var selfTargets = { self: 1, allySide: 1, allyTeam: 1, allies: 1, adjacentAllyOrSelf: 1, adjacentAlly: 1 };
+        var isSelfTarget = !!(selfTargets[moveData.target]);
+        // Also treat non-damaging moves that only have boosts as self-targeting
+        // (e.g., status moves with boosts but target="normal" are typically self-targeting if category is Status)
+        if (!isSelfTarget && moveData.category === 'Status' && moveData.boosts && !moveData.status && moveData.target === 'normal') {
+            // Check if the boosts are positive (self-buff) vs negative (debuff on opponent)
+            var hasPositiveBoost = Object.keys(moveData.boosts).some(function(k) { return moveData.boosts[k] > 0; });
+            var hasNegativeBoost = Object.keys(moveData.boosts).some(function(k) { return moveData.boosts[k] < 0; });
+            if (hasPositiveBoost && !hasNegativeBoost) {
+                isSelfTarget = true;
+            }
+        }
 
         if (moveData.status && !isSelfTarget && (!defender.status || defender.status === 'Healthy')) {
             defender.status = normalizeStatus(moveData.status);
