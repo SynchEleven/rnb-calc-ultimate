@@ -252,12 +252,15 @@
             }
         }
 
-        // Update percentHP and hasFainted on both sides
+        // Update percentHP, hasFainted, and turnsOnField on both sides
         ['p1', 'p2'].forEach(function (side) {
             var pokemon = state[side].active;
             if (!pokemon) return;
             pokemon.percentHP = pokemon.maxHP > 0 ? Math.round((pokemon.currentHP / pokemon.maxHP) * 100) : 0;
             pokemon.hasFainted = pokemon.currentHP <= 0;
+            if (pokemon.turnsOnField !== undefined) {
+                pokemon.turnsOnField++;
+            }
         });
 
         return effects;
@@ -414,6 +417,7 @@
         sideData.teamSlot = targetSlot;
         sideData.active = sideData.team[targetSlot].clone();
         sideData.active.boosts = { atk: 0, def: 0, spa: 0, spd: 0, spe: 0, accuracy: 0, evasion: 0 };
+        sideData.active.turnsOnField = 0;
 
         // Apply entry hazards
         var hazardEffects = applyEntryHazards(sideData.active, state.sides[side]);
@@ -544,6 +548,215 @@
         return best;
     }
 
+    /**
+     * Simulate applying a specific damage value to a defender, including item
+     * effects (Focus Sash, berry triggers). Returns the resulting HP.
+     *
+     * This does NOT mutate the original -- it works on copies of HP/item.
+     */
+    function simulateHPAfterDamage(defenderHP, defenderMaxHP, damage, item) {
+        var hp = defenderHP;
+        var itemConsumed = false;
+
+        // Focus Sash: survive with 1 HP if at full
+        if (item === 'Focus Sash' && hp === defenderMaxHP && damage >= hp) {
+            hp = 1;
+            itemConsumed = true;
+        } else {
+            hp = Math.max(0, hp - damage);
+        }
+
+        // Berry triggers (check after damage)
+        if (!itemConsumed && hp > 0) {
+            var pct = hp / defenderMaxHP;
+            if (item === 'Sitrus Berry' && pct <= 0.5) {
+                hp = Math.min(defenderMaxHP, hp + Math.floor(defenderMaxHP / 4));
+                itemConsumed = true;
+            } else if (item === 'Oran Berry' && pct <= 0.5) {
+                hp = Math.min(defenderMaxHP, hp + 10);
+                itemConsumed = true;
+            }
+        }
+
+        return { hp: hp, fainted: hp <= 0, itemConsumed: itemConsumed };
+    }
+
+    /**
+     * Detect whether min vs max damage roll produces a meaningfully different
+     * outcome (KO vs survive, berry trigger vs not, etc.).
+     *
+     * @param {object} defender   - PokemonSnapshot of the target
+     * @param {number} minDamage  - min roll damage
+     * @param {number} maxDamage  - max roll damage
+     *
+     * @returns {object|null} null if no meaningful difference, or:
+     *   { reason: string, minResult: { hp, fainted, itemConsumed },
+     *     maxResult: { hp, fainted, itemConsumed } }
+     */
+    function detectMeaningfulVariance(defender, minDamage, maxDamage) {
+        if (!defender || minDamage === maxDamage) return null;
+
+        var item = defender.item || '';
+        var hp = defender.currentHP;
+        var maxHP = defender.maxHP;
+
+        var minResult = simulateHPAfterDamage(hp, maxHP, minDamage, item);
+        var maxResult = simulateHPAfterDamage(hp, maxHP, maxDamage, item);
+
+        // KO difference
+        if (minResult.fainted !== maxResult.fainted) {
+            return {
+                reason: maxResult.fainted ? 'Max roll KOs, min roll survives' : 'Min roll KOs, max roll survives',
+                minResult: minResult,
+                maxResult: maxResult
+            };
+        }
+
+        // Berry/Sash trigger difference
+        if (minResult.itemConsumed !== maxResult.itemConsumed) {
+            return {
+                reason: (maxResult.itemConsumed ? 'Max' : 'Min') + ' roll triggers ' + item,
+                minResult: minResult,
+                maxResult: maxResult
+            };
+        }
+
+        // Significant HP difference that could matter later (>15% HP swing)
+        var hpDiff = Math.abs(minResult.hp - maxResult.hp);
+        if (hpDiff > 0 && maxHP > 0) {
+            var pctDiff = (hpDiff / maxHP) * 100;
+            if (pctDiff >= 15) {
+                return {
+                    reason: 'Roll variance is ' + Math.round(pctDiff) + '% HP (' + hpDiff + ' HP)',
+                    minResult: minResult,
+                    maxResult: maxResult
+                };
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Check accumulated roll variance across turns. Called after each turn to
+     * see if past roll differences now cross a KO threshold.
+     *
+     * @param {object} state - BattleStateSnapshot with rollVariance tracking
+     * @param {object} p1Range - { min, max } damage range for P1's move this turn
+     * @param {object} p2Range - { min, max } damage range for P2's move this turn
+     *
+     * @returns {object|null} { side: 'p1'|'p2', reason: string } if a retroactive split is warranted
+     */
+    function checkAccumulatedVariance(state, p1Range, p2Range) {
+        if (!state.rollVariance) {
+            state.rollVariance = {
+                p1DmgToP2: { minTotal: 0, maxTotal: 0 },
+                p2DmgToP1: { minTotal: 0, maxTotal: 0 }
+            };
+        }
+
+        var rv = state.rollVariance;
+        if (p1Range) {
+            rv.p1DmgToP2.minTotal += (p1Range.min || 0);
+            rv.p1DmgToP2.maxTotal += (p1Range.max || 0);
+        }
+        if (p2Range) {
+            rv.p2DmgToP1.minTotal += (p2Range.min || 0);
+            rv.p2DmgToP1.maxTotal += (p2Range.max || 0);
+        }
+
+        // Check if accumulated P1 damage variance causes different KO outcome for P2
+        var p2 = state.p2.active;
+        if (p2 && p2.currentHP > 0) {
+            var p2HPAfterAllMin = p2.maxHP - rv.p1DmgToP2.minTotal;
+            var p2HPAfterAllMax = p2.maxHP - rv.p1DmgToP2.maxTotal;
+            if ((p2HPAfterAllMin > 0) !== (p2HPAfterAllMax > 0)) {
+                return { side: 'p2', reason: 'Accumulated P1 rolls now determine P2 KO (' +
+                    rv.p1DmgToP2.minTotal + ' min vs ' + rv.p1DmgToP2.maxTotal + ' max total)' };
+            }
+        }
+
+        // Same for P2 damage to P1
+        var p1 = state.p1.active;
+        if (p1 && p1.currentHP > 0) {
+            var p1HPAfterAllMin = p1.maxHP - rv.p2DmgToP1.minTotal;
+            var p1HPAfterAllMax = p1.maxHP - rv.p2DmgToP1.maxTotal;
+            if ((p1HPAfterAllMin > 0) !== (p1HPAfterAllMax > 0)) {
+                return { side: 'p1', reason: 'Accumulated P2 rolls now determine P1 KO (' +
+                    rv.p2DmgToP1.minTotal + ' min vs ' + rv.p2DmgToP1.maxTotal + ' max total)' };
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Check whether a move causes flinch on the target.
+     *
+     * @param {object} moveData    - calc engine move data (with .secondary)
+     * @param {object} attacker    - PokemonSnapshot of the attacker
+     * @param {object} defender    - PokemonSnapshot of the defender
+     * @param {string} moveName    - name of the move
+     *
+     * @returns {object} { flinches: bool, chance: number, isGuaranteed: bool, blocked: bool, reason: string }
+     */
+    function checkFlinch(moveData, attacker, defender, moveName) {
+        var result = { flinches: false, chance: 0, isGuaranteed: false, blocked: false, reason: '' };
+
+        if (!moveData) return result;
+
+        // Check for flinch in secondary
+        var hasFlinch = false;
+        var flinchChance = 0;
+
+        if (moveData.secondary && moveData.secondary.volatileStatus === 'flinch') {
+            hasFlinch = true;
+            flinchChance = (moveData.secondary.chance || 100) / 100;
+        } else if (moveData.secondaries) {
+            for (var i = 0; i < moveData.secondaries.length; i++) {
+                if (moveData.secondaries[i].volatileStatus === 'flinch') {
+                    hasFlinch = true;
+                    flinchChance = (moveData.secondaries[i].chance || 100) / 100;
+                    break;
+                }
+            }
+        }
+
+        if (!hasFlinch) return result;
+
+        // Fake Out: only works on the first turn after being sent in
+        var mName = (moveName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (mName === 'fakeout') {
+            if (attacker.turnsOnField !== undefined && attacker.turnsOnField > 0) {
+                result.reason = 'Fake Out fails after first turn';
+                return result;
+            }
+        }
+
+        // Inner Focus: immune to flinch
+        var defAbility = (defender.ability || '').replace(/\s/g, '').toLowerCase();
+        if (defAbility === 'innerfocus') {
+            result.blocked = true;
+            result.reason = 'Inner Focus prevents flinch';
+            return result;
+        }
+
+        result.flinches = true;
+        result.chance = flinchChance;
+        result.isGuaranteed = flinchChance >= 1;
+        result.reason = result.isGuaranteed ? 'Guaranteed flinch' : (Math.round(flinchChance * 100) + '% flinch chance');
+
+        // Serene Grace doubles flinch chance
+        var atkAbility = (attacker.ability || '').replace(/\s/g, '').toLowerCase();
+        if (atkAbility === 'serenegrace' && !result.isGuaranteed) {
+            result.chance = Math.min(1, flinchChance * 2);
+            result.isGuaranteed = result.chance >= 1;
+            result.reason = (result.isGuaranteed ? 'Guaranteed' : Math.round(result.chance * 100) + '%') + ' flinch (Serene Grace)';
+        }
+
+        return result;
+    }
+
     // Export
     window.BattlePlannerLogic = {
         getMovePriority: getMovePriority,
@@ -555,6 +768,10 @@
         getHazardEffectiveness: getHazardEffectiveness,
         scoreAISwitchIn: scoreAISwitchIn,
         predictAISwitchIn: predictAISwitchIn,
+        simulateHPAfterDamage: simulateHPAfterDamage,
+        detectMeaningfulVariance: detectMeaningfulVariance,
+        checkAccumulatedVariance: checkAccumulatedVariance,
+        checkFlinch: checkFlinch,
         PRIORITY_MOVES: PRIORITY_MOVES
     };
 

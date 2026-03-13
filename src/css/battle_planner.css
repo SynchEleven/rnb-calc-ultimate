@@ -326,50 +326,158 @@ body.planner-active {
 }
 
 .tree-node {
-    padding: 4px 8px;
-    border-radius: 6px;
+    padding: 2px 0;
     cursor: pointer;
-    transition: background 0.15s;
+    position: relative;
 }
 
-.tree-node:hover {
+.tree-connector {
+    position: absolute;
+    left: -10px;
+    top: 0;
+    bottom: 50%;
+    width: 10px;
+    border-left: 2px solid var(--planner-border);
+    border-bottom: 2px solid var(--planner-border);
+    border-radius: 0 0 0 6px;
+}
+
+.tree-node-card {
     background: var(--planner-card-bg);
+    border: 1px solid var(--planner-border);
+    border-radius: 6px;
+    padding: 6px 8px;
+    transition: border-color 0.15s, background 0.15s;
 }
 
-.tree-node-current {
-    background: var(--planner-accent) !important;
+.tree-node:hover .tree-node-card {
+    border-color: var(--planner-accent);
 }
 
-.tree-node-current .tree-node-label {
-    font-weight: 600;
+.tree-node-current .tree-node-card {
+    border-color: var(--planner-accent);
+    background: rgba(29, 155, 240, 0.1);
 }
 
-.tree-node-best .tree-node-label::before {
-    content: '✓ ';
-    color: var(--planner-success);
+.tree-node-best .tree-node-card {
+    border-left: 3px solid var(--planner-success);
 }
 
-.tree-node-worst .tree-node-label::before {
-    content: '✗ ';
-    color: var(--planner-danger);
+.tree-node-worst .tree-node-card {
+    border-left: 3px solid var(--planner-danger);
 }
 
-.tree-node-content {
+.tree-node-header {
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: 13px;
+    font-size: 12px;
+    margin-bottom: 4px;
+}
+
+.tree-turn-badge {
+    font-weight: 700;
+    font-size: 11px;
+    background: var(--planner-bg);
+    padding: 1px 6px;
+    border-radius: 4px;
+    color: var(--planner-accent);
 }
 
 .tree-node-toggle {
-    width: 16px;
+    width: 14px;
     text-align: center;
     font-size: 10px;
     color: var(--planner-text-muted);
+    flex-shrink: 0;
 }
 
 .tree-node-leaf {
     font-size: 8px;
+}
+
+.tree-node-delete {
+    margin-left: auto;
+    background: transparent;
+    border: none;
+    color: var(--planner-danger);
+    font-size: 16px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s;
+    padding: 0 4px;
+    line-height: 1;
+}
+
+.tree-node:hover .tree-node-delete {
+    opacity: 0.6;
+}
+
+.tree-node-delete:hover {
+    opacity: 1 !important;
+}
+
+.tree-node-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-bottom: 4px;
+}
+
+.tree-action {
+    font-size: 11px;
+    padding: 1px 4px;
+    border-radius: 3px;
+}
+
+.tree-action-p1 {
+    color: var(--planner-p1);
+}
+
+.tree-action-p2 {
+    color: var(--planner-p2);
+}
+
+.tree-action-side {
+    font-weight: 700;
+    font-size: 10px;
+    text-transform: uppercase;
+}
+
+.tree-node-hp-row {
+    display: flex;
+    gap: 8px;
+}
+
+.tree-node-hp-entry {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex: 1;
+}
+
+.tree-hp-label {
+    font-size: 10px;
+    color: var(--planner-text-muted);
+    min-width: 30px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.tree-hp-val {
+    font-size: 10px;
+    color: var(--planner-text-muted);
+    white-space: nowrap;
+}
+
+.tree-variance-icon {
+    color: #ffb74d;
+    font-size: 12px;
+}
+
+.tree-flinch-icon {
+    font-size: 12px;
 }
 
 .tree-node-label {
@@ -380,10 +488,12 @@ body.planner-active {
 }
 
 .tree-node-hp {
-    display: flex;
-    width: 40px;
-    height: 6px;
-    gap: 2px;
+    flex: 1;
+    height: 8px;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 4px;
+    overflow: hidden;
+    max-width: 80px;
 }
 
 .tree-node-hp .hp-p1,
@@ -2457,7 +2567,7 @@ body.planner-active {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
     grid-template-rows: repeat(2, auto);
-    gap: 6px;
+    gap: 8px;
     flex: 1;
     min-height: 0;
 }
@@ -2466,12 +2576,12 @@ body.planner-active {
     background: var(--planner-panel-bg);
     border: 2px solid var(--planner-border);
     border-radius: 8px;
-    padding: 8px 10px;
+    padding: 10px 12px;
     cursor: pointer;
     transition: all 0.15s;
     display: flex;
     flex-direction: column;
-    gap: 3px;
+    gap: 5px;
     text-align: left;
     color: var(--planner-text);
 }
@@ -2562,36 +2672,46 @@ body.planner-active {
 
 .dmg-range {
     font-weight: 700;
-    font-size: 13px;
+    font-size: 15px;
     color: var(--planner-warning);
 }
 
 .dmg-percent {
-    font-size: 13px;
+    font-size: 14px;
     color: var(--planner-text-muted);
 }
 
 .crit-range {
-    font-size: 11px;
+    font-size: 13px;
     color: #ff6b6b;
 }
 
 .status-label {
     color: #9c27b0;
     font-weight: 600;
-    font-size: 13px;
+    font-size: 14px;
 }
 
 .status-effect {
-    font-size: 11px;
+    font-size: 12px;
     background: rgba(156, 39, 176, 0.2);
-    padding: 1px 6px;
+    padding: 2px 8px;
     border-radius: 3px;
 }
 
 .boost-effect {
-    font-size: 11px;
+    font-size: 12px;
     color: #4caf50;
+}
+
+.move-cell-desc {
+    font-size: 11px;
+    color: var(--planner-text-muted);
+    opacity: 0.8;
+    line-height: 1.3;
+    margin-top: 2px;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    padding-top: 3px;
 }
 
 .multihit-badge {
@@ -2965,17 +3085,15 @@ body.planner-active {
 }
 
 /* ============================================
-   IMPROVED TREE NODE HP BARS
+   IMPROVED TREE NODE HP BARS (overrides)
    ============================================ */
-.tree-node-hp {
-    display: flex;
-    gap: 2px;
-    width: 60px;
+.tree-node-hp-entry .tree-node-hp {
+    flex: 1;
     height: 8px;
-    background: #333;
+    background: rgba(0, 0, 0, 0.3);
     border-radius: 4px;
     overflow: hidden;
-    margin-left: auto;
+    max-width: 80px;
 }
 
 .hp-bar-p1,
@@ -3833,4 +3951,152 @@ body.planner-active {
     font-size: 11px;
     color: var(--planner-text-muted);
     margin-left: auto;
+}
+
+/* Variance Detection Banner */
+.variance-banner {
+    padding: 10px 14px;
+    background: rgba(255, 152, 0, 0.12);
+    border: 1px solid rgba(255, 152, 0, 0.4);
+    border-radius: 8px;
+    margin-bottom: 8px;
+}
+
+.variance-header {
+    font-weight: 700;
+    font-size: 13px;
+    color: #ffb74d;
+    margin-bottom: 6px;
+}
+
+.variance-body {
+    font-size: 12px;
+    color: var(--planner-text);
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.variance-line {
+    padding: 2px 0;
+}
+
+.variance-actions {
+    margin-top: 8px;
+    display: flex;
+    gap: 8px;
+}
+
+/* Pokedex Slide-in Panel */
+.dex-tab {
+    position: absolute;
+    top: 8px;
+    right: 16px;
+    background: var(--planner-accent);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 4px 10px;
+    border-radius: 0 0 6px 6px;
+    cursor: pointer;
+    z-index: 20;
+    letter-spacing: 1px;
+    transition: background 0.2s;
+}
+
+.dex-tab:hover {
+    background: #1a7ac7;
+}
+
+.dex-panel {
+    background: var(--planner-panel-bg);
+    border: 1px solid var(--planner-border);
+    border-radius: 0 0 10px 10px;
+    margin-bottom: 8px;
+    overflow: hidden;
+}
+
+.dex-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 14px;
+    background: rgba(0, 0, 0, 0.25);
+    border-bottom: 1px solid var(--planner-border);
+}
+
+.dex-panel-title {
+    font-weight: 700;
+    font-size: 14px;
+}
+
+.dex-panel-close {
+    background: none;
+    border: none;
+    color: var(--planner-text-muted);
+    font-size: 18px;
+    cursor: pointer;
+    padding: 0 4px;
+}
+
+.dex-panel-body {
+    padding: 10px 14px;
+    font-size: 13px;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.dex-placeholder {
+    color: var(--planner-text-muted);
+    font-style: italic;
+}
+
+.dex-info {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.dex-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.dex-label {
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    color: var(--planner-text-muted);
+    min-width: 75px;
+    flex-shrink: 0;
+}
+
+.dex-stats {
+    font-family: monospace;
+    font-size: 12px;
+}
+
+.dex-stats em {
+    color: var(--planner-text-muted);
+    font-style: normal;
+    margin-left: 4px;
+}
+
+/* Planner Tooltip */
+.planner-tooltip {
+    position: absolute;
+    z-index: 9999;
+    background: #1a1a2e;
+    color: #e0e0e0;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 12px;
+    line-height: 1.4;
+    max-width: 300px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+    pointer-events: none;
+    white-space: normal;
+    word-wrap: break-word;
 }

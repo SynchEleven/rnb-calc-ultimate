@@ -970,3 +970,220 @@ describe('predictAISwitchIn', () => {
     expect(result.slot).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// checkFlinch
+// ---------------------------------------------------------------------------
+describe('checkFlinch', () => {
+  function makeMoveWithFlinch(chance) {
+    return {
+      secondary: { volatileStatus: 'flinch', chance: chance }
+    };
+  }
+
+  function makeAttacker(overrides) {
+    return Object.assign({ ability: '', turnsOnField: 0 }, overrides);
+  }
+
+  function makeDefender(overrides) {
+    return Object.assign({ ability: '' }, overrides);
+  }
+
+  test('returns no flinch for moves without flinch effect', () => {
+    const result = Logic.checkFlinch({ secondary: null }, makeAttacker(), makeDefender(), 'Tackle');
+    expect(result.flinches).toBe(false);
+    expect(result.chance).toBe(0);
+  });
+
+  test('Fake Out causes guaranteed flinch on first turn', () => {
+    const result = Logic.checkFlinch(makeMoveWithFlinch(100), makeAttacker({ turnsOnField: 0 }), makeDefender(), 'Fake Out');
+    expect(result.flinches).toBe(true);
+    expect(result.isGuaranteed).toBe(true);
+    expect(result.chance).toBe(1);
+  });
+
+  test('Fake Out fails after first turn', () => {
+    const result = Logic.checkFlinch(makeMoveWithFlinch(100), makeAttacker({ turnsOnField: 1 }), makeDefender(), 'Fake Out');
+    expect(result.flinches).toBe(false);
+    expect(result.reason).toContain('fails after first turn');
+  });
+
+  test('Rock Slide has 30% flinch chance', () => {
+    const result = Logic.checkFlinch(makeMoveWithFlinch(30), makeAttacker(), makeDefender(), 'Rock Slide');
+    expect(result.flinches).toBe(true);
+    expect(result.chance).toBe(0.3);
+    expect(result.isGuaranteed).toBe(false);
+  });
+
+  test('Inner Focus blocks flinch', () => {
+    const result = Logic.checkFlinch(makeMoveWithFlinch(100), makeAttacker(), makeDefender({ ability: 'Inner Focus' }), 'Fake Out');
+    expect(result.flinches).toBe(false);
+    expect(result.blocked).toBe(true);
+    expect(result.reason).toContain('Inner Focus');
+  });
+
+  test('Serene Grace doubles flinch chance', () => {
+    const result = Logic.checkFlinch(makeMoveWithFlinch(30), makeAttacker({ ability: 'Serene Grace' }), makeDefender(), 'Iron Head');
+    expect(result.flinches).toBe(true);
+    expect(result.chance).toBe(0.6);
+  });
+
+  test('Serene Grace makes 60% flinch guaranteed at 100%+ cap', () => {
+    const result = Logic.checkFlinch(makeMoveWithFlinch(50), makeAttacker({ ability: 'Serene Grace' }), makeDefender(), 'Air Slash');
+    expect(result.flinches).toBe(true);
+    expect(result.chance).toBe(1);
+    expect(result.isGuaranteed).toBe(true);
+  });
+
+  test('no flinch data returns default result', () => {
+    const result = Logic.checkFlinch({}, makeAttacker(), makeDefender(), 'Thunderbolt');
+    expect(result.flinches).toBe(false);
+  });
+
+  test('null moveData returns default result', () => {
+    const result = Logic.checkFlinch(null, makeAttacker(), makeDefender(), 'Splash');
+    expect(result.flinches).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// simulateHPAfterDamage
+// ---------------------------------------------------------------------------
+describe('simulateHPAfterDamage', () => {
+  test('normal damage reduces HP', () => {
+    const result = Logic.simulateHPAfterDamage(100, 100, 30, '');
+    expect(result.hp).toBe(70);
+    expect(result.fainted).toBe(false);
+  });
+
+  test('lethal damage causes faint', () => {
+    const result = Logic.simulateHPAfterDamage(50, 100, 60, '');
+    expect(result.hp).toBe(0);
+    expect(result.fainted).toBe(true);
+  });
+
+  test('Focus Sash saves at full HP', () => {
+    const result = Logic.simulateHPAfterDamage(100, 100, 200, 'Focus Sash');
+    expect(result.hp).toBe(1);
+    expect(result.fainted).toBe(false);
+    expect(result.itemConsumed).toBe(true);
+  });
+
+  test('Focus Sash does not activate at non-full HP', () => {
+    const result = Logic.simulateHPAfterDamage(99, 100, 200, 'Focus Sash');
+    expect(result.hp).toBe(0);
+    expect(result.fainted).toBe(true);
+    expect(result.itemConsumed).toBe(false);
+  });
+
+  test('Sitrus Berry triggers at 50% or below', () => {
+    const result = Logic.simulateHPAfterDamage(80, 100, 40, 'Sitrus Berry');
+    expect(result.hp).toBe(65); // 80 - 40 = 40, then +25
+    expect(result.itemConsumed).toBe(true);
+  });
+
+  test('Sitrus Berry does not trigger above 50%', () => {
+    const result = Logic.simulateHPAfterDamage(80, 100, 20, 'Sitrus Berry');
+    expect(result.hp).toBe(60); // 80 - 20 = 60, which is >50%
+    expect(result.itemConsumed).toBe(false);
+  });
+
+  test('Oran Berry triggers at 50% or below', () => {
+    const result = Logic.simulateHPAfterDamage(40, 80, 10, 'Oran Berry');
+    expect(result.hp).toBe(40); // 40 - 10 = 30, then +10 = 40
+    expect(result.itemConsumed).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// detectMeaningfulVariance
+// ---------------------------------------------------------------------------
+describe('detectMeaningfulVariance', () => {
+  test('returns null when min === max', () => {
+    const result = Logic.detectMeaningfulVariance({ currentHP: 100, maxHP: 100, item: '' }, 50, 50);
+    expect(result).toBeNull();
+  });
+
+  test('detects KO difference', () => {
+    const result = Logic.detectMeaningfulVariance(
+      { currentHP: 55, maxHP: 100, item: '' },
+      50, 60
+    );
+    expect(result).not.toBeNull();
+    expect(result.reason).toContain('KO');
+    expect(result.minResult.fainted).toBe(false);
+    expect(result.maxResult.fainted).toBe(true);
+  });
+
+  test('detects berry trigger difference', () => {
+    const result = Logic.detectMeaningfulVariance(
+      { currentHP: 60, maxHP: 100, item: 'Sitrus Berry' },
+      8, 12
+    );
+    // 60-8=52 (>50%, no berry), 60-12=48 (<=50%, berry triggers +25=73)
+    expect(result).not.toBeNull();
+    expect(result.reason).toContain('Sitrus Berry');
+    expect(result.minResult.itemConsumed).toBe(false);
+    expect(result.maxResult.itemConsumed).toBe(true);
+  });
+
+  test('returns null for insignificant variance', () => {
+    const result = Logic.detectMeaningfulVariance(
+      { currentHP: 200, maxHP: 200, item: '' },
+      50, 55
+    );
+    // 5 HP difference out of 200 = 2.5%, below 15% threshold
+    expect(result).toBeNull();
+  });
+
+  test('detects large HP variance (>15%)', () => {
+    const result = Logic.detectMeaningfulVariance(
+      { currentHP: 100, maxHP: 100, item: '' },
+      10, 30
+    );
+    // 20 HP difference = 20%
+    expect(result).not.toBeNull();
+    expect(result.reason).toContain('20%');
+  });
+
+  test('Focus Sash difference between min and max roll', () => {
+    const result = Logic.detectMeaningfulVariance(
+      { currentHP: 100, maxHP: 100, item: 'Focus Sash' },
+      90, 110
+    );
+    // min: 100-90=10 (survives normally), max: Focus Sash saves to 1
+    expect(result).not.toBeNull();
+    expect(result.maxResult.itemConsumed).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// turnsOnField tracking
+// ---------------------------------------------------------------------------
+describe('turnsOnField tracking', () => {
+  test('performSwitch resets turnsOnField to 0', () => {
+    const state = makeState(
+      { name: 'Pikachu', turnsOnField: 3 },
+      { name: 'Raichu' }
+    );
+    state.p1.team = [
+      makePokemon({ name: 'Pikachu', currentHP: 100, maxHP: 100 }),
+      makePokemon({ name: 'Charizard', currentHP: 100, maxHP: 100, turnsOnField: 5 })
+    ];
+    state.p1.teamSlot = 0;
+
+    Logic.performSwitch(state, 'p1', 1);
+    expect(state.p1.active.turnsOnField).toBe(0);
+  });
+
+  test('applyEndOfTurnEffects increments turnsOnField', () => {
+    const state = makeState(
+      { name: 'Pikachu', turnsOnField: 0 },
+      { name: 'Raichu', turnsOnField: 2 }
+    );
+
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.turnsOnField).toBe(1);
+    expect(state.p2.active.turnsOnField).toBe(3);
+  });
+});

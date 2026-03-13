@@ -167,6 +167,7 @@ function PokemonSnapshot(pokemon) {
         this.ivs = { hp: 31, atk: 31, def: 31, spa: 31, spd: 31, spe: 31 };
         this.isActive = true;
         this.hasFainted = false;
+        this.turnsOnField = 0;
         this._pokemonData = null;
         return;
     }
@@ -254,6 +255,7 @@ function PokemonSnapshot(pokemon) {
     // State flags
     this.isActive = true;
     this.hasFainted = this.currentHP <= 0;
+    this.turnsOnField = 0;
     
     // Store reference for later recreation
     this._pokemonData = pokemon;
@@ -309,6 +311,7 @@ PokemonSnapshot.prototype.clone = function() {
     clone.ivs = Object.assign({}, this.ivs);
     clone.isActive = this.isActive;
     clone.hasFainted = this.hasFainted;
+    clone.turnsOnField = this.turnsOnField || 0;
     clone._pokemonData = this._pokemonData;
     return clone;
 };
@@ -457,6 +460,7 @@ function BattleStateSnapshot() {
             mist: false
         }
     };
+    this.rollVariance = null;
 }
 
 BattleStateSnapshot.prototype.clone = function() {

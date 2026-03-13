@@ -173,6 +173,7 @@
                 }
             </style>
             <div id="battle-planner" class="battle-planner-container" style="display: none;">
+                <div class="planner-tooltip" id="planner-tooltip" style="display:none;"></div>
                 <div class="planner-header">
                     <h2 class="planner-title">
                         <span class="planner-icon">⚔️</span>
@@ -228,6 +229,17 @@
                             </div>
                         </div>
                         <div class="panel-content" id="stage-container">
+                            <!-- Pokedex Slide-in Panel -->
+                            <div class="dex-tab" id="dex-tab">DEX</div>
+                            <div class="dex-panel" id="dex-panel" style="display:none;">
+                                <div class="dex-panel-header">
+                                    <span class="dex-panel-title" id="dex-title">Pokedex</span>
+                                    <button class="dex-panel-close" id="dex-close">&times;</button>
+                                </div>
+                                <div class="dex-panel-body" id="dex-body">
+                                    <p class="dex-placeholder">Hover over a Pokemon to view its Dex entry.</p>
+                                </div>
+                            </div>
                             <!-- Speed Comparison Bar -->
                             <div class="speed-comparison-bar" id="speed-comparison">
                                 <span class="speed-icon">⚡</span>
@@ -862,6 +874,13 @@
                 uiState.p2BoxHoverOverride = null;
             }
             renderStage();
+
+            // Update dex panel on hover
+            var currentNode = uiState.tree ? uiState.tree.getCurrentNode() : null;
+            if (currentNode) {
+                var team = currentNode.state[side].team;
+                if (team && team[index]) updateDexPanel(team[index].name);
+            }
         });
 
         // Hover preview for box slots
@@ -977,6 +996,17 @@
             toggleNodeExpand($(this).closest('.tree-node').data('node-id'));
         });
 
+        // Inline tree node delete
+        $(document).on('click', '.tree-node-delete', function (e) {
+            e.stopPropagation();
+            var nodeId = $(this).data('node-id');
+            if (nodeId && confirm('Delete this branch and all its children?')) {
+                uiState.tree.removeNode(nodeId);
+                renderTree();
+                renderStage();
+            }
+        });
+
         // Move selection (from Pokemon cards - redirect to move details panel)
         $(document).on('click', '.move-pill', function () {
             var moveIndex = $(this).data('move-index');
@@ -1008,6 +1038,55 @@
         $(document).on('click', '#p2-nav-prev, #p2-nav-next', function () {
             var direction = $(this).attr('id') === 'p2-nav-next' ? 1 : -1;
             cycleP2Pokemon(direction);
+        });
+
+        // Tooltips for items, abilities, moves
+        $(document).on('mouseenter', '.item-badge, .card-ability, .move-cell-name, .status-badge', function (e) {
+            var $el = $(this);
+            var desc = '';
+            if ($el.hasClass('item-badge') && window.RBDex) {
+                var itemText = $el.text().replace(/^🎒\s*/, '').trim();
+                desc = window.RBDex.getItemDesc(itemText);
+            } else if ($el.hasClass('card-ability') && window.RBDex) {
+                desc = window.RBDex.getAbilityDesc($el.text().trim());
+            } else if ($el.hasClass('move-cell-name') && window.RBDex) {
+                desc = window.RBDex.getMoveDesc($el.text().trim());
+            } else if ($el.hasClass('status-badge')) {
+                var st = $el.text().trim().toLowerCase();
+                var statusDescs = {
+                    'poisoned': 'Loses 1/8 max HP each turn.',
+                    'badly poisoned': 'Loses increasing HP each turn (1/16, 2/16, 3/16...).',
+                    'burned': 'Loses 1/8 max HP each turn. Physical attack halved.',
+                    'paralyzed': 'Speed quartered. 25% chance to be fully paralyzed.',
+                    'asleep': 'Cannot move for 1-3 turns.',
+                    'frozen': 'Cannot move. 20% chance to thaw each turn.'
+                };
+                desc = statusDescs[st] || '';
+            }
+            if (desc) {
+                var offset = $el.offset();
+                var plannerOffset = $('#battle-planner').offset();
+                $('#planner-tooltip')
+                    .text(desc)
+                    .css({
+                        top: (offset.top - plannerOffset.top - 8) + 'px',
+                        left: (offset.left - plannerOffset.left) + 'px',
+                        transform: 'translateY(-100%)'
+                    })
+                    .show();
+            }
+        });
+        $(document).on('mouseleave', '.item-badge, .card-ability, .move-cell-name, .status-badge', function () {
+            $('#planner-tooltip').hide();
+        });
+
+        // Dex panel toggle
+        $(document).on('click', '#dex-tab', function () {
+            var panel = $('#dex-panel');
+            panel.is(':visible') ? panel.slideUp(200) : panel.slideDown(200);
+        });
+        $(document).on('click', '#dex-close', function () {
+            $('#dex-panel').slideUp(200);
         });
 
         // Execute Turn button
@@ -1840,13 +1919,13 @@
         var isExpanded = uiState.expandedNodes[nodeId] !== false;
         var isCurrentNode = nodeId === uiState.tree.currentNodeId;
         var hasChildren = node.children.length > 0;
+        var isRoot = !node.parentId;
 
         var nodeClasses = ['tree-node'];
         if (isCurrentNode) nodeClasses.push('tree-node-current');
         if (node.isBestCase) nodeClasses.push('tree-node-best');
         if (node.isWorstCase) nodeClasses.push('tree-node-worst');
 
-        // Calculate HP percentages properly
         var p1Active = node.state.p1.active;
         var p2Active = node.state.p2.active;
         var p1HP = 0, p2HP = 0;
@@ -1857,54 +1936,95 @@
             p2HP = Math.round((p2Active.currentHP / p2Active.maxHP) * 100);
         }
 
-        // HP colors
         var p1Color = p1HP > 50 ? 'hp-green' : p1HP > 20 ? 'hp-yellow' : 'hp-red';
         var p2Color = p2HP > 50 ? 'hp-green' : p2HP > 20 ? 'hp-yellow' : 'hp-red';
 
-        // Check for KOs
         var p1KO = p1Active && p1Active.currentHP <= 0;
         var p2KO = p2Active && p2Active.currentHP <= 0;
         if (p1KO) nodeClasses.push('tree-node-p1ko');
         if (p2KO) nodeClasses.push('tree-node-p2ko');
 
-        var label = node.id === uiState.tree.rootId ? 'Start' : node.getFullLabel();
-        var probText = '';
-        if (node.outcome && node.outcome.probability < 1) {
-            probText = CalcIntegration.formatProbability(node.outcome.probability);
+        var p1Name = p1Active ? p1Active.name : '?';
+        var p2Name = p2Active ? p2Active.name : '?';
+        var p1HPText = p1Active ? (p1Active.currentHP + '/' + p1Active.maxHP) : '?';
+        var p2HPText = p2Active ? (p2Active.currentHP + '/' + p2Active.maxHP) : '?';
+
+        var turnLabel = 'T' + (node.state.turnNumber || 0);
+
+        // Build P1/P2 action descriptions
+        var p1ActionText = '';
+        var p2ActionText = '';
+        if (node.actions && node.actions.p1) {
+            p1ActionText = node.actions.p1.type === 'switch'
+                ? 'Switch to ' + (node.actions.p1.targetName || '?')
+                : (node.actions.p1.moveName || '?');
+        }
+        if (node.actions && node.actions.p2) {
+            p2ActionText = node.actions.p2.type === 'switch'
+                ? 'Switch to ' + (node.actions.p2.targetName || '?')
+                : (node.actions.p2.moveName || '?');
         }
 
-        // Build tooltip with full details
-        var p1Name = p1Active ? p1Active.name : 'P1';
-        var p2Name = p2Active ? p2Active.name : 'P2';
-        var p1HPText = p1Active ? (p1Active.currentHP + '/' + p1Active.maxHP) : '?/?';
-        var p2HPText = p2Active ? (p2Active.currentHP + '/' + p2Active.maxHP) : '?/?';
-        var tooltip = p1Name + ': ' + p1HPText + ' | ' + p2Name + ': ' + p2HPText;
-        if (node.outcome && node.outcome.description) {
-            tooltip += '\n' + node.outcome.description;
+        var html = '<div class="' + nodeClasses.join(' ') + '" data-node-id="' + nodeId + '" style="margin-left: ' + (depth * 20) + 'px;">';
+
+        // Connector line
+        if (depth > 0) {
+            html += '<div class="tree-connector"></div>';
         }
 
-        var html = '<div class="' + nodeClasses.join(' ') + '" data-node-id="' + nodeId + '" style="margin-left: ' + (depth * 16) + 'px;" title="' + tooltip.replace(/"/g, '&quot;') + '">';
-        html += '<div class="tree-node-content">';
+        html += '<div class="tree-node-card">';
 
+        // Header row: toggle, turn badge, KO markers, delete
+        html += '<div class="tree-node-header">';
         if (hasChildren) {
             html += '<span class="tree-node-toggle">' + (isExpanded ? '▼' : '▶') + '</span>';
         } else {
             html += '<span class="tree-node-toggle tree-node-leaf">○</span>';
         }
+        html += '<span class="tree-turn-badge">' + turnLabel + '</span>';
 
-        html += '<span class="tree-node-label">' + label + '</span>';
-        html += '<span class="tree-node-hp">';
-        html += '<span class="hp-bar-p1 ' + p1Color + '" style="width:' + Math.max(0, p1HP) + '%"></span>';
-        html += '<span class="hp-bar-p2 ' + p2Color + '" style="width:' + Math.max(0, p2HP) + '%"></span>';
-        html += '</span>';
+        if (p1KO) html += '<span class="tree-ko-marker p1-ko">✗ ' + p1Name + '</span>';
+        if (p2KO) html += '<span class="tree-ko-marker p2-ko">✓ ' + p2Name + '</span>';
 
-        if (probText) {
-            html += '<span class="tree-node-prob">' + probText + '</span>';
+        // Variance warning icon
+        if (node.outcome && node.outcome.varianceWarnings && node.outcome.varianceWarnings.length > 0) {
+            html += '<span class="tree-variance-icon" title="Roll variance detected">⚠</span>';
         }
 
-        // KO markers
-        if (p1KO) html += '<span class="tree-ko-marker p1-ko">✗</span>';
-        if (p2KO) html += '<span class="tree-ko-marker p2-ko">✓</span>';
+        // Flinch icon
+        if (node.outcome && node.outcome.effects && node.outcome.effects.flinchResult &&
+            node.outcome.effects.flinchResult.flinches && node.outcome.effects.flinchResult.isGuaranteed) {
+            html += '<span class="tree-flinch-icon" title="Flinch!">💫</span>';
+        }
+
+        // Inline delete button (hidden by default, shown on hover)
+        if (!isRoot) {
+            html += '<button class="tree-node-delete" data-node-id="' + nodeId + '" title="Delete this branch">&times;</button>';
+        }
+
+        html += '</div>';
+
+        // Action rows (only if not root)
+        if (p1ActionText || p2ActionText) {
+            html += '<div class="tree-node-actions">';
+            if (p1ActionText) {
+                html += '<div class="tree-action tree-action-p1"><span class="tree-action-side">P1</span> ' + p1Name + ': ' + p1ActionText + '</div>';
+            }
+            if (p2ActionText) {
+                html += '<div class="tree-action tree-action-p2"><span class="tree-action-side">P2</span> ' + p2Name + ': ' + p2ActionText + '</div>';
+            }
+            html += '</div>';
+        }
+
+        // HP bars row
+        html += '<div class="tree-node-hp-row">';
+        html += '<div class="tree-node-hp-entry"><span class="tree-hp-label">' + p1Name + '</span>';
+        html += '<span class="tree-node-hp"><span class="hp-bar-p1 ' + p1Color + '" style="width:' + Math.max(0, p1HP) + '%"></span></span>';
+        html += '<span class="tree-hp-val">' + p1HPText + '</span></div>';
+        html += '<div class="tree-node-hp-entry"><span class="tree-hp-label">' + p2Name + '</span>';
+        html += '<span class="tree-node-hp"><span class="hp-bar-p2 ' + p2Color + '" style="width:' + Math.max(0, p2HP) + '%"></span></span>';
+        html += '<span class="tree-hp-val">' + p2HPText + '</span></div>';
+        html += '</div>';
 
         html += '</div></div>';
 
@@ -2244,6 +2364,15 @@
             }
 
             movesHtml += '</div>';
+
+            // Move description from RBDex
+            if (window.RBDex) {
+                var dexDesc = window.RBDex.getMoveDesc(moveName);
+                if (dexDesc) {
+                    movesHtml += '<div class="move-cell-desc">' + dexDesc + '</div>';
+                }
+            }
+
             movesHtml += '</button>';
         });
 
@@ -3397,6 +3526,73 @@
     }
 
     /**
+     * Update the Pokedex slide-in panel with species info from RBDex.
+     */
+    function updateDexPanel(pokemonName) {
+        if (!pokemonName || !window.RBDex) {
+            $('#dex-body').html('<p class="dex-placeholder">Hover over a Pokemon to view its Dex entry.</p>');
+            $('#dex-title').text('Pokedex');
+            return;
+        }
+
+        var species = window.RBDex.getSpecies(pokemonName);
+        if (!species) {
+            $('#dex-body').html('<p class="dex-placeholder">No Dex data for ' + pokemonName + '</p>');
+            $('#dex-title').text(pokemonName);
+            return;
+        }
+
+        $('#dex-title').text('#' + (species.num || '?') + ' ' + (species.name || pokemonName));
+
+        var html = '<div class="dex-info">';
+
+        // Types
+        if (species.types) {
+            html += '<div class="dex-row"><span class="dex-label">Type</span>';
+            html += species.types.map(function (t) {
+                return '<span class="type-badge type-' + t.toLowerCase() + '">' + t + '</span>';
+            }).join(' ');
+            html += '</div>';
+        }
+
+        // Base Stats
+        if (species.baseStats) {
+            var bs = species.baseStats;
+            var bst = (bs.hp || 0) + (bs.atk || 0) + (bs.def || 0) + (bs.spa || 0) + (bs.spd || 0) + (bs.spe || 0);
+            html += '<div class="dex-row"><span class="dex-label">Base Stats</span>' +
+                '<span class="dex-stats">' +
+                'HP:' + bs.hp + ' Atk:' + bs.atk + ' Def:' + bs.def +
+                ' SpA:' + bs.spa + ' SpD:' + bs.spd + ' Spe:' + bs.spe +
+                ' <em>(BST:' + bst + ')</em></span></div>';
+        }
+
+        // Abilities
+        if (species.abilities) {
+            var abils = [];
+            if (species.abilities['0']) abils.push(species.abilities['0']);
+            if (species.abilities['1']) abils.push(species.abilities['1']);
+            if (species.abilities.H) abils.push(species.abilities.H + ' (H)');
+            html += '<div class="dex-row"><span class="dex-label">Abilities</span><span>' + abils.join(', ') + '</span></div>';
+        }
+
+        // Weight
+        if (species.weightkg) {
+            html += '<div class="dex-row"><span class="dex-label">Weight</span><span>' + species.weightkg + ' kg</span></div>';
+        }
+
+        // Evolution
+        if (species.evos && species.evos.length > 0) {
+            html += '<div class="dex-row"><span class="dex-label">Evolves into</span><span>' + species.evos.join(', ') + '</span></div>';
+        }
+        if (species.prevo) {
+            html += '<div class="dex-row"><span class="dex-label">Pre-evo</span><span>' + species.prevo + '</span></div>';
+        }
+
+        html += '</div>';
+        $('#dex-body').html(html);
+    }
+
+    /**
      * Cycle through P2 team members for preview (does not consume a turn)
      */
     function cycleP2Pokemon(direction) {
@@ -4047,6 +4243,31 @@
     }
 
     /**
+     * Show a notification banner about meaningful damage variance detected this turn.
+     */
+    function showVarianceNotification(warnings, parentNodeId, currentNodeId) {
+        var lines = warnings.map(function (w) {
+            var moverLabel = w.mover === 'p1' ? 'Player' : 'Opponent';
+            return '<div class="variance-line"><strong>' + moverLabel + '</strong> ' + w.move + ': ' + w.detail.reason + '</div>';
+        }).join('');
+
+        var html = '<div class="variance-banner" id="variance-banner">' +
+            '<div class="variance-header">⚠ Roll Variance Detected</div>' +
+            '<div class="variance-body">' + lines + '</div>' +
+            '<div class="variance-actions">' +
+            '<button class="planner-btn planner-btn-sm" id="variance-dismiss">Dismiss</button>' +
+            '</div>' +
+            '</div>';
+
+        $('#variance-banner').remove();
+        $('#stage-container').prepend(html);
+
+        $('#variance-dismiss').on('click', function () {
+            $('#variance-banner').remove();
+        });
+    }
+
+    /**
      * Calculate the best (highest max-roll) damage an attacker can deal to a defender,
      * iterating over all of the attacker's moves. Used for AI switch-in scoring.
      */
@@ -4189,76 +4410,83 @@
             var pendingSwitchAfterMove = { p1: null, p2: null };
             var pendingForcedSwitch = { p1: false, p2: false };
 
+            // Track damage ranges for variance detection
+            var firstMoveResult = null;
+            var secondMoveResult = null;
+            var flinchResult = null;
+            var p1NeedsSwitch = false;
+            var p2NeedsSwitch = false;
+
             // --- Execute first action ---
             if (firstIsSwitch) {
                 performSwitch(firstMover, firstAction, newState);
             } else {
                 var firstAttacker = newState[firstMover].active;
                 var firstDefender = newState[secondMover].active;
-                applyMoveToStateEnhanced(firstAttacker, firstDefender, firstAction, gen, newState);
+                firstMoveResult = applyMoveToStateEnhanced(firstAttacker, firstDefender, firstAction, gen, newState);
 
-                // NEW: Track both attacker and defender faints
                 firstKO = firstDefender.currentHP <= 0;
                 var firstAttackerFainted = firstAttacker.currentHP <= 0;
 
-                // NEW: Sync after first move
                 syncActiveToTeam(newState);
 
-                // Check for switch-after-move (U-turn, Volt Switch)
                 if (firstAttacker.needsSwitchAfterMove && !firstAttackerFainted) {
                     pendingSwitchAfterMove[firstMover] = true;
                     delete firstAttacker.needsSwitchAfterMove;
                 }
 
-                // Check for forced switch on target (Roar, Whirlwind)
                 if (firstDefender.needsForcedSwitch && !firstKO) {
                     pendingForcedSwitch[secondMover] = true;
                     delete firstDefender.needsForcedSwitch;
                 }
+
+                // Flinch check: if the first move can flinch, check if second mover is blocked
+                if (!firstKO && !firstAttackerFainted && firstMoveResult && firstMoveResult.moveData) {
+                    flinchResult = BattlePlannerLogic.checkFlinch(
+                        firstMoveResult.moveData, firstAttacker, firstDefender, firstAction.moveName
+                    );
+                }
             }
 
             // --- Execute second action (if second mover not KO'd and not forced to switch) ---
-            // This is wrapped in a function so we can handle U-turn/Volt Switch switches first
             var executeSecondAction = function (onSecondActionComplete) {
                 try {
                     var secondAttacker = newState[secondMover].active;
                     var secondDefender = newState[firstMover].active;
                     var secondAttackerKO = secondAttacker.currentHP <= 0;
 
-                    // Explicitly check for forced switch
                     var secondForcedToSwitch = pendingForcedSwitch[secondMover];
 
-                    if (!secondAttackerKO && !secondForcedToSwitch) {
+                    // Check flinch: guaranteed flinch skips the second move
+                    var secondFlinched = flinchResult && flinchResult.flinches && flinchResult.isGuaranteed;
+
+                    if (!secondAttackerKO && !secondForcedToSwitch && !secondFlinched) {
                         if (secondIsSwitch) {
                             performSwitch(secondMover, secondAction, newState);
                         } else {
-                            // Re-get the defender - this now picks up the switched-in Pokemon from U-turn
                             secondDefender = newState[firstMover].active;
                             console.log('Executing second move against:', secondDefender.name, 'HP:', secondDefender.currentHP);
-                            applyMoveToStateEnhanced(secondAttacker, secondDefender, secondAction, gen, newState);
+                            secondMoveResult = applyMoveToStateEnhanced(secondAttacker, secondDefender, secondAction, gen, newState);
 
-                            // secondKO tracks the defender of the second move
                             secondKO = secondDefender.currentHP <= 0;
-                            // Check if attacker fainted from recoil too
                             var secondAttackerFainted = secondAttacker.currentHP <= 0;
 
                             console.log('Second move result - defender KO:', secondKO, 'attacker KO:', secondAttackerFainted);
 
-                            // NEW: Sync after second move
                             syncActiveToTeam(newState);
 
-                            // Check for switch-after-move on second mover
                             if (secondAttacker.needsSwitchAfterMove && !secondAttackerFainted) {
                                 pendingSwitchAfterMove[secondMover] = true;
                                 delete secondAttacker.needsSwitchAfterMove;
                             }
 
-                            // Check for forced switch on first mover (Roar/Whirlwind)
                             if (secondDefender.needsForcedSwitch && !secondKO) {
                                 pendingForcedSwitch[firstMover] = true;
                                 delete secondDefender.needsForcedSwitch;
                             }
                         }
+                    } else if (secondFlinched) {
+                        console.log(secondAttacker.name + ' flinched and could not move!');
                     }
                 } catch (e) {
                     console.error('Error in executeSecondAction:', e);
@@ -4337,8 +4565,57 @@
                     firstMover: firstMover,
                     firstKO: firstKO,
                     secondKO: secondKO,
-                    endOfTurnEffects: endOfTurnEffects
+                    endOfTurnEffects: endOfTurnEffects,
+                    flinchResult: flinchResult
                 });
+
+                // Variance detection: check if min/max rolls produce different outcomes
+                var varianceWarnings = [];
+                if (firstMoveResult && firstMoveResult.range && firstMoveResult.range.min !== firstMoveResult.range.max) {
+                    var firstDef = newState[secondMover].active;
+                    var v1 = BattlePlannerLogic.detectMeaningfulVariance(
+                        { currentHP: state[secondMover].active.currentHP, maxHP: firstDef.maxHP, item: state[secondMover].active.item },
+                        firstMoveResult.range.min, firstMoveResult.range.max
+                    );
+                    if (v1) varianceWarnings.push({ move: firstAction.moveName, mover: firstMover, detail: v1 });
+                }
+                if (secondMoveResult && secondMoveResult.range && secondMoveResult.range.min !== secondMoveResult.range.max) {
+                    var secondDef = newState[firstMover].active;
+                    var v2 = BattlePlannerLogic.detectMeaningfulVariance(
+                        { currentHP: state[firstMover].active.currentHP, maxHP: secondDef.maxHP, item: state[firstMover].active.item },
+                        secondMoveResult.range.min, secondMoveResult.range.max
+                    );
+                    if (v2) varianceWarnings.push({ move: secondAction.moveName, mover: secondMover, detail: v2 });
+                }
+
+                // Check accumulated variance
+                var p1Range = (firstMover === 'p1' && firstMoveResult && firstMoveResult.range) ? firstMoveResult.range :
+                              (secondMover === 'p1' && secondMoveResult && secondMoveResult.range) ? secondMoveResult.range : null;
+                var p2Range = (firstMover === 'p2' && firstMoveResult && firstMoveResult.range) ? firstMoveResult.range :
+                              (secondMover === 'p2' && secondMoveResult && secondMoveResult.range) ? secondMoveResult.range : null;
+                var accumVar = BattlePlannerLogic.checkAccumulatedVariance(newState, p1Range, p2Range);
+                if (accumVar) {
+                    varianceWarnings.push({ move: 'accumulated', mover: accumVar.side, detail: { reason: accumVar.reason } });
+                }
+
+                // Store variance info on the outcome for the timeline display
+                if (varianceWarnings.length > 0) {
+                    outcome.varianceWarnings = varianceWarnings;
+                }
+
+                // Add flinch info to action description and variance
+                if (flinchResult && flinchResult.flinches) {
+                    if (flinchResult.isGuaranteed) {
+                        actionDesc += ' | ' + newState[secondMover].active.name + ' flinched!';
+                        outcome.description = actionDesc;
+                    } else {
+                        varianceWarnings.push({
+                            move: firstAction.moveName,
+                            mover: firstMover,
+                            detail: { reason: flinchResult.reason + ' on ' + newState[secondMover].active.name }
+                        });
+                    }
+                }
 
                 // Check if we need KO replacements
                 var needsP1Replacement = p1FaintedAfterEOT || (firstMover === 'p2' && firstKO) || (firstMover === 'p1' && secondKO);
@@ -4395,6 +4672,12 @@
 
                     renderTree();
                     renderStage();
+
+                    // Show variance warnings if any
+                    if (varianceWarnings.length > 0) {
+                        showVarianceNotification(varianceWarnings, currentNode.id, newNode.id);
+                    }
+
                     isExecutingTurn = false;
                 };
 
@@ -4526,12 +4809,13 @@
         var hits = action.hits || 3;
         var applyEffect = action.applyEffect || false;
         var customEffects = action.customEffects || {};
+        var moveResult = { range: null, moveData: null };
 
         try {
             var attackerPokemon = CalcIntegration.snapshotToPokemon(attacker, gen);
             var defenderPokemon = CalcIntegration.snapshotToPokemon(defender, gen);
 
-            if (!attackerPokemon || !defenderPokemon) return;
+            if (!attackerPokemon || !defenderPokemon) return moveResult;
 
             var moveOptions = { isCrit: isCrit };
             var moveData = getMoveData(moveName, gen);
@@ -4546,6 +4830,8 @@
             var result = window.calc.calculate(gen, attackerPokemon, defenderPokemon, move, field);
 
             var range = CalcIntegration.getDamageRange(result);
+            moveResult.range = range;
+            moveResult.moveData = moveData;
             var avgDamage = range.avg;
 
             // Check if custom effects override damage
@@ -4662,6 +4948,8 @@
         } catch (e) {
             console.error('Error applying move:', e);
         }
+
+        return moveResult;
     }
 
     /**
