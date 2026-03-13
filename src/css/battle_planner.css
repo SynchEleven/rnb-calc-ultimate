@@ -415,10 +415,11 @@ body.planner-active {
     font-size: 11px;
     font-weight: 600;
     color: var(--planner-warning);
-    white-space: nowrap;
+    flex: 1;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 200px;
+    white-space: nowrap;
 }
 
 .tree-probability {
@@ -526,9 +527,13 @@ body.planner-active {
     font-weight: 700;
 }
 
-.hp-ko-transition .ko-new-name {
+.tree-action-switchin {
+    padding-left: 8px;
+    opacity: 0.85;
+}
+
+.tree-action-switchin .tree-action-name {
     color: var(--hp-green);
-    font-weight: 700;
 }
 
 /* -- Meta row (status + boosts) -- */
@@ -4280,13 +4285,14 @@ body.planner-active {
 /* Pokedex DEX Tab Button */
 .dex-tab {
     position: absolute;
-    top: 8px;
-    right: 16px;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
     background: var(--planner-accent);
     color: #fff;
     font-size: 11px;
     font-weight: 700;
-    padding: 4px 10px;
+    padding: 4px 14px;
     border-radius: 0 0 6px 6px;
     cursor: pointer;
     z-index: 20;
@@ -4876,6 +4882,22 @@ body.planner-active {
 
 .script-branch-option .script-branch-btn {
     align-self: flex-start;
+}
+
+.script-branch-option.script-branch-active {
+    border-color: var(--planner-accent);
+    background: rgba(29, 155, 240, 0.08);
+}
+
+.script-branch-option.script-branch-active > .script-branch-btn {
+    background: var(--planner-accent);
+    color: #fff;
+}
+
+.script-branch-sub {
+    margin-top: 8px;
+    padding-left: 12px;
+    border-left: 2px solid var(--planner-accent);
 }
 
 .script-branch-hp {

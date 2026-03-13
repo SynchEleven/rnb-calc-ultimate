@@ -243,7 +243,7 @@
                         <button class="planner-btn planner-btn-view" data-view="stage" title="Stage View">Stage</button>
                         <span class="planner-separator">|</span>
                         <button class="planner-btn planner-btn-action" id="planner-select-trainer" title="Select Opponent Trainer">Trainers</button>
-                        <button class="planner-btn planner-btn-action" id="planner-new" title="New Battle">New</button>
+                        <button class="planner-btn planner-btn-action" id="planner-new" title="Reset Battle - Clears timeline only">Reset</button>
                         <button class="planner-btn planner-btn-action" id="planner-import" title="Import State">Import</button>
                         <button class="planner-btn planner-btn-action" id="planner-export" title="Export Plan">Export</button>
                         <button class="planner-btn planner-btn-action" id="planner-script" title="Battle Script - Play through your plan">Script</button>
@@ -552,7 +552,7 @@
                                 </div>
                                 <div class="team-overview team-overview-p2" id="team-overview-p2">
                                     <div class="team-overview-header">
-                                        <span class="team-overview-title">OPPONENT'S TEAM</span>
+                                        <span class="team-overview-title" id="p2-team-title">OPPONENT'S TEAM</span>
                                     </div>
                                     <div class="team-overview-slots" id="team-overview-slots-p2"></div>
                                     <!-- No box for opponent - they always have their full team -->
@@ -800,7 +800,7 @@
                                 <div id="team-confirm-p1"></div>
                             </div>
                             <div class="team-confirm-side">
-                                <h4>Opponent's Team</h4>
+                                <h4 id="team-confirm-p2-title">Opponent's Team</h4>
                                 <div id="team-confirm-p2"></div>
                             </div>
                         </div>
@@ -1002,7 +1002,8 @@
         });
 
         // Battle buttons
-        $(document).on('click', '#planner-new, #tree-start-battle', startNewBattle);
+        $(document).on('click', '#planner-new', resetBattle);
+        $(document).on('click', '#tree-start-battle', startNewBattle);
         $(document).on('click', '#tree-start-imported', startBattleWithImportedTeam);
 
         // Import/Export
@@ -1592,7 +1593,8 @@
                 'You are adding ' + pokemon.name + ' to your team mid-battle.\n\n' +
                 'Type "all" = Add retroactively (appears in all turns)\n' +
                 'Type "here" = Only add from this turn onward\n' +
-                'Press Cancel = Do nothing'
+                'Press Cancel = Do nothing',
+                'all'
             );
             if (choice === null) return;
             var trimmed = (choice || '').trim().toLowerCase();
@@ -1850,6 +1852,39 @@
     }
 
     /**
+     * Reset battle - clears timeline only, keeps trainer/team selections
+     */
+    function resetBattle() {
+        if (!uiState.tree || !uiState.tree.rootId) return;
+        if (!confirm('Are you sure you want to reset the battle?\n\nThis will clear the entire timeline but keep your trainer and team selections.')) return;
+
+        try {
+            var rootNode = uiState.tree.getRootNode();
+            if (rootNode && rootNode.state) {
+                var freshState = rootNode.state.clone();
+                freshState.turnNumber = 0;
+                // Reset all Pokemon HP to max
+                if (freshState.p1.team) freshState.p1.team.forEach(function(p) { if (p) { p.currentHP = p.maxHP; p.status = 'Healthy'; p.boosts = {}; } });
+                if (freshState.p2.team) freshState.p2.team.forEach(function(p) { if (p) { p.currentHP = p.maxHP; p.status = 'Healthy'; p.boosts = {}; } });
+                if (freshState.p1.active) { freshState.p1.active.currentHP = freshState.p1.active.maxHP; freshState.p1.active.status = 'Healthy'; freshState.p1.active.boosts = {}; }
+                if (freshState.p2.active) { freshState.p2.active.currentHP = freshState.p2.active.maxHP; freshState.p2.active.status = 'Healthy'; freshState.p2.active.boosts = {}; }
+                uiState.tree.initialize(freshState);
+            }
+
+            uiState.p1Action = null;
+            uiState.p2Action = null;
+            uiState.collapsedBranches = {};
+            uiState.expandedNodes = {};
+
+            renderTree();
+            renderStage();
+            console.log('Battle reset - timeline cleared, teams kept');
+        } catch (e) {
+            console.error('Failed to reset battle:', e);
+        }
+    }
+
+    /**
      * Start a new battle
      */
     function startNewBattle() {
@@ -2091,13 +2126,29 @@
             $('#battle-script-overlay').remove();
         });
 
+        // Branch selection: reveal inline sub-steps, highlight chosen branch
         $(document).on('click', '.script-branch-btn', function () {
+            var $option = $(this).closest('.script-branch-option');
+            var $branches = $option.closest('.script-branches');
+
+            // Deselect other branches at the same level
+            $branches.find('.script-branch-option').removeClass('script-branch-active');
+            $branches.find('.script-branch-sub').slideUp(200);
+
+            // Toggle this one
+            $option.addClass('script-branch-active');
+            $option.find('> .script-branch-sub').slideDown(200);
+        });
+
+        // "Plan from here" still goes back to the planner
+        $(document).on('click', '.script-plan-btn', function () {
             var nodeId = $(this).data('node-id');
             $('#battle-script-overlay').remove();
             selectNode(nodeId);
         });
 
-        $(document).on('click', '.script-plan-btn', function () {
+        // "Go to planner" for a specific node
+        $(document).on('click', '.script-goto-planner', function () {
             var nodeId = $(this).data('node-id');
             $('#battle-script-overlay').remove();
             selectNode(nodeId);
@@ -2200,6 +2251,7 @@
                 html += branchSteps;
                 html += '<div class="script-branch-sub" style="display:none">';
                 html += generateScriptForNode(child, step + 1);
+                html += '<div class="script-branch-nav"><button class="planner-btn planner-btn-xs script-goto-planner" data-node-id="' + childId + '">Open in Planner</button></div>';
                 html += '</div>';
                 html += '</div>';
             });
@@ -2361,7 +2413,11 @@
                 }
                 html += '<span class="tree-action-move">' + p1ActionText + '</span>';
                 if (p1KO && parentP1Name !== p1Name) {
-                    html += '<span class="tree-action-hp hp-ko-transition"><span class="ko-old-name">' + parentP1Name + ' ✗</span> → <span class="ko-new-name">' + p1Name + '</span> ' + p1Active.currentHP + '/' + p1Active.maxHP + '</span>';
+                    html += '<span class="tree-action-hp hp-ko-transition"><span class="ko-old-name">' + parentP1Name + ' ✗</span></span>';
+                    html += '</div>';
+                    html += '<div class="tree-action-line tree-action-switchin">';
+                    html += '<span class="tree-action-name p1-name">→ ' + p1Name + '</span>';
+                    html += '<span class="tree-action-hp ' + p1Color + '">' + p1Active.currentHP + '/' + p1Active.maxHP + ' (' + p1HP + '%)</span>';
                 } else {
                     html += '<span class="tree-action-hp ' + p1Color + '">' + p1Active.currentHP + '/' + p1Active.maxHP + ' (' + p1HP + '%)</span>';
                 }
@@ -2374,7 +2430,11 @@
                 }
                 html += '<span class="tree-action-move">' + p2ActionText + '</span>';
                 if (p2KO && parentP2Name !== p2Name) {
-                    html += '<span class="tree-action-hp hp-ko-transition"><span class="ko-old-name">' + parentP2Name + ' ✗</span> → <span class="ko-new-name">' + p2Name + '</span> ' + p2Active.currentHP + '/' + p2Active.maxHP + '</span>';
+                    html += '<span class="tree-action-hp hp-ko-transition"><span class="ko-old-name">' + parentP2Name + ' ✗</span></span>';
+                    html += '</div>';
+                    html += '<div class="tree-action-line tree-action-switchin">';
+                    html += '<span class="tree-action-name p2-name">→ ' + p2Name + '</span>';
+                    html += '<span class="tree-action-hp ' + p2Color + '">' + p2Active.currentHP + '/' + p2Active.maxHP + ' (' + p2HP + '%)</span>';
                 } else {
                     html += '<span class="tree-action-hp ' + p2Color + '">' + p2Active.currentHP + '/' + p2Active.maxHP + ' (' + p2HP + '%)</span>';
                 }
@@ -4875,6 +4935,7 @@
 
         $('#team-confirm-p1').html(p1Html || '<p>No team</p>');
         $('#team-confirm-p2').html(p2Html || '<p>No team</p>');
+        $('#team-confirm-p2-title').text(uiState.currentTrainer ? 'vs ' + uiState.currentTrainer : "Opponent's Team");
 
         $('#team-confirm-modal').show();
     }
@@ -7166,8 +7227,10 @@
         var $label = $('#planner-trainer-label');
         if (uiState.currentTrainer) {
             $label.text('vs ' + uiState.currentTrainer).show();
+            $('#p2-team-title').text('vs ' + uiState.currentTrainer);
         } else {
             $label.hide();
+            $('#p2-team-title').text("OPPONENT'S TEAM");
         }
     }
 
