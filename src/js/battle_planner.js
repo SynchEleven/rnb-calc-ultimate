@@ -850,8 +850,9 @@ BattleTree.prototype.getNodeDepth = function(nodeId) {
 
 BattleTree.prototype.serialize = function() {
     return JSON.stringify({
-        version: 1,
+        version: 2,
         rootId: this.rootId,
+        rootIds: this.rootIds,
         currentNodeId: this.currentNodeId,
         nodes: this.nodes
     }, null, 2);
@@ -860,11 +861,9 @@ BattleTree.prototype.serialize = function() {
 BattleTree.prototype.deserialize = function(jsonStr) {
     try {
         var data = JSON.parse(jsonStr);
-        if (data.version !== 1) {
-            console.warn('Unknown battle tree version:', data.version);
-        }
         
         this.rootId = data.rootId;
+        this.rootIds = data.rootIds || [data.rootId];
         this.currentNodeId = data.currentNodeId;
         this.nodes = {};
         
@@ -875,11 +874,24 @@ BattleTree.prototype.deserialize = function(jsonStr) {
             
             if (nodeData.state) {
                 node.state = Object.assign(new BattleStateSnapshot(), nodeData.state);
-                if (nodeData.state.p1.active) {
+                
+                if (nodeData.state.p1 && nodeData.state.p1.active) {
                     node.state.p1.active = Object.assign(new PokemonSnapshot(), nodeData.state.p1.active);
                 }
-                if (nodeData.state.p2.active) {
+                if (nodeData.state.p2 && nodeData.state.p2.active) {
                     node.state.p2.active = Object.assign(new PokemonSnapshot(), nodeData.state.p2.active);
+                }
+                
+                // Reconstruct team member prototypes
+                if (nodeData.state.p1 && nodeData.state.p1.team) {
+                    node.state.p1.team = nodeData.state.p1.team.map(function(t) {
+                        return Object.assign(new PokemonSnapshot(), t);
+                    });
+                }
+                if (nodeData.state.p2 && nodeData.state.p2.team) {
+                    node.state.p2.team = nodeData.state.p2.team.map(function(t) {
+                        return Object.assign(new PokemonSnapshot(), t);
+                    });
                 }
             }
             

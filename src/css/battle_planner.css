@@ -3653,3 +3653,121 @@ body.planner-active {
     background: var(--planner-panel-bg);
     color: var(--planner-text);
 }
+
+/* ============================================
+   TRAINER SELECTOR
+   ============================================ */
+
+.planner-trainer-label {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--planner-p2);
+    margin-left: 12px;
+    padding: 4px 12px;
+    background: rgba(233, 30, 99, 0.15);
+    border-radius: 6px;
+    white-space: nowrap;
+}
+
+.modal-content-trainer {
+    max-width: 600px;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.modal-content-trainer .modal-body {
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+}
+
+.trainer-search-container {
+    margin-bottom: 12px;
+    flex-shrink: 0;
+}
+
+.trainer-search-input {
+    width: 100%;
+    padding: 10px 14px;
+    border: 1px solid var(--planner-border);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--planner-text);
+    font-size: 14px;
+    outline: none;
+    box-sizing: border-box;
+}
+
+.trainer-search-input:focus {
+    border-color: var(--planner-accent);
+    box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.2);
+}
+
+.trainer-list {
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
+    max-height: 60vh;
+    padding-right: 4px;
+}
+
+.trainer-list-item {
+    display: flex;
+    flex-direction: column;
+    padding: 10px 14px;
+    margin-bottom: 4px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.04);
+    cursor: pointer;
+    transition: background 0.15s, transform 0.1s;
+    border: 1px solid transparent;
+}
+
+.trainer-list-item:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: var(--planner-border);
+    transform: translateX(2px);
+}
+
+.trainer-list-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.trainer-list-name {
+    font-weight: 600;
+    font-size: 14px;
+    flex: 1;
+}
+
+.trainer-list-level {
+    font-size: 12px;
+    color: var(--planner-text-muted);
+    background: rgba(255, 255, 255, 0.06);
+    padding: 2px 8px;
+    border-radius: 4px;
+}
+
+.trainer-save-badge {
+    color: #ffd700;
+    font-size: 14px;
+    margin-right: 4px;
+}
+
+.trainer-list-sprites {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+
+.trainer-list-sprite {
+    width: 32px;
+    height: 32px;
+    image-rendering: pixelated;
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.3));
+}

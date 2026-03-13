@@ -53,7 +53,8 @@
         p2HoverOverride: null,
         p1BoxHoverOverride: null, // Pokemon index in box being hovered
         p2BoxHoverOverride: null,
-        lastRenderedNodeId: null
+        lastRenderedNodeId: null,
+        currentTrainer: null // Name of the currently selected opponent trainer
     };
 
     // DOM References
@@ -177,11 +178,13 @@
                         <span class="planner-icon">⚔️</span>
                         Battle Planner
                     </h2>
+                    <span id="planner-trainer-label" class="planner-trainer-label" style="display: none;"></span>
                     <div class="planner-controls">
                         <button class="planner-btn planner-btn-view active" data-view="split" title="Split View">Split</button>
                         <button class="planner-btn planner-btn-view" data-view="tree" title="Tree View">Tree</button>
                         <button class="planner-btn planner-btn-view" data-view="stage" title="Stage View">Stage</button>
                         <span class="planner-separator">|</span>
+                        <button class="planner-btn planner-btn-action" id="planner-select-trainer" title="Select Opponent Trainer">Trainers</button>
                         <button class="planner-btn planner-btn-action" id="planner-new" title="New Battle">New</button>
                         <button class="planner-btn planner-btn-action" id="planner-import" title="Import State">Import</button>
                         <button class="planner-btn planner-btn-action" id="planner-export" title="Export Plan">Export</button>
@@ -651,6 +654,23 @@
                 </div>
             </div>
             
+            <!-- Trainer Selector Modal -->
+            <div id="trainer-select-modal" class="planner-modal" style="display: none;">
+                <div class="modal-overlay"></div>
+                <div class="modal-content modal-content-trainer">
+                    <div class="modal-header">
+                        <h3>Select Opponent Trainer</h3>
+                        <button class="modal-close" id="trainer-modal-close">×</button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="trainer-search-container">
+                            <input type="text" id="trainer-search-input" placeholder="Search trainers by name..." class="trainer-search-input" autocomplete="off">
+                        </div>
+                        <div id="trainer-list" class="trainer-list"></div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Team Selection Modal -->
             <div id="team-select-modal" class="planner-modal" style="display: none;">
                 <div class="modal-overlay"></div>
@@ -762,7 +782,9 @@
                 togglePlanner();
             }
             if (e.key === 'Escape' && uiState.isVisible) {
-                if ($('#planner-help-modal').is(':visible')) {
+                if ($('#trainer-select-modal').is(':visible')) {
+                    $('#trainer-select-modal').hide();
+                } else if ($('#planner-help-modal').is(':visible')) {
                     $('#planner-help-modal').hide();
                 } else if ($('#team-select-modal').is(':visible')) {
                     $('#team-select-modal').hide();
@@ -790,6 +812,21 @@
         });
         $(document).on('click', '#help-modal-close, #planner-help-modal .modal-overlay', function () {
             $('#planner-help-modal').hide();
+        });
+
+        // Trainer selector
+        $(document).on('click', '#planner-select-trainer', function () {
+            openTrainerSelector();
+        });
+        $(document).on('click', '#trainer-modal-close, #trainer-select-modal .modal-overlay', function () {
+            $('#trainer-select-modal').hide();
+        });
+        $(document).on('input', '#trainer-search-input', function () {
+            filterTrainerList($(this).val());
+        });
+        $(document).on('click', '.trainer-list-item', function () {
+            var trainerName = $(this).data('trainer');
+            selectTrainerForBattle(trainerName);
         });
 
         // Team modal
@@ -1416,6 +1453,12 @@
                 initialState.field.terrain = field.terrain || 'None';
             }
 
+            // Detect current trainer from the main calc
+            if (window.CURRENT_TRAINER) {
+                uiState.currentTrainer = window.CURRENT_TRAINER;
+            }
+            updateTrainerLabel();
+
             // Reset turn actions
             uiState.p1Action = null;
             uiState.p2Action = null;
@@ -1452,9 +1495,10 @@
         });
 
         // Also check if there's a P2 Pokemon currently selected that's not in the list
-        var p2Select = $('#p2 .pokemon-select').val();
+        var p2Select = $('input.set-selector.opposing').val();
         if (p2Select && !trainerPokemon.includes(p2Select)) {
-            trainerPokemon.unshift(p2Select);
+            var cleanP2 = p2Select.replace(/^\[\d+\]/, '');
+            trainerPokemon.unshift(cleanP2);
         }
 
         return trainerPokemon;
@@ -1488,16 +1532,20 @@
      */
     function createSnapshotFromTrainerPokemon(dataId) {
         try {
-            // dataId format is usually "Name (Set Name)" or similar
             var name = dataId.split(' (')[0];
             var gen = getGenNum();
-
-            // Try to get the set from setdex
             var setName = dataId.includes('(') ? dataId.split('(')[1].replace(')', '') : null;
-            var pokemon = null;
+            var set = null;
 
+            // Try setdex first, then fall back to SETDEX_SS (Run-and-Bun trainer data)
             if (setName && window.setdex && window.setdex[name] && window.setdex[name][setName]) {
-                var set = window.setdex[name][setName];
+                set = window.setdex[name][setName];
+            } else if (setName && typeof SETDEX_SS !== 'undefined' && SETDEX_SS[name] && SETDEX_SS[name][setName]) {
+                set = SETDEX_SS[name][setName];
+            }
+
+            var pokemon = null;
+            if (set) {
                 pokemon = new window.calc.Pokemon(gen, name, {
                     level: set.level || 50,
                     ability: set.ability,
@@ -1510,7 +1558,6 @@
                     })
                 });
             } else {
-                // Fallback: create basic Pokemon
                 pokemon = new window.calc.Pokemon(gen, name, { level: 50 });
             }
 
@@ -1878,6 +1925,7 @@
             return;
         }
 
+        var gen = getGenNum();
         var state = currentNode.state;
 
         $('#stage-turn-label').text('TURN ' + state.turnNumber);
@@ -4403,8 +4451,19 @@
                 avgDamage = 0;
             }
 
+            // Apply item effects that trigger on damage (Focus Sash, berries)
+            var itemFx = CalcIntegration.applyItemEffects(defender, avgDamage);
+
             // Apply damage
             defender.currentHP = Math.max(0, defender.currentHP - avgDamage);
+
+            // Apply item healing (Focus Sash survival, berry triggers)
+            if (itemFx.healed > 0) {
+                defender.currentHP = Math.min(defender.maxHP, defender.currentHP + itemFx.healed);
+            }
+            if (itemFx.itemConsumed) {
+                defender.item = '';
+            }
 
             // Set invulnerable state for 2-turn moves
             if (customEffects.invulnerable || customEffects.charging) {
@@ -5013,6 +5072,7 @@
     function onTreeUpdated() {
         renderTree();
         uiState.tree.analyzeOutcomes();
+        saveBattleState();
     }
 
     function onCurrentNodeChanged(data) {
@@ -5036,6 +5096,286 @@
     // Initialize on ready
     $(document).ready(initialize);
 
+    // =========================================================================
+    // TRAINER SELECTOR
+    // =========================================================================
+
+    /**
+     * Build a map of trainer name -> array of { pokemonName, set } from SETDEX_SS
+     */
+    function buildTrainerMap() {
+        if (typeof SETDEX_SS === 'undefined') return {};
+
+        var map = {};
+        for (var pokeName in SETDEX_SS) {
+            if (!SETDEX_SS.hasOwnProperty(pokeName)) continue;
+            var sets = SETDEX_SS[pokeName];
+            for (var trainerName in sets) {
+                if (!sets.hasOwnProperty(trainerName)) continue;
+                if (!map[trainerName]) {
+                    map[trainerName] = { pokemon: [], index: sets[trainerName].index || 9999 };
+                }
+                map[trainerName].pokemon.push({
+                    name: pokeName,
+                    set: sets[trainerName]
+                });
+                // Keep the lowest index for this trainer (earliest encounter)
+                if (sets[trainerName].index < map[trainerName].index) {
+                    map[trainerName].index = sets[trainerName].index;
+                }
+            }
+        }
+        return map;
+    }
+
+    var _trainerMap = null;
+    function getTrainerMap() {
+        if (!_trainerMap) _trainerMap = buildTrainerMap();
+        return _trainerMap;
+    }
+
+    /**
+     * Open the trainer selector modal
+     */
+    function openTrainerSelector() {
+        var map = getTrainerMap();
+        var trainers = Object.keys(map).map(function (name) {
+            return { name: name, pokemon: map[name].pokemon, index: map[name].index };
+        });
+
+        // Sort by encounter order (index)
+        trainers.sort(function (a, b) { return a.index - b.index; });
+
+        var savedBattles = getSavedBattleKeys();
+
+        var html = trainers.map(function (t) {
+            var levels = t.pokemon.map(function (p) { return p.set.level || 50; });
+            var minLvl = Math.min.apply(null, levels);
+            var maxLvl = Math.max.apply(null, levels);
+            var lvlStr = minLvl === maxLvl ? 'Lv ' + minLvl : 'Lv ' + minLvl + '-' + maxLvl;
+
+            var hasSave = savedBattles.indexOf(t.name) !== -1;
+            var saveIndicator = hasSave ? '<span class="trainer-save-badge" title="Saved battle data">&#9733;</span>' : '';
+
+            var sprites = t.pokemon.map(function (p) {
+                var spriteName = p.name;
+                if (spriteName.includes('Vivillon')) spriteName = 'Vivillon';
+                return '<img class="trainer-list-sprite" src="https://raw.githubusercontent.com/May8th1995/sprites/master/' + spriteName + '.png" alt="' + p.name + '" title="' + p.name + '">';
+            }).join('');
+
+            return '<div class="trainer-list-item" data-trainer="' + t.name + '" data-search="' + t.name.toLowerCase() + '">' +
+                '<div class="trainer-list-header">' +
+                    '<span class="trainer-list-name">' + t.name + '</span>' +
+                    saveIndicator +
+                    '<span class="trainer-list-level">' + lvlStr + '</span>' +
+                '</div>' +
+                '<div class="trainer-list-sprites">' + sprites + '</div>' +
+            '</div>';
+        }).join('');
+
+        $('#trainer-list').html(html);
+        $('#trainer-search-input').val('');
+        $('#trainer-select-modal').show();
+        $('#trainer-search-input').focus();
+    }
+
+    /**
+     * Filter the trainer list by search string
+     */
+    function filterTrainerList(query) {
+        var lower = (query || '').toLowerCase();
+        $('.trainer-list-item').each(function () {
+            var searchStr = $(this).data('search') || '';
+            $(this).toggle(searchStr.indexOf(lower) !== -1);
+        });
+    }
+
+    /**
+     * Select a trainer and start/resume a battle
+     */
+    function selectTrainerForBattle(trainerName) {
+        $('#trainer-select-modal').hide();
+
+        var map = getTrainerMap();
+        var trainerData = map[trainerName];
+        if (!trainerData) return;
+
+        uiState.currentTrainer = trainerName;
+        updateTrainerLabel();
+
+        // Check for saved battle
+        var savedKey = 'plannerBattle_' + trainerName;
+        var savedData = localStorage.getItem(savedKey);
+
+        if (savedData) {
+            var resume = confirm('You have a saved battle against ' + trainerName + '.\n\nClick OK to resume, or Cancel to start fresh.');
+            if (resume) {
+                var tree = new BattlePlanner.BattleTree();
+                if (tree.deserialize(savedData)) {
+                    uiState.tree = tree;
+                    uiState.tree.onTreeUpdated = onTreeUpdated;
+                    uiState.tree.onCurrentNodeChanged = onCurrentNodeChanged;
+                    uiState.p1Action = null;
+                    uiState.p2Action = null;
+                    refreshBoxFromCustomsets();
+                    renderTree();
+                    renderStage();
+                    $('.tree-placeholder').hide();
+                    return;
+                }
+            }
+        }
+
+        // Start fresh battle with this trainer
+        startBattleWithTrainer(trainerData.pokemon, trainerName);
+    }
+
+    /**
+     * Start a fresh battle with the given trainer's Pokemon
+     */
+    function startBattleWithTrainer(trainerPokemon, trainerName) {
+        var gen = getGenNum();
+        var initialState = new BattlePlanner.BattleStateSnapshot();
+
+        // P1 from calculator or imported team
+        var p1Pokemon = window.createPokemon ? window.createPokemon($('#p1')) : null;
+        if (!p1Pokemon) {
+            var customsets = localStorage.customsets ? JSON.parse(localStorage.customsets) : {};
+            for (var name in customsets) {
+                for (var setName in customsets[name]) {
+                    var set = customsets[name][setName];
+                    if (set && set.name) {
+                        p1Pokemon = createCalcPokemonFromImported(set);
+                        break;
+                    }
+                }
+                if (p1Pokemon) break;
+            }
+        }
+
+        if (!p1Pokemon) {
+            alert('Please set up your Pokemon first (in the calculator or by importing a save file).');
+            return;
+        }
+
+        initialState.p1.active = new BattlePlanner.PokemonSnapshot(p1Pokemon);
+        initialState.p1.team = [initialState.p1.active.clone()];
+
+        // Add remaining imported Pokemon to team (up to 6)
+        var customsets2 = localStorage.customsets ? JSON.parse(localStorage.customsets) : {};
+        var addedNames = {};
+        addedNames[initialState.p1.active.name] = true;
+        for (var pName in customsets2) {
+            if (initialState.p1.team.length >= 6) break;
+            for (var sName in customsets2[pName]) {
+                if (initialState.p1.team.length >= 6) break;
+                var s = customsets2[pName][sName];
+                if (s && s.name && !addedNames[s.name]) {
+                    var snap = createSnapshotFromImported(s);
+                    if (snap) {
+                        initialState.p1.team.push(snap);
+                        addedNames[snap.name] = true;
+                    }
+                }
+            }
+        }
+
+        // Build P2 team from trainer data
+        initialState.p2.team = [];
+        for (var i = 0; i < trainerPokemon.length; i++) {
+            var tp = trainerPokemon[i];
+            try {
+                var pokemon = new window.calc.Pokemon(gen, tp.name, {
+                    level: tp.set.level || 50,
+                    ability: tp.set.ability,
+                    item: tp.set.item,
+                    nature: tp.set.nature,
+                    ivs: tp.set.ivs || {},
+                    evs: tp.set.evs || {},
+                    moves: (tp.set.moves || []).map(function (m) {
+                        return new window.calc.Move(gen, m);
+                    })
+                });
+                var snap2 = new BattlePlanner.PokemonSnapshot(pokemon);
+                initialState.p2.team.push(snap2);
+            } catch (e) {
+                console.error('Failed to create trainer Pokemon:', tp.name, e);
+            }
+        }
+
+        if (initialState.p2.team.length > 0) {
+            initialState.p2.active = initialState.p2.team[0].clone();
+            initialState.p2.teamSlot = 0;
+        }
+
+        var field = window.createField ? window.createField() : null;
+        if (field) {
+            initialState.field.weather = field.weather || 'None';
+            initialState.field.terrain = field.terrain || 'None';
+        }
+
+        uiState.p1Action = null;
+        uiState.p2Action = null;
+        uiState.p1Box = [];
+        uiState.p2Box = [];
+
+        uiState.tree = new BattlePlanner.BattleTree();
+        uiState.tree.onTreeUpdated = onTreeUpdated;
+        uiState.tree.onCurrentNodeChanged = onCurrentNodeChanged;
+        uiState.tree.initialize(initialState);
+
+        refreshBoxFromCustomsets();
+        renderTree();
+        renderStage();
+        $('.tree-placeholder').hide();
+
+        console.log('Battle started against', trainerName, 'with', trainerPokemon.length, 'Pokemon');
+    }
+
+    /**
+     * Update the trainer label in the header
+     */
+    function updateTrainerLabel() {
+        var $label = $('#planner-trainer-label');
+        if (uiState.currentTrainer) {
+            $label.text('vs ' + uiState.currentTrainer).show();
+        } else {
+            $label.hide();
+        }
+    }
+
+    // =========================================================================
+    // BATTLE PERSISTENCE
+    // =========================================================================
+
+    /**
+     * Save the current battle tree to localStorage
+     */
+    function saveBattleState() {
+        if (!uiState.currentTrainer || !uiState.tree) return;
+        try {
+            var key = 'plannerBattle_' + uiState.currentTrainer;
+            var data = uiState.tree.serialize();
+            localStorage.setItem(key, data);
+        } catch (e) {
+            console.error('Failed to save battle state:', e);
+        }
+    }
+
+    /**
+     * Get list of trainer names with saved battles
+     */
+    function getSavedBattleKeys() {
+        var keys = [];
+        for (var i = 0; i < localStorage.length; i++) {
+            var k = localStorage.key(i);
+            if (k && k.indexOf('plannerBattle_') === 0) {
+                keys.push(k.replace('plannerBattle_', ''));
+            }
+        }
+        return keys;
+    }
+
     /**
      * Refresh the planner's box from localStorage.customsets
      * Call this after importing new save files or modifying customsets
@@ -5053,15 +5393,20 @@
             }
         }
 
-        // Get current active Pokemon names to exclude from box
+        // Collect names of all team members to exclude from box
         var currentNode = uiState.tree ? uiState.tree.getCurrentNode() : null;
-        var activeP1Name = currentNode && currentNode.state.p1.active ? currentNode.state.p1.active.name : null;
+        var teamNames = {};
+        if (currentNode && currentNode.state.p1.team) {
+            currentNode.state.p1.team.forEach(function (t) {
+                if (t && t.name) teamNames[t.name] = true;
+            });
+        }
 
         // Update P1 box
         uiState.p1Box = [];
         for (var i = 0; i < importedPokemon.length; i++) {
             var snap = createSnapshotFromImported(importedPokemon[i]);
-            if (snap && snap.name !== activeP1Name) {
+            if (snap && !teamNames[snap.name]) {
                 uiState.p1Box.push(snap);
             }
         }
