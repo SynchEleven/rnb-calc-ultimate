@@ -341,28 +341,18 @@ body.planner-active {
     background: rgba(29, 155, 240, 0.1);
 }
 
+/* -- Flat timeline node -- */
 .tree-node {
-    padding: 2px 0;
+    padding: 1px 0;
     cursor: pointer;
     position: relative;
-}
-
-.tree-connector {
-    position: absolute;
-    left: -10px;
-    top: 0;
-    bottom: 50%;
-    width: 10px;
-    border-left: 2px solid var(--planner-border);
-    border-bottom: 2px solid var(--planner-border);
-    border-radius: 0 0 0 6px;
 }
 
 .tree-node-card {
     background: var(--planner-card-bg);
     border: 1px solid var(--planner-border);
-    border-radius: 6px;
-    padding: 6px 8px;
+    border-radius: 5px;
+    padding: 4px 8px;
     transition: border-color 0.15s, background 0.15s;
 }
 
@@ -383,33 +373,38 @@ body.planner-active {
     border-left: 3px solid var(--planner-danger);
 }
 
+.tree-node-branch .tree-node-card {
+    border-left: 3px solid var(--planner-warning);
+}
+
+/* -- Header -- */
 .tree-node-header {
     display: flex;
     align-items: center;
-    gap: 6px;
-    font-size: 12px;
-    margin-bottom: 4px;
+    gap: 5px;
+    font-size: 11px;
+    margin-bottom: 2px;
 }
 
 .tree-turn-badge {
     font-weight: 700;
-    font-size: 11px;
+    font-size: 10px;
     background: var(--planner-bg);
-    padding: 1px 6px;
-    border-radius: 4px;
+    padding: 1px 5px;
+    border-radius: 3px;
     color: var(--planner-accent);
 }
 
 .tree-node-toggle {
-    width: 14px;
+    width: 12px;
     text-align: center;
-    font-size: 10px;
+    font-size: 9px;
     color: var(--planner-text-muted);
     flex-shrink: 0;
 }
 
 .tree-node-leaf {
-    font-size: 8px;
+    font-size: 7px;
 }
 
 .tree-node-delete {
@@ -417,11 +412,11 @@ body.planner-active {
     background: transparent;
     border: none;
     color: var(--planner-danger);
-    font-size: 16px;
+    font-size: 14px;
     cursor: pointer;
     opacity: 0;
     transition: opacity 0.15s;
-    padding: 0 4px;
+    padding: 0 3px;
     line-height: 1;
 }
 
@@ -433,106 +428,87 @@ body.planner-active {
     opacity: 1 !important;
 }
 
-.tree-node-actions {
+/* -- Compact summary row (actions + HP on one line) -- */
+.tree-node-summary {
     display: flex;
-    flex-direction: column;
-    gap: 2px;
-    margin-bottom: 4px;
-}
-
-.tree-action {
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
     font-size: 11px;
-    padding: 1px 4px;
-    border-radius: 3px;
+    line-height: 1.3;
+    flex-wrap: wrap;
 }
 
-.tree-action-p1 {
+.tree-sum-actions {
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.tree-sum-sep {
+    color: var(--planner-text-muted);
+    margin: 0 2px;
+}
+
+.tree-sum-hp {
+    flex-shrink: 0;
+    font-size: 10px;
+    color: var(--planner-text-muted);
+    white-space: nowrap;
+}
+
+.tree-node-summary .tree-action-p1 {
     color: var(--planner-p1);
 }
 
-.tree-action-p2 {
+.tree-node-summary .tree-action-p2 {
     color: var(--planner-p2);
 }
 
-.tree-action-side {
+/* -- KO markers -- */
+.tree-ko-marker {
+    font-size: 10px;
     font-weight: 700;
-    font-size: 10px;
-    text-transform: uppercase;
+    padding: 0 3px;
+    border-radius: 3px;
 }
 
-.tree-node-hp-row {
-    display: flex;
-    gap: 8px;
+.tree-ko-marker.p1-ko {
+    color: var(--planner-danger);
 }
 
-.tree-node-hp-entry {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    flex: 1;
+.tree-ko-marker.p2-ko {
+    color: var(--planner-success);
 }
 
-.tree-hp-label {
-    font-size: 10px;
-    color: var(--planner-text-muted);
-    min-width: 30px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.tree-hp-val {
-    font-size: 10px;
-    color: var(--planner-text-muted);
-    white-space: nowrap;
-}
-
+/* -- Status icons -- */
 .tree-variance-icon {
     color: #ffb74d;
-    font-size: 12px;
+    font-size: 11px;
 }
 
 .tree-flinch-icon {
-    font-size: 12px;
-}
-
-.tree-node-label {
-    flex: 1;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.tree-node-hp {
-    flex: 1;
-    height: 8px;
-    background: rgba(0, 0, 0, 0.3);
-    border-radius: 4px;
-    overflow: hidden;
-    max-width: 80px;
-}
-
-.tree-node-hp .hp-p1,
-.tree-node-hp .hp-p2 {
-    height: 100%;
-    border-radius: 2px;
-    flex: 1;
-}
-
-.tree-node-hp .hp-p1 {
-    background: var(--planner-p1);
-}
-
-.tree-node-hp .hp-p2 {
-    background: var(--planner-p2);
-}
-
-.tree-node-prob {
     font-size: 11px;
-    color: var(--planner-text-muted);
-    background: var(--planner-card-bg);
-    padding: 2px 6px;
-    border-radius: 10px;
+}
+
+/* -- Branch group -- */
+.tree-branch-group {
+    border-left: 2px solid var(--planner-warning);
+    margin-left: 6px;
+    padding-left: 6px;
+    margin-top: 2px;
+    margin-bottom: 2px;
+}
+
+.tree-branch-label {
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--planner-warning);
+    padding: 2px 0;
 }
 
 /* ============================================
@@ -3121,15 +3097,6 @@ body.planner-active {
 /* ============================================
    IMPROVED TREE NODE HP BARS (overrides)
    ============================================ */
-.tree-node-hp-entry .tree-node-hp {
-    flex: 1;
-    height: 8px;
-    background: rgba(0, 0, 0, 0.3);
-    border-radius: 4px;
-    overflow: hidden;
-    max-width: 80px;
-}
-
 .hp-bar-p1,
 .hp-bar-p2 {
     height: 100%;
@@ -3157,27 +3124,6 @@ body.planner-active {
 .hp-bar-p1.hp-red,
 .hp-bar-p2.hp-red {
     background: var(--hp-red);
-}
-
-.tree-ko-marker {
-    font-size: 12px;
-    margin-left: 4px;
-}
-
-.tree-ko-marker.p1-ko {
-    color: var(--planner-danger);
-}
-
-.tree-ko-marker.p2-ko {
-    color: var(--planner-success);
-}
-
-.tree-node-p1ko {
-    border-left: 3px solid var(--planner-danger);
-}
-
-.tree-node-p2ko {
-    border-left: 3px solid var(--planner-success);
 }
 
 /* ============================================
@@ -3694,24 +3640,6 @@ body.planner-active {
 .turn-result-damage .healing-done {
     color: var(--hp-green);
     font-weight: 600;
-}
-
-/* Tree node cursor and selection */
-.tree-node {
-    cursor: pointer;
-}
-
-.tree-node:hover .tree-node-content {
-    background: rgba(255, 255, 255, 0.05);
-}
-
-.tree-node-content {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 8px;
-    border-radius: 4px;
-    transition: background 0.15s;
 }
 
 /* ============================================
@@ -4236,6 +4164,174 @@ body.planner-active {
     font-size: 12px;
     font-weight: 600;
     width: 30px;
+}
+
+/* -- Pokemon detail header -- */
+.dex-pkmn-header {
+    margin-bottom: 8px;
+}
+
+.dex-pkmn-header h3 {
+    margin: 0 0 4px;
+}
+
+.dex-num {
+    font-weight: 400;
+    color: var(--planner-text-muted);
+    font-size: 14px;
+}
+
+.dex-types {
+    display: flex;
+    gap: 4px;
+}
+
+.dex-stat-bst {
+    border-top: 1px solid var(--planner-border);
+    padding-top: 4px;
+    margin-top: 2px;
+}
+
+/* -- Evolution chain -- */
+.dex-evo-chain {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 0;
+    flex-wrap: wrap;
+}
+
+.dex-evo-links {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+
+.dex-evo-name {
+    cursor: pointer;
+    color: var(--planner-accent);
+    font-size: 12px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    background: rgba(29, 155, 240, 0.1);
+    transition: background 0.15s;
+}
+
+.dex-evo-name:hover {
+    background: rgba(29, 155, 240, 0.25);
+}
+
+.dex-evo-current {
+    font-weight: 700;
+    background: rgba(29, 155, 240, 0.2);
+    border: 1px solid var(--planner-accent);
+}
+
+.dex-evo-arrow {
+    color: var(--planner-text-muted);
+    font-size: 14px;
+}
+
+.dex-extra-info {
+    margin: 6px 0;
+    font-size: 12px;
+}
+
+.dex-extra-info .dex-row {
+    padding: 2px 0;
+}
+
+/* -- Learnset tabs -- */
+.dex-learnset-tabs {
+    display: flex;
+    gap: 4px;
+    margin: 10px 0 6px;
+    border-bottom: 1px solid var(--planner-border);
+    padding-bottom: 4px;
+}
+
+.dex-ls-tab {
+    background: transparent;
+    border: none;
+    color: var(--planner-text-muted);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 10px;
+    cursor: pointer;
+    border-radius: 4px 4px 0 0;
+    transition: all 0.15s;
+}
+
+.dex-ls-tab:hover {
+    color: var(--planner-text);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.dex-ls-tab.active {
+    color: var(--planner-accent);
+    background: rgba(29, 155, 240, 0.1);
+    border-bottom: 2px solid var(--planner-accent);
+}
+
+/* -- Move table -- */
+.dex-move-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+}
+
+.dex-move-table thead th {
+    text-align: left;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: var(--planner-text-muted);
+    padding: 4px 4px;
+    border-bottom: 1px solid var(--planner-border);
+    white-space: nowrap;
+}
+
+.dex-move-row td {
+    padding: 3px 4px;
+    border-bottom: 1px solid rgba(56, 68, 77, 0.3);
+    vertical-align: middle;
+}
+
+.dex-move-row:hover td {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.dex-move-lvl {
+    text-align: center;
+    color: var(--planner-text-muted);
+    width: 24px;
+}
+
+.dex-move-name {
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.dex-move-cat {
+    font-size: 10px;
+    color: var(--planner-text-muted);
+}
+
+.dex-move-num {
+    text-align: center;
+    width: 32px;
+}
+
+.dex-move-desc {
+    font-size: 10px;
+    color: var(--planner-text-muted);
+    max-width: 180px;
+}
+
+.dex-move-table .type-badge {
+    font-size: 9px;
+    padding: 1px 4px;
 }
 
 .dex-placeholder {

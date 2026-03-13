@@ -920,13 +920,6 @@
                 uiState.p2BoxHoverOverride = null;
             }
             renderStage();
-
-            // Update dex panel on hover
-            var currentNode = uiState.tree ? uiState.tree.getCurrentNode() : null;
-            if (currentNode) {
-                var team = currentNode.state[side].team;
-                if (team && team[index]) updateDexPanel(team[index].name);
-            }
         });
 
         // Hover preview for box slots
@@ -1156,6 +1149,20 @@
         $(document).on('click', '#dex-detail-back', function () {
             $('#dex-detail').hide();
             $('#dex-results').show();
+        });
+        // Learnset tab switching inside Dex detail
+        $(document).on('click', '.dex-ls-tab', function () {
+            $('.dex-ls-tab').removeClass('active');
+            $(this).addClass('active');
+            var tab = $(this).data('ls-tab');
+            $('.dex-ls-content').hide();
+            $('.dex-ls-content[data-ls-content="' + tab + '"]').show();
+        });
+        // Evolution chain link clicks
+        $(document).on('click', '.dex-evo-name', function () {
+            var type = $(this).data('dex-type');
+            var eid = $(this).data('dex-id');
+            if (type && eid) showDexDetail(type, eid);
         });
 
         // Execute Turn button
@@ -1989,11 +1996,17 @@
         var isCurrentNode = nodeId === uiState.tree.currentNodeId;
         var hasChildren = node.children.length > 0;
         var isRoot = !node.parentId;
+        var hasSiblings = false;
+        if (node.parentId) {
+            var parent = uiState.tree.getNode(node.parentId);
+            hasSiblings = parent && parent.children.length > 1;
+        }
 
         var nodeClasses = ['tree-node'];
         if (isCurrentNode) nodeClasses.push('tree-node-current');
         if (node.isBestCase) nodeClasses.push('tree-node-best');
         if (node.isWorstCase) nodeClasses.push('tree-node-worst');
+        if (hasSiblings) nodeClasses.push('tree-node-branch');
 
         var p1Active = node.state.p1.active;
         var p2Active = node.state.p2.active;
@@ -2020,7 +2033,6 @@
 
         var turnLabel = 'T' + (node.state.turnNumber || 0);
 
-        // Build P1/P2 action descriptions
         var p1ActionText = '';
         var p2ActionText = '';
         if (node.actions && node.actions.p1) {
@@ -2034,16 +2046,13 @@
                 : (node.actions.p2.moveName || '?');
         }
 
-        var html = '<div class="' + nodeClasses.join(' ') + '" data-node-id="' + nodeId + '" style="margin-left: ' + (depth * 20) + 'px;">';
-
-        // Connector line
-        if (depth > 0) {
-            html += '<div class="tree-connector"></div>';
-        }
+        // Flat layout: max indent of 8px for branches, no deep nesting
+        var indent = hasSiblings ? 8 : 0;
+        var html = '<div class="' + nodeClasses.join(' ') + '" data-node-id="' + nodeId + '" style="margin-left:' + indent + 'px;">';
 
         html += '<div class="tree-node-card">';
 
-        // Header row: toggle, turn badge, KO markers, delete
+        // Header row
         html += '<div class="tree-node-header">';
         if (hasChildren) {
             html += '<span class="tree-node-toggle">' + (isExpanded ? '▼' : '▶') + '</span>';
@@ -2055,52 +2064,48 @@
         if (p1KO) html += '<span class="tree-ko-marker p1-ko">✗ ' + p1Name + '</span>';
         if (p2KO) html += '<span class="tree-ko-marker p2-ko">✓ ' + p2Name + '</span>';
 
-        // Variance warning icon
         if (node.outcome && node.outcome.varianceWarnings && node.outcome.varianceWarnings.length > 0) {
             html += '<span class="tree-variance-icon" title="Roll variance detected">⚠</span>';
         }
 
-        // Flinch icon
         if (node.outcome && node.outcome.effects && node.outcome.effects.flinchResult &&
             node.outcome.effects.flinchResult.flinches && node.outcome.effects.flinchResult.isGuaranteed) {
             html += '<span class="tree-flinch-icon" title="Flinch!">💫</span>';
         }
 
-        // Inline delete button (hidden by default, shown on hover)
         if (!isRoot) {
             html += '<button class="tree-node-delete" data-node-id="' + nodeId + '" title="Delete this branch">&times;</button>';
         }
 
         html += '</div>';
 
-        // Action rows (only if not root)
+        // Compact action + HP line
+        html += '<div class="tree-node-summary">';
         if (p1ActionText || p2ActionText) {
-            html += '<div class="tree-node-actions">';
-            if (p1ActionText) {
-                html += '<div class="tree-action tree-action-p1"><span class="tree-action-side">P1</span> ' + p1Name + ': ' + p1ActionText + '</div>';
-            }
-            if (p2ActionText) {
-                html += '<div class="tree-action tree-action-p2"><span class="tree-action-side">P2</span> ' + p2Name + ': ' + p2ActionText + '</div>';
-            }
-            html += '</div>';
+            html += '<span class="tree-sum-actions">';
+            if (p1ActionText) html += '<span class="tree-action-p1">' + p1Name + ': ' + p1ActionText + '</span>';
+            if (p1ActionText && p2ActionText) html += ' <span class="tree-sum-sep">|</span> ';
+            if (p2ActionText) html += '<span class="tree-action-p2">' + p2Name + ': ' + p2ActionText + '</span>';
+            html += '</span>';
         }
-
-        // HP bars row
-        html += '<div class="tree-node-hp-row">';
-        html += '<div class="tree-node-hp-entry"><span class="tree-hp-label">' + p1Name + '</span>';
-        html += '<span class="tree-node-hp"><span class="hp-bar-p1 ' + p1Color + '" style="width:' + Math.max(0, p1HP) + '%"></span></span>';
-        html += '<span class="tree-hp-val">' + p1HPText + '</span></div>';
-        html += '<div class="tree-node-hp-entry"><span class="tree-hp-label">' + p2Name + '</span>';
-        html += '<span class="tree-node-hp"><span class="hp-bar-p2 ' + p2Color + '" style="width:' + Math.max(0, p2HP) + '%"></span></span>';
-        html += '<span class="tree-hp-val">' + p2HPText + '</span></div>';
+        html += '<span class="tree-sum-hp">' + p1Name + ' ' + p1HPText + ' / ' + p2Name + ' ' + p2HPText + '</span>';
         html += '</div>';
 
         html += '</div></div>';
 
+        // Render children: if branching, add a branch group wrapper
         if (hasChildren && isExpanded) {
+            var isBranching = node.children.length > 1;
+            if (isBranching) {
+                html += '<div class="tree-branch-group">';
+                html += '<div class="tree-branch-label">Branches (' + node.children.length + ')</div>';
+            }
             node.children.forEach(function (childId) {
                 html += renderTreeNode(childId, depth + 1);
             });
+            if (isBranching) {
+                html += '</div>';
+            }
         }
 
         return html;
@@ -3727,6 +3732,62 @@
     /**
      * Show detailed view for a specific Dex entry.
      */
+    function buildEvolutionChain(speciesName) {
+        if (!window.RBDex) return [];
+        var chain = [];
+        var cur = speciesName;
+        // Walk backwards to the earliest pre-evolution
+        while (cur) {
+            var sp = window.RBDex.getSpecies(cur);
+            if (!sp || chain.indexOf(sp.name || cur) !== -1) break;
+            chain.unshift(sp.name || cur);
+            cur = sp.prevo;
+        }
+        // Walk forward from the last element
+        cur = chain[chain.length - 1];
+        while (cur) {
+            var sp2 = window.RBDex.getSpecies(cur);
+            if (!sp2 || !sp2.evos || !sp2.evos.length) break;
+            var nextName = sp2.evos[0];
+            if (chain.indexOf(nextName) !== -1) break;
+            chain.push(nextName);
+            cur = nextName;
+        }
+        return chain;
+    }
+
+    function parseLearnsetCode(code) {
+        // e.g. "9L5" -> { gen: 9, method: 'L', level: 5 }
+        //      "9M"  -> { gen: 9, method: 'M' }
+        //      "9T"  -> { gen: 9, method: 'T' }
+        //      "9E"  -> { gen: 9, method: 'E' }
+        var match = code.match(/^(\d+)([A-Z])(\d+)?$/);
+        if (!match) return null;
+        return { gen: parseInt(match[1], 10), method: match[2], level: match[3] ? parseInt(match[3], 10) : null };
+    }
+
+    function renderMoveRow(moveName, level) {
+        var move = window.RBDex ? window.RBDex.getMove(moveName) : null;
+        var name = move ? move.name : moveName;
+        var type = move ? (move.type || 'Normal') : 'Normal';
+        var cat = move ? (move.category || '—') : '—';
+        var power = move ? (move.basePower || '—') : '—';
+        var acc = move ? (move.accuracy === true ? '—' : (move.accuracy || '—')) : '—';
+        var pp = move ? (move.pp || '—') : '—';
+        var desc = move ? (move.shortDesc || '') : '';
+        var lvlStr = level !== null && level !== undefined ? level : '—';
+        return '<tr class="dex-move-row">' +
+            '<td class="dex-move-lvl">' + lvlStr + '</td>' +
+            '<td class="dex-move-name">' + name + '</td>' +
+            '<td><span class="type-badge type-' + type.toLowerCase() + '">' + type + '</span></td>' +
+            '<td class="dex-move-cat">' + cat + '</td>' +
+            '<td class="dex-move-num">' + power + '</td>' +
+            '<td class="dex-move-num">' + acc + '</td>' +
+            '<td class="dex-move-num">' + pp + '</td>' +
+            '<td class="dex-move-desc">' + desc + '</td>' +
+            '</tr>';
+    }
+
     function showDexDetail(type, id) {
         var $detail = $('#dex-detail-content');
         var html = '';
@@ -3734,34 +3795,126 @@
         if (type === 'pokemon') {
             var species = window.RBDex ? window.RBDex.getSpecies(id) : null;
             if (!species) { $detail.html('<p>Not found</p>'); return; }
-            html += '<h3>' + (species.name || id) + ' #' + (species.num || '?') + '</h3>';
+
+            // Header: name, number, types
+            html += '<div class="dex-pkmn-header">';
+            html += '<h3>' + (species.name || id) + ' <span class="dex-num">#' + (species.num || '?') + '</span></h3>';
             if (species.types) {
-                html += '<div class="dex-row">' + species.types.map(function (t) {
+                html += '<div class="dex-types">' + species.types.map(function (t) {
                     return '<span class="type-badge type-' + t.toLowerCase() + '">' + t + '</span>';
                 }).join(' ') + '</div>';
             }
-            if (species.baseStats) {
-                var bs = species.baseStats;
-                var bst = (bs.hp||0)+(bs.atk||0)+(bs.def||0)+(bs.spa||0)+(bs.spd||0)+(bs.spe||0);
-                html += '<div class="dex-detail-stats">';
-                ['hp','atk','def','spa','spd','spe'].forEach(function (s) {
-                    var val = bs[s] || 0;
-                    var pct = Math.min(100, Math.round((val / 255) * 100));
-                    html += '<div class="dex-stat-bar"><span class="dex-stat-label">' + s.toUpperCase() + '</span><div class="dex-stat-fill-bg"><div class="dex-stat-fill" style="width:' + pct + '%"></div></div><span class="dex-stat-val">' + val + '</span></div>';
-                });
-                html += '<div class="dex-stat-bar"><span class="dex-stat-label">BST</span><span class="dex-stat-val" style="margin-left:auto">' + bst + '</span></div>';
-                html += '</div>';
-            }
+            html += '</div>';
+
+            // Abilities
             if (species.abilities) {
                 var abils = [];
                 if (species.abilities['0']) abils.push(species.abilities['0']);
                 if (species.abilities['1']) abils.push(species.abilities['1']);
-                if (species.abilities.H) abils.push(species.abilities.H + ' (Hidden)');
-                html += '<div class="dex-row"><span class="dex-label">Abilities</span><span>' + abils.join(', ') + '</span></div>';
+                if (species.abilities.H) abils.push('<em>' + species.abilities.H + '</em> (H)');
+                html += '<div class="dex-row"><span class="dex-label">Abilities</span><span>' + abils.join(' | ') + '</span></div>';
             }
-            if (species.weightkg) html += '<div class="dex-row"><span class="dex-label">Weight</span><span>' + species.weightkg + ' kg</span></div>';
-            if (species.evos && species.evos.length) html += '<div class="dex-row"><span class="dex-label">Evolves into</span><span>' + species.evos.join(', ') + '</span></div>';
-            if (species.prevo) html += '<div class="dex-row"><span class="dex-label">Pre-evo</span><span>' + species.prevo + '</span></div>';
+
+            // Base stats
+            if (species.baseStats) {
+                var bs = species.baseStats;
+                var bst = (bs.hp||0)+(bs.atk||0)+(bs.def||0)+(bs.spa||0)+(bs.spd||0)+(bs.spe||0);
+                html += '<div class="dex-detail-stats">';
+                var statNames = { hp: 'HP', atk: 'Atk', def: 'Def', spa: 'SpA', spd: 'SpD', spe: 'Spe' };
+                ['hp','atk','def','spa','spd','spe'].forEach(function (s) {
+                    var val = bs[s] || 0;
+                    var pct = Math.min(100, Math.round((val / 255) * 100));
+                    var barColor = val >= 100 ? '#4caf50' : val >= 60 ? '#ffc107' : '#f44336';
+                    html += '<div class="dex-stat-bar"><span class="dex-stat-label">' + statNames[s] + '</span><div class="dex-stat-fill-bg"><div class="dex-stat-fill" style="width:' + pct + '%;background:' + barColor + '"></div></div><span class="dex-stat-val">' + val + '</span></div>';
+                });
+                html += '<div class="dex-stat-bar dex-stat-bst"><span class="dex-stat-label">BST</span><span class="dex-stat-val" style="margin-left:auto">' + bst + '</span></div>';
+                html += '</div>';
+            }
+
+            // Evolution chain
+            var evoChain = buildEvolutionChain(id);
+            if (evoChain.length > 1) {
+                html += '<div class="dex-evo-chain"><span class="dex-label">Evolution</span>';
+                html += '<span class="dex-evo-links">' + evoChain.map(function (name) {
+                    var isCurrent = name.toLowerCase().replace(/[^a-z0-9]/g, '') === id.toLowerCase().replace(/[^a-z0-9]/g, '');
+                    return '<span class="dex-evo-name' + (isCurrent ? ' dex-evo-current' : '') + '" data-dex-type="pokemon" data-dex-id="' + name + '">' + name + '</span>';
+                }).join(' <span class="dex-evo-arrow">&rarr;</span> ') + '</span>';
+                html += '</div>';
+            }
+
+            // Extra info
+            var infoItems = [];
+            if (species.weightkg) infoItems.push('<span class="dex-label">Weight</span> ' + species.weightkg + ' kg');
+            if (species.heightm) infoItems.push('<span class="dex-label">Height</span> ' + species.heightm + ' m');
+            if (species.catchrate) infoItems.push('<span class="dex-label">Catch Rate</span> ' + species.catchrate);
+            if (species.eggGroups) infoItems.push('<span class="dex-label">Egg Groups</span> ' + species.eggGroups.join(', '));
+            if (species.genderRatio) {
+                var gr = species.genderRatio;
+                infoItems.push('<span class="dex-label">Gender</span> ' + (gr.M * 100) + '% M / ' + (gr.F * 100) + '% F');
+            }
+            if (infoItems.length) {
+                html += '<div class="dex-extra-info">' + infoItems.map(function (i) { return '<div class="dex-row">' + i + '</div>'; }).join('') + '</div>';
+            }
+
+            // Learnset tabs
+            var learnset = window.RBDex ? window.RBDex.getLearnset(id) : null;
+            if (learnset) {
+                var levelUp = [];
+                var tmHm = [];
+                var tutor = [];
+                var egg = [];
+                Object.keys(learnset).forEach(function (moveName) {
+                    var sources = learnset[moveName];
+                    if (!Array.isArray(sources)) return;
+                    sources.forEach(function (code) {
+                        var parsed = parseLearnsetCode(code);
+                        if (!parsed) return;
+                        if (parsed.method === 'L') levelUp.push({ move: moveName, level: parsed.level || 0 });
+                        else if (parsed.method === 'M') tmHm.push({ move: moveName });
+                        else if (parsed.method === 'T') tutor.push({ move: moveName });
+                        else if (parsed.method === 'E') egg.push({ move: moveName });
+                    });
+                });
+                levelUp.sort(function (a, b) { return a.level - b.level; });
+
+                html += '<div class="dex-learnset-tabs">';
+                html += '<button class="dex-ls-tab active" data-ls-tab="levelup">Level-up (' + levelUp.length + ')</button>';
+                html += '<button class="dex-ls-tab" data-ls-tab="tm">TM/HM (' + tmHm.length + ')</button>';
+                if (tutor.length) html += '<button class="dex-ls-tab" data-ls-tab="tutor">Tutor (' + tutor.length + ')</button>';
+                if (egg.length) html += '<button class="dex-ls-tab" data-ls-tab="egg">Egg (' + egg.length + ')</button>';
+                html += '</div>';
+
+                var moveTableHead = '<table class="dex-move-table"><thead><tr><th>Lv</th><th>Move</th><th>Type</th><th>Cat</th><th>Pow</th><th>Acc</th><th>PP</th><th>Effect</th></tr></thead><tbody>';
+
+                // Level-up
+                html += '<div class="dex-ls-content" data-ls-content="levelup">';
+                html += moveTableHead;
+                levelUp.forEach(function (entry) { html += renderMoveRow(entry.move, entry.level); });
+                html += '</tbody></table></div>';
+
+                // TM/HM
+                html += '<div class="dex-ls-content" data-ls-content="tm" style="display:none">';
+                html += moveTableHead;
+                tmHm.forEach(function (entry) { html += renderMoveRow(entry.move, '—'); });
+                html += '</tbody></table></div>';
+
+                // Tutor
+                if (tutor.length) {
+                    html += '<div class="dex-ls-content" data-ls-content="tutor" style="display:none">';
+                    html += moveTableHead;
+                    tutor.forEach(function (entry) { html += renderMoveRow(entry.move, '—'); });
+                    html += '</tbody></table></div>';
+                }
+
+                // Egg
+                if (egg.length) {
+                    html += '<div class="dex-ls-content" data-ls-content="egg" style="display:none">';
+                    html += moveTableHead;
+                    egg.forEach(function (entry) { html += renderMoveRow(entry.move, '—'); });
+                    html += '</tbody></table></div>';
+                }
+            }
+
         } else if (type === 'move') {
             var move = window.RBDex ? window.RBDex.getMove(id) : null;
             if (!move) { $detail.html('<p>Not found</p>'); return; }

@@ -724,10 +724,13 @@
 
         if (!hasFlinch) return result;
 
-        // Fake Out: only works on the first turn after being sent in
+        // Fake Out: only works on the first turn after being sent in.
+        // turnsOnField is incremented at end-of-turn, so on the first turn
+        // the Pokemon can act, turnsOnField is 0 (just switched in this turn)
+        // or 1 (was on field at start, end-of-turn incremented it once).
         var mName = (moveName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
         if (mName === 'fakeout') {
-            if (attacker.turnsOnField !== undefined && attacker.turnsOnField > 0) {
+            if (attacker.turnsOnField !== undefined && attacker.turnsOnField > 1) {
                 result.reason = 'Fake Out fails after first turn';
                 return result;
             }

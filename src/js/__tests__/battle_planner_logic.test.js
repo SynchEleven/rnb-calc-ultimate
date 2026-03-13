@@ -1002,8 +1002,14 @@ describe('checkFlinch', () => {
     expect(result.chance).toBe(1);
   });
 
-  test('Fake Out fails after first turn', () => {
+  test('Fake Out still works on first acting turn (turnsOnField=1)', () => {
     const result = Logic.checkFlinch(makeMoveWithFlinch(100), makeAttacker({ turnsOnField: 1 }), makeDefender(), 'Fake Out');
+    expect(result.flinches).toBe(true);
+    expect(result.isGuaranteed).toBe(true);
+  });
+
+  test('Fake Out fails after first turn (turnsOnField=2)', () => {
+    const result = Logic.checkFlinch(makeMoveWithFlinch(100), makeAttacker({ turnsOnField: 2 }), makeDefender(), 'Fake Out');
     expect(result.flinches).toBe(false);
     expect(result.reason).toContain('fails after first turn');
   });

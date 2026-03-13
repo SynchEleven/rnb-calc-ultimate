@@ -10,7 +10,8 @@
  *   2. rbdex/items.js
  *   3. rbdex/pokedex.js
  *   4. rbdex/abilities.js
- *   5. rbdex/rbdex_adapter.js   <-- this file (runs last, copies to window)
+ *   5. rbdex/learnsets.js
+ *   6. rbdex/rbdex_adapter.js   <-- this file (runs last, copies to window)
  */
 (function () {
     'use strict';
@@ -27,6 +28,9 @@
         }
         if (window.exports.BattleAbilities && !window.BattleAbilities) {
             window.BattleAbilities = window.exports.BattleAbilities;
+        }
+        if (window.exports.BattleLearnsets && !window.BattleLearnsets) {
+            window.BattleLearnsets = window.exports.BattleLearnsets;
         }
     }
 
@@ -53,6 +57,12 @@
         getItemDesc: function (itemName) {
             var i = this.getItem(itemName);
             return i ? (i.desc || i.shortDesc || '') : '';
+        },
+        getLearnset: function (speciesName) {
+            if (!speciesName || !window.BattleLearnsets) return null;
+            var id = speciesName.toLowerCase().replace(/[^a-z0-9]+/g, '');
+            var entry = window.BattleLearnsets[id];
+            return entry ? (entry.learnset || null) : null;
         },
         getAbilityDesc: function (abilityName) {
             if (!abilityName) return '';
