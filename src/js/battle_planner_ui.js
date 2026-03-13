@@ -678,8 +678,8 @@
                             <h4>🌳 Using the Timeline</h4>
                             <ul>
                                 <li>Click any node to <strong>jump to that point</strong> in the battle</li>
-                                <li><span class="badge badge-best">Green</span> nodes = best case scenario</li>
-                                <li><span class="badge badge-worst">Red</span> nodes = worst case scenario</li>
+                                <li>✗ / ✓ markers indicate Pokemon KOs</li>
+                                <li>⚠ indicates a variance branch point</li>
                                 <li>Use ◀ ▶ buttons to navigate turns</li>
                             </ul>
                         </div>
@@ -1568,16 +1568,21 @@
         var isNotRoot = currentNode.parentId;
 
         if (isAddingToTeam && isNotRoot) {
-            var choice = confirm(
+            var choice = prompt(
                 'You are adding ' + pokemon.name + ' to your team mid-battle.\n\n' +
-                'OK = Add retroactively (appears in all turns)\n' +
-                'Cancel = Only add from this turn onward'
+                'Type "all" = Add retroactively (appears in all turns)\n' +
+                'Type "here" = Only add from this turn onward\n' +
+                'Press Cancel = Do nothing'
             );
-            if (choice) {
+            if (choice === null) return;
+            var trimmed = (choice || '').trim().toLowerCase();
+            if (trimmed === 'all') {
                 if (!applyTeamChange(state, source, target, pokemon)) return;
                 propagateTeamToAllNodes(pokemon, true);
-            } else {
+            } else if (trimmed === 'here') {
                 if (!applyTeamChange(state, source, target, pokemon)) return;
+            } else {
+                return;
             }
         } else {
             if (!applyTeamChange(state, source, target, pokemon)) return;
@@ -2239,16 +2244,21 @@
             }
         }
 
+        // Get parent node's active names to show "OldPokemon → NewPokemon" for switches
+        var parentNode = node.parentId ? uiState.tree.getNode(node.parentId) : null;
+        var parentP1Name = parentNode && parentNode.state.p1.active ? parentNode.state.p1.active.name : p1Name;
+        var parentP2Name = parentNode && parentNode.state.p2.active ? parentNode.state.p2.active.name : p2Name;
+
         var p1ActionText = '';
         var p2ActionText = '';
         if (node.actions && node.actions.p1) {
             p1ActionText = node.actions.p1.type === 'switch'
-                ? '→ ' + (node.actions.p1.targetName || '?')
+                ? parentP1Name + ' → ' + (node.actions.p1.targetName || '?')
                 : (node.actions.p1.moveName || '?');
         }
         if (node.actions && node.actions.p2) {
             p2ActionText = node.actions.p2.type === 'switch'
-                ? '→ ' + (node.actions.p2.targetName || '?')
+                ? parentP2Name + ' → ' + (node.actions.p2.targetName || '?')
                 : (node.actions.p2.moveName || '?');
         }
 
@@ -2297,18 +2307,24 @@
         html += '</div>';
 
         // Action rows (Player and Opponent each get their own line)
+        var p1IsSwitch = node.actions && node.actions.p1 && node.actions.p1.type === 'switch';
+        var p2IsSwitch = node.actions && node.actions.p2 && node.actions.p2.type === 'switch';
         if (p1ActionText || p2ActionText) {
             html += '<div class="tree-node-actions">';
             if (p1ActionText) {
                 html += '<div class="tree-action-line">';
-                html += '<span class="tree-action-name p1-name">' + p1Name + '</span>';
+                if (!p1IsSwitch) {
+                    html += '<span class="tree-action-name p1-name">' + parentP1Name + '</span>';
+                }
                 html += '<span class="tree-action-move">' + p1ActionText + '</span>';
                 html += '<span class="tree-action-hp ' + p1Color + '">' + p1Active.currentHP + '/' + p1Active.maxHP + ' (' + p1HP + '%)</span>';
                 html += '</div>';
             }
             if (p2ActionText) {
                 html += '<div class="tree-action-line">';
-                html += '<span class="tree-action-name p2-name">' + p2Name + '</span>';
+                if (!p2IsSwitch) {
+                    html += '<span class="tree-action-name p2-name">' + parentP2Name + '</span>';
+                }
                 html += '<span class="tree-action-move">' + p2ActionText + '</span>';
                 html += '<span class="tree-action-hp ' + p2Color + '">' + p2Active.currentHP + '/' + p2Active.maxHP + ' (' + p2HP + '%)</span>';
                 html += '</div>';
@@ -3652,32 +3668,62 @@
             outcomeHtml += '</div>';
         }
 
-        // Show legend
-        if (!$('#inspector-legend').length) {
-            $('#inspector-container').append(
-                '<div id="inspector-legend" class="inspector-section">' +
-                '<h4>Legend</h4>' +
-                '<div class="legend-items">' +
-                '<span class="legend-item"><span class="tree-ko-marker p1-ko">✗</span> Your Pokemon KO\'d</span>' +
-                '<span class="legend-item"><span class="tree-ko-marker p2-ko">✓</span> Opponent Pokemon KO\'d</span>' +
-                '<div class="legend-divider"></div>' +
-                '<span class="legend-item"><span class="legend-swatch match-dmg-1"></span> Guaranteed OHKO</span>' +
-                '<span class="legend-item"><span class="legend-swatch match-dmg-2"></span> Possible OHKO</span>' +
-                '<span class="legend-item"><span class="legend-swatch match-dmg-3"></span> Risk of KO</span>' +
-                '<span class="legend-item"><span class="legend-swatch match-dmg-4"></span> Guaranteed Faint</span>' +
-                '<div class="legend-divider"></div>' +
-                '<span class="legend-item"><span class="legend-swatch match-dmg-W"></span> Walling Defender</span>' +
-                '<span class="legend-item"><span class="legend-swatch match-speed-f"></span> Outspeeds</span>' +
-                '<span class="legend-item"><span class="legend-swatch match-speed-s"></span> Slower</span>' +
-                '<span class="legend-item"><span class="legend-swatch match-speed-t"></span> Speed Tie</span>' +
-                '<div class="legend-divider"></div>' +
-                '<span class="legend-item"><span class="ai-move-badge" style="position:static;font-size:10px;">AI +6</span> AI recommended move (score)</span>' +
-                '<span class="legend-item"><span class="priority-badge" style="font-size:10px;">+1</span> Priority move bracket</span>' +
-                '<span class="legend-item">⚠ Roll variance detected</span>' +
-                '<span class="legend-item">💫 Flinch occurred</span>' +
-                '<span class="legend-item">🔄 KO switch-in needed</span>' +
-                '</div></div>'
-            );
+        // Dynamic legend: only show entries for icons/badges currently visible
+        var legendEntries = [];
+        var $stage = $('#battle-planner');
+
+        // Move card indicators
+        if ($stage.find('.match-dmg-1').length) legendEntries.push('<span class="legend-item"><span class="legend-swatch match-dmg-1"></span> Guaranteed OHKO</span>');
+        if ($stage.find('.match-dmg-2').length) legendEntries.push('<span class="legend-item"><span class="legend-swatch match-dmg-2"></span> Possible OHKO</span>');
+        if ($stage.find('.match-dmg-3').length) legendEntries.push('<span class="legend-item"><span class="legend-swatch match-dmg-3"></span> Risk of KO</span>');
+        if ($stage.find('.match-dmg-4').length) legendEntries.push('<span class="legend-item"><span class="legend-swatch match-dmg-4"></span> Guaranteed Faint</span>');
+        if ($stage.find('.match-dmg-W').length) legendEntries.push('<span class="legend-item"><span class="legend-swatch match-dmg-W"></span> Walling Defender</span>');
+
+        // Speed indicators
+        if ($stage.find('.match-speed-f').length) legendEntries.push('<span class="legend-item"><span class="legend-swatch match-speed-f"></span> Outspeeds</span>');
+        if ($stage.find('.match-speed-s').length) legendEntries.push('<span class="legend-item"><span class="legend-swatch match-speed-s"></span> Slower</span>');
+        if ($stage.find('.match-speed-t').length) legendEntries.push('<span class="legend-item"><span class="legend-swatch match-speed-t"></span> Speed Tie</span>');
+
+        // AI and priority
+        if ($stage.find('.ai-move-badge').length) legendEntries.push('<span class="legend-item"><span class="ai-move-badge" style="position:static;font-size:10px;">AI +6</span> AI recommended move (score)</span>');
+        if ($stage.find('.priority-badge').length) legendEntries.push('<span class="legend-item"><span class="priority-badge" style="font-size:10px;">+1</span> Priority move bracket</span>');
+
+        // KO markers
+        if ($stage.find('.tree-ko-marker.p1-ko').length) legendEntries.push('<span class="legend-item"><span class="tree-ko-marker p1-ko">✗</span> Your Pokemon KO\'d</span>');
+        if ($stage.find('.tree-ko-marker.p2-ko').length) legendEntries.push('<span class="legend-item"><span class="tree-ko-marker p2-ko">✓</span> Opponent Pokemon KO\'d</span>');
+
+        // Timeline icons
+        if ($stage.find('.tree-variance-icon').length) legendEntries.push('<span class="legend-item">⚠ Roll variance detected</span>');
+        if ($stage.find('.tree-flinch-icon').length) legendEntries.push('<span class="legend-item">💫 Flinch occurred</span>');
+        if ($stage.find('.tree-switch-needed').length) legendEntries.push('<span class="legend-item">🔄 KO switch-in needed</span>');
+        if ($stage.find('.tree-battle-win').length) legendEntries.push('<span class="legend-item">🏆 Victory path</span>');
+        if ($stage.find('.tree-battle-loss').length) legendEntries.push('<span class="legend-item">💀 Defeat path</span>');
+
+        // Move card icons
+        if ($stage.find('.eff-icon:contains("⬆")').length) legendEntries.push('<span class="legend-item">⬆️ Super effective</span>');
+        if ($stage.find('.eff-icon:contains("⬇")').length) legendEntries.push('<span class="legend-item">⬇️ Not very effective</span>');
+        if ($stage.find('.eff-icon:contains("🚫")').length) legendEntries.push('<span class="legend-item">🚫 Immune</span>');
+        if ($stage.find('.move-drain').length) legendEntries.push('<span class="legend-item">💚 Draining move (heals HP)</span>');
+        if ($stage.find('.move-recoil').length) legendEntries.push('<span class="legend-item">⚠️ Recoil damage</span>');
+        if ($stage.find('.roll-ko').length) legendEntries.push('<span class="legend-item"><span class="dmg-roll roll-ko" style="font-size:9px;">KO</span> Roll that KOs</span>');
+        if ($stage.find('.tree-probability').length) legendEntries.push('<span class="legend-item"><span class="tree-probability" style="font-size:10px;">50%</span> Branch probability</span>');
+        if ($stage.find('.multihit-badge').length) legendEntries.push('<span class="legend-item"><span class="multihit-badge" style="font-size:10px;">x2</span> Multi-hit move</span>');
+
+        // Status & stat badges
+        if ($stage.find('.boost-badge.boost-up').length) legendEntries.push('<span class="legend-item"><span class="boost-badge boost-up" style="font-size:10px;">ATK+1</span> Stat boosted</span>');
+        if ($stage.find('.boost-badge.boost-down').length) legendEntries.push('<span class="legend-item"><span class="boost-badge boost-down" style="font-size:10px;">DEF-1</span> Stat lowered</span>');
+        if ($stage.find('.status-badge').length) legendEntries.push('<span class="legend-item"><span class="status-badge" style="font-size:10px;">PSN</span> Status condition</span>');
+
+        if (legendEntries.length > 0) {
+            var legendHtml = '<div id="inspector-legend" class="inspector-section"><h4>Legend</h4><div class="legend-items">' +
+                legendEntries.join('') + '</div></div>';
+            if ($('#inspector-legend').length) {
+                $('#inspector-legend').replaceWith(legendHtml);
+            } else {
+                $('#inspector-container').append(legendHtml);
+            }
+        } else {
+            $('#inspector-legend').remove();
         }
 
         if (outcomeHtml) {
@@ -4529,7 +4575,11 @@
         var html = '<div class="item-select-option' + (!currentItem ? ' selected' : '') + '" data-item="">(No Item)</div>';
         items.forEach(function (item) {
             var isSelected = currentItem === item ? ' selected' : '';
-            html += '<div class="item-select-option' + isSelected + '" data-item="' + item + '">' + item + '</div>';
+            var desc = window.RBDex ? window.RBDex.getItemDesc(item) : '';
+            html += '<div class="item-select-option' + isSelected + '" data-item="' + item + '">';
+            html += '<span class="item-opt-name">' + item + '</span>';
+            if (desc) html += '<span class="item-opt-desc">' + desc + '</span>';
+            html += '</div>';
         });
 
         $('#item-select-grid').html(html);
@@ -4575,7 +4625,8 @@
     function filterItemList(query) {
         $('.item-select-option').each(function () {
             var item = $(this).data('item') || '';
-            if (!query || item.toLowerCase().includes(query)) {
+            var descText = $(this).find('.item-opt-desc').text() || '';
+            if (!query || item.toLowerCase().includes(query) || descText.toLowerCase().includes(query)) {
                 $(this).show();
             } else {
                 $(this).hide();
