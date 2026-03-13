@@ -593,7 +593,8 @@
 
         if (candidates.length === 0) return null;
         if (candidates.length === 1) {
-            return { slot: candidates[0].slot, pokemon: candidates[0].pokemon, score: 0, reason: 'only option' };
+            var only = candidates[0];
+            return { slot: only.slot, pokemon: only.pokemon, score: 0, reason: 'only option', allScores: [{ slot: only.slot, name: only.pokemon.name, score: 0, reason: 'only option' }] };
         }
 
         var playerSpeed = playerActive.stats ? (playerActive.stats.spe || 0) : 0;
@@ -601,6 +602,7 @@
         var playerMaxHP = playerActive.maxHP || 1;
 
         var best = null;
+        var allScores = [];
         for (var c = 0; c < candidates.length; c++) {
             var cand = candidates[c].pokemon;
             var candSpeed = cand.stats ? (cand.stats.spe || 0) : 0;
@@ -626,11 +628,15 @@
                 bestPlayerMovePct: candMaxHP > 0 ? (bestPlayerDmg / candMaxHP) * 100 : 0
             });
 
+            allScores.push({ slot: candidates[c].slot, name: cand.name, score: result.score, reason: result.reason });
+
             if (!best || result.score > best.score) {
                 best = { slot: candidates[c].slot, pokemon: cand, score: result.score, reason: result.reason };
             }
         }
 
+        allScores.sort(function (a, b) { return b.score - a.score; });
+        best.allScores = allScores;
         return best;
     }
 

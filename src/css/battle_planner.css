@@ -343,7 +343,7 @@ body.planner-active {
 
 /* -- Flat timeline node -- */
 .tree-node {
-    padding: 1px 0;
+    padding: 2px 0;
     cursor: pointer;
     position: relative;
 }
@@ -351,8 +351,8 @@ body.planner-active {
 .tree-node-card {
     background: var(--planner-card-bg);
     border: 1px solid var(--planner-border);
-    border-radius: 5px;
-    padding: 4px 8px;
+    border-radius: 6px;
+    padding: 6px 10px;
     transition: border-color 0.15s, background 0.15s;
 }
 
@@ -373,38 +373,51 @@ body.planner-active {
     border-left: 3px solid var(--planner-danger);
 }
 
-.tree-node-branch .tree-node-card {
-    border-left: 3px solid var(--planner-warning);
-}
-
 /* -- Header -- */
 .tree-node-header {
     display: flex;
     align-items: center;
-    gap: 5px;
-    font-size: 11px;
-    margin-bottom: 2px;
+    gap: 6px;
+    font-size: 12px;
+    margin-bottom: 4px;
 }
 
 .tree-turn-badge {
     font-weight: 700;
-    font-size: 10px;
+    font-size: 11px;
     background: var(--planner-bg);
-    padding: 1px 5px;
-    border-radius: 3px;
+    padding: 2px 6px;
+    border-radius: 4px;
     color: var(--planner-accent);
+    flex-shrink: 0;
+}
+
+.tree-branch-name {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--planner-warning);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 200px;
+}
+
+.tree-node-icons {
+    display: flex;
+    gap: 3px;
+    align-items: center;
 }
 
 .tree-node-toggle {
-    width: 12px;
+    width: 14px;
     text-align: center;
-    font-size: 9px;
+    font-size: 10px;
     color: var(--planner-text-muted);
     flex-shrink: 0;
 }
 
 .tree-node-leaf {
-    font-size: 7px;
+    font-size: 8px;
 }
 
 .tree-node-delete {
@@ -428,50 +441,84 @@ body.planner-active {
     opacity: 1 !important;
 }
 
-/* -- Compact summary row (actions + HP on one line) -- */
-.tree-node-summary {
+/* -- Action lines: one per Pokemon -- */
+.tree-node-actions {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 6px;
-    font-size: 11px;
-    line-height: 1.3;
-    flex-wrap: wrap;
+    flex-direction: column;
+    gap: 2px;
 }
 
-.tree-sum-actions {
+.tree-action-line {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.tree-action-name {
+    font-weight: 600;
+    min-width: 60px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex-shrink: 0;
+}
+
+.tree-action-name.p1-name { color: var(--planner-p1); }
+.tree-action-name.p2-name { color: var(--planner-p2); }
+
+.tree-action-move {
     flex: 1;
+    color: var(--planner-text);
     min-width: 0;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 
-.tree-sum-sep {
-    color: var(--planner-text-muted);
-    margin: 0 2px;
-}
-
-.tree-sum-hp {
+.tree-action-hp {
     flex-shrink: 0;
-    font-size: 10px;
-    color: var(--planner-text-muted);
+    font-size: 11px;
+    font-weight: 600;
     white-space: nowrap;
 }
 
-.tree-node-summary .tree-action-p1 {
-    color: var(--planner-p1);
+.tree-action-hp.hp-green { color: var(--hp-green); }
+.tree-action-hp.hp-yellow { color: var(--hp-yellow); }
+.tree-action-hp.hp-red { color: var(--hp-red); }
+
+/* -- Meta row (status + boosts) -- */
+.tree-node-meta {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 3px;
+    font-size: 10px;
 }
 
-.tree-node-summary .tree-action-p2 {
-    color: var(--planner-p2);
+.tree-status {
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-weight: 600;
 }
+
+.tree-status.p1-status { color: var(--planner-p1); background: rgba(0,212,170,0.1); }
+.tree-status.p2-status { color: var(--planner-p2); background: rgba(255,107,157,0.1); }
+
+.tree-boost {
+    font-size: 10px;
+    color: var(--planner-text-muted);
+}
+
+.tree-boost.p1-boost { color: var(--planner-p1); }
+.tree-boost.p2-boost { color: var(--planner-p2); }
 
 /* -- KO markers -- */
 .tree-ko-marker {
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 700;
-    padding: 0 3px;
+    padding: 1px 4px;
     border-radius: 3px;
 }
 
@@ -486,29 +533,28 @@ body.planner-active {
 /* -- Status icons -- */
 .tree-variance-icon {
     color: #ffb74d;
-    font-size: 11px;
+    font-size: 12px;
 }
 
 .tree-flinch-icon {
-    font-size: 11px;
+    font-size: 12px;
 }
 
 /* -- Branch group -- */
 .tree-branch-group {
     border-left: 2px solid var(--planner-warning);
-    margin-left: 6px;
-    padding-left: 6px;
-    margin-top: 2px;
-    margin-bottom: 2px;
+    margin-left: 8px;
+    padding-left: 8px;
+    margin-top: 3px;
+    margin-bottom: 3px;
 }
 
 .tree-branch-label {
-    font-size: 9px;
+    font-size: 10px;
     font-weight: 700;
-    text-transform: uppercase;
     letter-spacing: 0.5px;
     color: var(--planner-warning);
-    padding: 2px 0;
+    padding: 3px 0;
 }
 
 /* ============================================
@@ -526,35 +572,41 @@ body.planner-active {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
+    gap: 10px;
     padding: 10px 16px;
     background: var(--planner-card-bg);
     border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.speed-first {
+    font-size: 15px;
+    font-weight: 700;
+}
+
+.speed-first.speed-p1-first {
+    color: var(--planner-p1);
+}
+
+.speed-first.speed-p2-first {
+    color: var(--planner-p2);
+}
+
+.speed-first.speed-tie {
+    color: var(--planner-warning);
+}
+
+.speed-second {
+    color: var(--planner-text-muted);
+    font-weight: 400;
     font-size: 13px;
 }
 
-.speed-icon {
-    font-size: 16px;
-}
-
-.speed-p1 {
-    color: var(--planner-p1);
-    font-weight: 600;
-}
-
-.speed-p2 {
-    color: var(--planner-p2);
-    font-weight: 600;
-}
-
-.speed-tie {
-    color: var(--planner-warning);
-    font-weight: 600;
-}
-
-.speed-values {
+.speed-vals {
     color: var(--planner-text-muted);
     font-size: 12px;
+    font-weight: 400;
 }
 
 .trick-room-badge {
@@ -3913,15 +3965,21 @@ body.planner-active {
 /* AI Switch Prediction */
 .ai-predict-banner {
     display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 14px;
-    background: rgba(33, 150, 243, 0.15);
-    border: 1px solid rgba(33, 150, 243, 0.4);
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 14px;
+    background: rgba(33, 150, 243, 0.12);
+    border: 1px solid rgba(33, 150, 243, 0.3);
     border-radius: 8px;
     font-size: 13px;
     color: #64b5f6;
     margin-bottom: 8px;
+}
+
+.ai-predict-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
 
 .ai-predict-banner .ai-label {
@@ -3941,6 +3999,51 @@ body.planner-active {
     font-size: 11px;
     color: var(--planner-text-muted);
     margin-left: auto;
+}
+
+.ai-predict-scores {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    border-top: 1px solid rgba(33, 150, 243, 0.15);
+    padding-top: 6px;
+}
+
+.ai-predict-score-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+.ai-predict-score-row.ai-predict-best {
+    background: rgba(33, 150, 243, 0.1);
+    font-weight: 600;
+}
+
+.ai-predict-name {
+    min-width: 80px;
+    color: var(--planner-text);
+}
+
+.ai-predict-score-val {
+    font-weight: 700;
+    color: #64b5f6;
+    min-width: 30px;
+}
+
+.ai-predict-reason {
+    color: var(--planner-text-muted);
+    font-size: 10px;
+    flex: 1;
+}
+
+.ai-predict-buttons {
+    display: flex;
+    gap: 8px;
+    margin-top: 4px;
 }
 
 /* Variance Detection Banner */
@@ -3968,13 +4071,42 @@ body.planner-active {
 }
 
 .variance-line {
-    padding: 2px 0;
+    padding: 3px 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.variance-line.variance-branched {
+    opacity: 0.5;
+    text-decoration: line-through;
 }
 
 .variance-actions {
     margin-top: 8px;
     display: flex;
     gap: 8px;
+}
+
+.planner-btn-xs {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: var(--planner-accent);
+    color: #fff;
+    border: none;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.planner-btn-xs:hover {
+    background: var(--planner-accent-hover);
+}
+
+.planner-btn-xs:disabled {
+    opacity: 0.4;
+    cursor: default;
 }
 
 /* Pokedex DEX Tab Button */

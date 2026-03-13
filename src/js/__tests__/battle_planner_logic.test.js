@@ -1513,7 +1513,89 @@ describe('scoreAIMoves', () => {
       return null;
     });
     const ls = scores.find(s => s.moveName === 'Low Sweep');
-    // Not highest damage (50 < 90), AI slower, no blocked ability → +6
     expect(ls.score).toBe(6);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// predictAISwitchIn — allScores
+// ---------------------------------------------------------------------------
+describe('predictAISwitchIn allScores', () => {
+  test('returns allScores array with scores for every candidate', () => {
+    const player = makePokemon({ name: 'Pikachu', stats: { hp:100,atk:55,def:40,spa:50,spd:50,spe:90 }, currentHP:100, maxHP:100 });
+    const team = [
+      makePokemon({ name: 'Fainted', currentHP:0, maxHP:100 }),
+      makePokemon({ name: 'Mon1', stats: { hp:100,atk:80,def:80,spa:80,spd:80,spe:100 }, currentHP:100, maxHP:100 }),
+      makePokemon({ name: 'Mon2', stats: { hp:120,atk:90,def:70,spa:70,spd:70,spe:50 }, currentHP:120, maxHP:120 })
+    ];
+    const result = Logic.predictAISwitchIn(player, team, 0, null, () => 40);
+    expect(result).not.toBeNull();
+    expect(result.allScores).toBeDefined();
+    expect(result.allScores.length).toBe(2);
+    expect(result.allScores[0].name).toBeDefined();
+    expect(result.allScores[0].score).toBeGreaterThanOrEqual(result.allScores[1].score);
+  });
+
+  test('single candidate returns allScores with one entry', () => {
+    const player = makePokemon({ name: 'Pikachu', stats: { hp:100,atk:55,def:40,spa:50,spd:50,spe:90 }, currentHP:100, maxHP:100 });
+    const team = [
+      makePokemon({ name: 'Fainted', currentHP:0, maxHP:100 }),
+      makePokemon({ name: 'OnlyOption', stats: { hp:100,atk:80,def:80,spa:80,spd:80,spe:100 }, currentHP:100, maxHP:100 })
+    ];
+    const result = Logic.predictAISwitchIn(player, team, 0, null, () => 40);
+    expect(result).not.toBeNull();
+    expect(result.allScores.length).toBe(1);
+    expect(result.allScores[0].reason).toBe('only option');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fake Out turnsOnField tracking across turns
+// ---------------------------------------------------------------------------
+describe('Fake Out multi-turn enforcement', () => {
+  test('turnsOnField increments in endOfTurnEffects', () => {
+    const state = makeState();
+    state.p1.active.turnsOnField = 0;
+    state.p2.active.turnsOnField = 0;
+    Logic.applyEndOfTurnEffects(state, null);
+    expect(state.p1.active.turnsOnField).toBe(1);
+    expect(state.p2.active.turnsOnField).toBe(1);
+  });
+
+  test('performSwitch sets turnsOnField to -1', () => {
+    const state = makeState();
+    state.p1.team.push(makePokemon({ name: 'Backup', currentHP: 100, maxHP: 100 }));
+    Logic.performSwitch(state, 'p1', 1);
+    expect(state.p1.active.turnsOnField).toBe(-1);
+  });
+
+  test('Fake Out flinches when turnsOnField is 0 (first turn)', () => {
+    const moveData = { secondary: { chance: 100, volatileStatus: 'flinch' } };
+    const attacker = makePokemon({ name: 'Ambipom', turnsOnField: 0 });
+    const defender = makePokemon({ name: 'Target' });
+    const result = Logic.checkFlinch(moveData, attacker, defender, 'Fake Out');
+    expect(result.flinches).toBe(true);
+    expect(result.isGuaranteed).toBe(true);
+  });
+
+  test('Fake Out fails when turnsOnField is 1 (second turn)', () => {
+    const moveData = { secondary: { chance: 100, volatileStatus: 'flinch' } };
+    const attacker = makePokemon({ name: 'Ambipom', turnsOnField: 1 });
+    const defender = makePokemon({ name: 'Target' });
+    const result = Logic.checkFlinch(moveData, attacker, defender, 'Fake Out');
+    expect(result.flinches).toBe(false);
+  });
+
+  test('Fake Out works after switch-in (-1 → EOT → 0)', () => {
+    const state = makeState();
+    state.p1.team.push(makePokemon({ name: 'Switchee', currentHP: 100, maxHP: 100 }));
+    Logic.performSwitch(state, 'p1', 1);
+    expect(state.p1.active.turnsOnField).toBe(-1);
+    Logic.applyEndOfTurnEffects(state, null);
+    expect(state.p1.active.turnsOnField).toBe(0);
+    // Now on the next turn, turnsOnField is 0 → Fake Out should work
+    const moveData = { secondary: { chance: 100, volatileStatus: 'flinch' } };
+    const result = Logic.checkFlinch(moveData, state.p1.active, state.p2.active, 'Fake Out');
+    expect(result.flinches).toBe(true);
   });
 });

@@ -287,10 +287,7 @@
                             <!-- Pokedex Floating Button -->
                             <div class="dex-tab" id="dex-tab">DEX</div>
                             <!-- Speed Comparison Bar -->
-                            <div class="speed-comparison-bar" id="speed-comparison">
-                                <span class="speed-icon">⚡</span>
-                                <span class="speed-text" id="speed-text">--</span>
-                            </div>
+                            <div class="speed-comparison-bar" id="speed-comparison">--</div>
                             
                             <div class="stage-field">
                                 <!-- P1 Pokemon Card -->
@@ -1996,17 +1993,11 @@
         var isCurrentNode = nodeId === uiState.tree.currentNodeId;
         var hasChildren = node.children.length > 0;
         var isRoot = !node.parentId;
-        var hasSiblings = false;
-        if (node.parentId) {
-            var parent = uiState.tree.getNode(node.parentId);
-            hasSiblings = parent && parent.children.length > 1;
-        }
 
         var nodeClasses = ['tree-node'];
         if (isCurrentNode) nodeClasses.push('tree-node-current');
         if (node.isBestCase) nodeClasses.push('tree-node-best');
         if (node.isWorstCase) nodeClasses.push('tree-node-worst');
-        if (hasSiblings) nodeClasses.push('tree-node-branch');
 
         var p1Active = node.state.p1.active;
         var p2Active = node.state.p2.active;
@@ -2028,28 +2019,30 @@
 
         var p1Name = p1Active ? p1Active.name : '?';
         var p2Name = p2Active ? p2Active.name : '?';
-        var p1HPText = p1Active ? (p1Active.currentHP + '/' + p1Active.maxHP) : '?';
-        var p2HPText = p2Active ? (p2Active.currentHP + '/' + p2Active.maxHP) : '?';
 
         var turnLabel = 'T' + (node.state.turnNumber || 0);
+
+        // Get branch name from outcome description
+        var branchName = '';
+        if (node.outcome && node.outcome.description) {
+            branchName = node.outcome.description;
+        }
 
         var p1ActionText = '';
         var p2ActionText = '';
         if (node.actions && node.actions.p1) {
             p1ActionText = node.actions.p1.type === 'switch'
-                ? 'Switch to ' + (node.actions.p1.targetName || '?')
+                ? '→ ' + (node.actions.p1.targetName || '?')
                 : (node.actions.p1.moveName || '?');
         }
         if (node.actions && node.actions.p2) {
             p2ActionText = node.actions.p2.type === 'switch'
-                ? 'Switch to ' + (node.actions.p2.targetName || '?')
+                ? '→ ' + (node.actions.p2.targetName || '?')
                 : (node.actions.p2.moveName || '?');
         }
 
-        // Flat layout: max indent of 8px for branches, no deep nesting
-        var indent = hasSiblings ? 8 : 0;
-        var html = '<div class="' + nodeClasses.join(' ') + '" data-node-id="' + nodeId + '" style="margin-left:' + indent + 'px;">';
-
+        // Flat layout: NO indentation at any depth
+        var html = '<div class="' + nodeClasses.join(' ') + '" data-node-id="' + nodeId + '">';
         html += '<div class="tree-node-card">';
 
         // Header row
@@ -2060,45 +2053,72 @@
             html += '<span class="tree-node-toggle tree-node-leaf">○</span>';
         }
         html += '<span class="tree-turn-badge">' + turnLabel + '</span>';
+        if (branchName) html += '<span class="tree-branch-name">' + branchName + '</span>';
 
-        if (p1KO) html += '<span class="tree-ko-marker p1-ko">✗ ' + p1Name + '</span>';
-        if (p2KO) html += '<span class="tree-ko-marker p2-ko">✓ ' + p2Name + '</span>';
-
+        var icons = '';
+        if (p1KO) icons += '<span class="tree-ko-marker p1-ko">✗ ' + p1Name + '</span>';
+        if (p2KO) icons += '<span class="tree-ko-marker p2-ko">✓ ' + p2Name + '</span>';
         if (node.outcome && node.outcome.varianceWarnings && node.outcome.varianceWarnings.length > 0) {
-            html += '<span class="tree-variance-icon" title="Roll variance detected">⚠</span>';
+            icons += '<span class="tree-variance-icon" title="Variance detected">⚠</span>';
         }
-
         if (node.outcome && node.outcome.effects && node.outcome.effects.flinchResult &&
             node.outcome.effects.flinchResult.flinches && node.outcome.effects.flinchResult.isGuaranteed) {
-            html += '<span class="tree-flinch-icon" title="Flinch!">💫</span>';
+            icons += '<span class="tree-flinch-icon" title="Flinch!">💫</span>';
         }
+        if (icons) html += '<span class="tree-node-icons">' + icons + '</span>';
 
         if (!isRoot) {
-            html += '<button class="tree-node-delete" data-node-id="' + nodeId + '" title="Delete this branch">&times;</button>';
+            html += '<button class="tree-node-delete" data-node-id="' + nodeId + '" title="Delete">&times;</button>';
         }
-
         html += '</div>';
 
-        // Compact action + HP line
-        html += '<div class="tree-node-summary">';
+        // Action rows (Player and Opponent each get their own line)
         if (p1ActionText || p2ActionText) {
-            html += '<span class="tree-sum-actions">';
-            if (p1ActionText) html += '<span class="tree-action-p1">' + p1Name + ': ' + p1ActionText + '</span>';
-            if (p1ActionText && p2ActionText) html += ' <span class="tree-sum-sep">|</span> ';
-            if (p2ActionText) html += '<span class="tree-action-p2">' + p2Name + ': ' + p2ActionText + '</span>';
-            html += '</span>';
+            html += '<div class="tree-node-actions">';
+            if (p1ActionText) {
+                html += '<div class="tree-action-line">';
+                html += '<span class="tree-action-name p1-name">' + p1Name + '</span>';
+                html += '<span class="tree-action-move">' + p1ActionText + '</span>';
+                html += '<span class="tree-action-hp ' + p1Color + '">' + p1Active.currentHP + '/' + p1Active.maxHP + ' (' + p1HP + '%)</span>';
+                html += '</div>';
+            }
+            if (p2ActionText) {
+                html += '<div class="tree-action-line">';
+                html += '<span class="tree-action-name p2-name">' + p2Name + '</span>';
+                html += '<span class="tree-action-move">' + p2ActionText + '</span>';
+                html += '<span class="tree-action-hp ' + p2Color + '">' + p2Active.currentHP + '/' + p2Active.maxHP + ' (' + p2HP + '%)</span>';
+                html += '</div>';
+            }
+            html += '</div>';
         }
-        html += '<span class="tree-sum-hp">' + p1Name + ' ' + p1HPText + ' / ' + p2Name + ' ' + p2HPText + '</span>';
-        html += '</div>';
+
+        // Status / boost indicators
+        var statusLine = '';
+        if (p1Active && p1Active.status && p1Active.status !== 'Healthy') statusLine += '<span class="tree-status p1-status">' + p1Name + ': ' + p1Active.status + '</span>';
+        if (p2Active && p2Active.status && p2Active.status !== 'Healthy') statusLine += '<span class="tree-status p2-status">' + p2Name + ': ' + p2Active.status + '</span>';
+        var boostLine = '';
+        [{ mon: p1Active, name: p1Name, cls: 'p1' }, { mon: p2Active, name: p2Name, cls: 'p2' }].forEach(function (o) {
+            if (o.mon && o.mon.boosts) {
+                var parts = [];
+                Object.keys(o.mon.boosts).forEach(function (s) {
+                    var v = o.mon.boosts[s];
+                    if (v && v !== 0) parts.push(s + (v > 0 ? '+' : '') + v);
+                });
+                if (parts.length) boostLine += '<span class="tree-boost ' + o.cls + '-boost">' + o.name + ': ' + parts.join(' ') + '</span>';
+            }
+        });
+        if (statusLine || boostLine) {
+            html += '<div class="tree-node-meta">' + statusLine + boostLine + '</div>';
+        }
 
         html += '</div></div>';
 
-        // Render children: if branching, add a branch group wrapper
+        // Children: flat list, NO indentation. Branch groups get a label.
         if (hasChildren && isExpanded) {
             var isBranching = node.children.length > 1;
             if (isBranching) {
                 html += '<div class="tree-branch-group">';
-                html += '<div class="tree-branch-label">Branches (' + node.children.length + ')</div>';
+                html += '<div class="tree-branch-label">⑂ ' + node.children.length + ' Branches</div>';
             }
             node.children.forEach(function (childId) {
                 html += renderTreeNode(childId, depth + 1);
@@ -2460,9 +2480,19 @@
                 movesHtml += '</div>';
             }
 
-            if (moveData && moveData.multihit) {
-                var hits = Array.isArray(moveData.multihit) ? moveData.multihit[0] + '-' + moveData.multihit[1] : moveData.multihit;
-                movesHtml += '<div class="move-cell-damage-row"><span class="multihit-badge">' + hits + ' hits</span></div>';
+            if (normalDamage && normalDamage.hitCount && normalDamage.hitCount > 1) {
+                var hitsLabel = normalDamage.multiHitRange
+                    ? normalDamage.multiHitRange[0] + '-' + normalDamage.multiHitRange[1] + ' hits'
+                    : normalDamage.hitCount + ' hits';
+                if (normalDamage.perHitMin !== null) {
+                    movesHtml += '<div class="move-cell-damage-row"><span class="multihit-badge">' + hitsLabel +
+                        ' (' + normalDamage.perHitMin + '-' + normalDamage.perHitMax + ' each)</span></div>';
+                } else {
+                    movesHtml += '<div class="move-cell-damage-row"><span class="multihit-badge">' + hitsLabel + '</span></div>';
+                }
+            } else if (moveData && moveData.multihit) {
+                var hitStr = Array.isArray(moveData.multihit) ? moveData.multihit[0] + '-' + moveData.multihit[1] : moveData.multihit;
+                movesHtml += '<div class="move-cell-damage-row"><span class="multihit-badge">' + hitStr + ' hits</span></div>';
             }
 
             if (moveData && moveData.recoil) {
@@ -2535,15 +2565,32 @@
 
                 if (attackerPokemon && defenderPokemon) {
                     var moveOptions = { isCrit: isCrit || false };
+
+                    // Set hits for multi-hit moves
+                    var rbdexMd = window.RBDex ? window.RBDex.getMove(moveName) : null;
+                    var hitCount = 1;
+                    if (rbdexMd && rbdexMd.multihit) {
+                        if (Array.isArray(rbdexMd.multihit)) {
+                            moveOptions.hits = rbdexMd.multihit[1]; // show max hits
+                            hitCount = rbdexMd.multihit[1];
+                            info.multiHitRange = rbdexMd.multihit;
+                        } else {
+                            moveOptions.hits = rbdexMd.multihit;
+                            hitCount = rbdexMd.multihit;
+                        }
+                        info.hitCount = hitCount;
+                    }
+
                     var move = new window.calc.Move(gen, moveName, moveOptions);
                     var result = window.calc.calculate(gen, attackerPokemon, defenderPokemon, move, window.createField ? window.createField() : null);
                     var range = CalcIntegration.getDamageRange(result);
 
-                    // Store raw values
                     info.rawMin = range.min;
                     info.rawMax = range.max;
                     info.rawAvg = range.avg;
                     info.rolls = range.rolls || [];
+                    info.perHitMin = hitCount > 1 ? Math.floor(range.min / hitCount) : null;
+                    info.perHitMax = hitCount > 1 ? Math.floor(range.max / hitCount) : null;
 
                     var minPercent = Math.round((range.min / defender.maxHP) * 100);
                     var maxPercent = Math.round((range.max / defender.maxHP) * 100);
@@ -2889,43 +2936,68 @@
     /**
      * Render speed comparison
      */
-    function renderSpeedComparison(state, p1ActiveOverride, p2ActiveOverride) {
-        var $text = $('#speed-text');
+    function calcEffectiveSpeed(pokemon, field) {
+        if (!pokemon || !pokemon.stats) return 0;
+        if (typeof pokemon.getEffectiveSpeed === 'function') {
+            return pokemon.getEffectiveSpeed(field);
+        }
+        // Manual fallback for cloned snapshots
+        var baseSpe = pokemon.stats.spe || 0;
+        var boost = (pokemon.boosts && pokemon.boosts.spe) || 0;
+        var multiplier = 1;
+        if (boost > 0) multiplier = (2 + boost) / 2;
+        else if (boost < 0) multiplier = 2 / (2 - boost);
+        var speed = Math.floor(baseSpe * multiplier);
+        var status = (pokemon.status || '').toLowerCase();
+        if (status === 'paralyzed' || status === 'par') speed = Math.floor(speed * 0.5);
+        if (pokemon.item === 'Choice Scarf') speed = Math.floor(speed * 1.5);
+        if (field && field.tailwind) speed = speed * 2;
+        return speed;
+    }
 
-        // Use overrides if provided, otherwise fallback to current state
+    function renderSpeedComparison(state, p1ActiveOverride, p2ActiveOverride) {
+        var $bar = $('#speed-comparison');
         var p1Active = p1ActiveOverride || (state.p1 ? state.p1.active : null);
         var p2Active = p2ActiveOverride || (state.p2 ? state.p2.active : null);
 
-        // Get speed comparison - handle both prototype method and manual calculation
-        var comparison;
-        if (typeof state.getSpeedComparison === 'function' && !p1ActiveOverride && !p2ActiveOverride) {
-            comparison = state.getSpeedComparison();
+        var p1Field = state.sides ? state.sides.p1 : (state.field || {});
+        var p2Field = state.sides ? state.sides.p2 : (state.field || {});
+        var p1Speed = calcEffectiveSpeed(p1Active, p1Field);
+        var p2Speed = calcEffectiveSpeed(p2Active, p2Field);
+
+        var trickRoom = state.field && state.field.trickRoom;
+        var p1First, speedTie;
+        if (trickRoom) {
+            p1First = p1Speed < p2Speed;
+            speedTie = p1Speed === p2Speed;
         } else {
-            // Manual calculation if method is missing (cloned state) or if overrides are present
-            var p1Speed = p1Active ? (p1Active.getEffectiveSpeed ? p1Active.getEffectiveSpeed(state.field) : (p1Active.stats ? p1Active.stats.spe : 100)) : 100;
-            var p2Speed = p2Active ? (p2Active.getEffectiveSpeed ? p2Active.getEffectiveSpeed(state.field) : (p2Active.stats ? p2Active.stats.spe : 100)) : 100;
-
-            comparison = {
-                p1Speed: p1Speed,
-                p2Speed: p2Speed,
-                p1First: p1Speed > p2Speed,
-                speedTie: p1Speed === p2Speed
-            };
+            p1First = p1Speed > p2Speed;
+            speedTie = p1Speed === p2Speed;
         }
 
-        if (comparison.speedTie) {
-            $text.html('<span class="speed-tie">Speed Tie! (' + comparison.p1Speed + ')</span>');
-        } else if (comparison.p1First) {
-            var p1Name = p1Active ? p1Active.name : 'P1';
-            $text.html('<span class="speed-p1">' + p1Name + ' moves first</span> <span class="speed-values">(' + comparison.p1Speed + ' vs ' + comparison.p2Speed + ')</span>');
+        var p1Name = p1Active ? p1Active.name : 'P1';
+        var p2Name = p2Active ? p2Active.name : 'P2';
+
+        var p1Boost = (p1Active && p1Active.boosts && p1Active.boosts.spe) || 0;
+        var p2Boost = (p2Active && p2Active.boosts && p2Active.boosts.spe) || 0;
+        var p1BoostStr = p1Boost !== 0 ? ' (' + (p1Boost > 0 ? '+' : '') + p1Boost + ')' : '';
+        var p2BoostStr = p2Boost !== 0 ? ' (' + (p2Boost > 0 ? '+' : '') + p2Boost + ')' : '';
+
+        var html = '';
+        if (speedTie) {
+            html = '<span class="speed-first speed-tie">⚡ Speed Tie (' + p1Speed + ')</span>';
+        } else if (p1First) {
+            html = '<span class="speed-first speed-p1-first">▶ ' + p1Name + '</span>' +
+                '<span class="speed-vals">' + p1Speed + p1BoostStr + ' vs ' + p2Speed + p2BoostStr + '</span>' +
+                '<span class="speed-second">◇ ' + p2Name + '</span>';
         } else {
-            var p2Name = p2Active ? p2Active.name : 'P2';
-            $text.html('<span class="speed-p2">' + p2Name + ' moves first</span> <span class="speed-values">(' + comparison.p2Speed + ' vs ' + comparison.p1Speed + ')</span>');
+            html = '<span class="speed-second">◇ ' + p1Name + '</span>' +
+                '<span class="speed-vals">' + p1Speed + p1BoostStr + ' vs ' + p2Speed + p2BoostStr + '</span>' +
+                '<span class="speed-first speed-p2-first">▶ ' + p2Name + '</span>';
         }
+        if (trickRoom) html += ' <span class="trick-room-badge">Trick Room</span>';
 
-        if (state.field && state.field.trickRoom) {
-            $text.append(' <span class="trick-room-badge">Trick Room!</span>');
-        }
+        $bar.html(html);
     }
 
     function updateTeamSlotHighlights(side, activeSlot, opponentSnapshot) {
@@ -3530,9 +3602,8 @@
         var p1 = state.p1.active;
         var p2 = state.p2.active;
 
-        // Determine speed order
-        var p1Speed = p1.getEffectiveSpeed ? p1.getEffectiveSpeed(state.field) : p1.stats.spe;
-        var p2Speed = p2.getEffectiveSpeed ? p2.getEffectiveSpeed(state.field) : p2.stats.spe;
+        var p1Speed = calcEffectiveSpeed(p1, state.sides ? state.sides.p1 : null);
+        var p2Speed = calcEffectiveSpeed(p2, state.sides ? state.sides.p2 : null);
 
         // Check for priority moves
         var p1Priority = getMovePriority(uiState.p1Action.moveName);
@@ -4631,14 +4702,34 @@
      * unless the user clicks "Override" to manually pick.
      */
     function showAIPredictBanner(prediction, newState, onDone) {
+        var allScoresHtml = '';
+        if (prediction.allScores && prediction.allScores.length > 0) {
+            allScoresHtml = '<div class="ai-predict-scores">';
+            prediction.allScores.forEach(function (s) {
+                var isBest = s.slot === prediction.slot;
+                allScoresHtml += '<div class="ai-predict-score-row' + (isBest ? ' ai-predict-best' : '') + '">';
+                allScoresHtml += '<span class="ai-predict-name">' + s.name + '</span>';
+                allScoresHtml += '<span class="ai-predict-score-val">+' + s.score + '</span>';
+                allScoresHtml += '<span class="ai-predict-reason">' + s.reason + '</span>';
+                allScoresHtml += '</div>';
+            });
+            allScoresHtml += '</div>';
+        }
+
         var bannerHtml = '<div class="ai-predict-banner" id="ai-predict-banner">' +
-            '<span class="ai-label">AI Predicts</span>' +
+            '<div class="ai-predict-header">' +
+            '<span class="ai-label">AI Predicts Switch-in</span>' +
             '<span class="ai-mon">' + prediction.pokemon.name + '</span>' +
-            '<span class="ai-score">Score: ' + prediction.score + ' (' + prediction.reason + ')</span>' +
-            '<button class="planner-btn planner-btn-sm" id="ai-predict-accept" style="margin-left:8px;">Accept</button>' +
-            '<button class="planner-btn planner-btn-sm planner-btn-outline" id="ai-predict-override" style="margin-left:4px;">Override</button>' +
+            '<span class="ai-score">+' + prediction.score + ' (' + prediction.reason + ')</span>' +
+            '</div>' +
+            allScoresHtml +
+            '<div class="ai-predict-buttons">' +
+            '<button class="planner-btn planner-btn-sm" id="ai-predict-accept">Accept</button>' +
+            '<button class="planner-btn planner-btn-sm planner-btn-outline" id="ai-predict-override">Override</button>' +
+            '</div>' +
             '</div>';
 
+        $('#ai-predict-banner').remove();
         $('#stage-container').prepend(bannerHtml);
 
         var handled = false;
@@ -4664,26 +4755,46 @@
      * into two sibling branches under the parent (one with min roll HP, one with max roll HP).
      */
     function showVarianceNotification(warnings, parentNodeId, currentNodeId) {
-        var lines = warnings.map(function (w) {
-            var moverLabel = w.mover === 'p1' ? 'Player' : 'Opponent';
-            return '<div class="variance-line"><strong>' + moverLabel + '</strong> ' + w.move + ': ' + w.detail.reason + '</div>';
-        }).join('');
+        var branchable = [];
+        var infoOnly = [];
 
-        var hasKOVariance = warnings.some(function (w) {
-            return w.detail && w.detail.reason && (
-                w.detail.reason.indexOf('KO') !== -1 ||
-                w.detail.reason.indexOf('triggers') !== -1
-            );
+        warnings.forEach(function (w, idx) {
+            var d = w.detail || {};
+            var canBranch = !!(d.minResult && d.maxResult) || d.isCrit || d.isSecondary || d.isFlinch;
+            if (canBranch) {
+                branchable.push({ warning: w, idx: idx });
+            } else {
+                infoOnly.push(w);
+            }
         });
 
+        var lines = warnings.map(function (w, idx) {
+            var moverLabel = w.mover === 'p1' ? 'Player' : 'Opponent';
+            var icon = '';
+            if (w.detail.isCrit) icon = '💥 ';
+            else if (w.detail.isSecondary) icon = '🎲 ';
+            else if (w.detail.isFlinch) icon = '💫 ';
+            else if (w.detail.reason && w.detail.reason.indexOf('KO') !== -1) icon = '☠ ';
+
+            var btnHtml = '';
+            var isBranchable = branchable.some(function (b) { return b.idx === idx; });
+            if (isBranchable) {
+                btnHtml = ' <button class="planner-btn planner-btn-xs variance-branch-single" data-vidx="' + idx + '">Branch</button>';
+            }
+
+            return '<div class="variance-line">' + icon + '<strong>' + moverLabel + '</strong> ' +
+                w.move + ': ' + w.detail.reason + btnHtml + '</div>';
+        }).join('');
+
+        var hasMultiple = branchable.length > 1;
+
         var html = '<div class="variance-banner" id="variance-banner">' +
-            '<div class="variance-header">⚠ Roll Variance Detected</div>' +
+            '<div class="variance-header">⚠ Variance Detected</div>' +
             '<div class="variance-body">' + lines + '</div>' +
             '<div class="variance-actions">' +
-            (hasKOVariance ? '<button class="planner-btn planner-btn-sm planner-btn-accent" id="variance-branch">Create Min/Max Branches</button>' : '') +
+            (branchable.length > 0 ? '<button class="planner-btn planner-btn-sm planner-btn-accent" id="variance-branch-all">Branch All (' + branchable.length + ')</button>' : '') +
             '<button class="planner-btn planner-btn-sm" id="variance-dismiss">Dismiss</button>' +
-            '</div>' +
-            '</div>';
+            '</div>' + '</div>';
 
         $('#variance-banner').remove();
         $('#stage-container').prepend(html);
@@ -4692,62 +4803,116 @@
             $('#variance-banner').remove();
         });
 
-        $('#variance-branch').on('click', function () {
-            createVarianceBranches(warnings, parentNodeId, currentNodeId);
+        $('#variance-branch-all').on('click', function () {
+            branchable.forEach(function (b) {
+                createSingleVarianceBranch(b.warning, parentNodeId, currentNodeId);
+            });
             $('#variance-banner').remove();
+            renderTree();
+        });
+
+        $('.variance-branch-single').on('click', function () {
+            var vidx = parseInt($(this).data('vidx'));
+            var match = branchable.find(function (b) { return b.idx === vidx; });
+            if (match) {
+                createSingleVarianceBranch(match.warning, parentNodeId, currentNodeId);
+                $(this).closest('.variance-line').addClass('variance-branched');
+                $(this).prop('disabled', true).text('Done');
+                renderTree();
+            }
         });
     }
 
     /**
-     * Create two alternate branches (min roll / max roll) from variance data.
-     * Clones the current node's state, adjusting the defender's HP to reflect
-     * min-roll vs max-roll outcomes.
+     * Create branches for a single variance warning.
+     * Handles roll variance, crits, secondary effects, and flinch.
      */
-    function createVarianceBranches(warnings, parentNodeId, currentNodeId) {
+    function createSingleVarianceBranch(w, parentNodeId, currentNodeId) {
         var currentNode = uiState.tree.getNode(currentNodeId);
         if (!currentNode) return;
+        var d = w.detail;
+        var defSide = w.mover === 'p1' ? 'p2' : 'p1';
 
-        for (var i = 0; i < warnings.length; i++) {
-            var w = warnings[i];
-            if (!w.detail || !w.detail.minResult || !w.detail.maxResult) continue;
-
-            var defSide = w.mover === 'p1' ? 'p2' : 'p1';
-
-            // Min roll branch
+        if (d.minResult && d.maxResult) {
+            // Roll variance: min/max branches
             var minState = currentNode.state.clone();
-            minState[defSide].active.currentHP = Math.max(0, w.detail.minResult.hp);
+            minState[defSide].active.currentHP = Math.max(0, d.minResult.hp);
             minState[defSide].active.percentHP = minState[defSide].active.maxHP > 0
                 ? Math.round((minState[defSide].active.currentHP / minState[defSide].active.maxHP) * 100) : 0;
             minState[defSide].active.hasFainted = minState[defSide].active.currentHP <= 0;
-            if (w.detail.minResult.itemConsumed) minState[defSide].active.item = '';
+            if (d.minResult.itemConsumed) minState[defSide].active.item = '';
             syncActiveToTeam(minState);
+            var minN = uiState.tree.addBranch(parentNodeId, minState, currentNode.actions,
+                new BattlePlanner.BattleOutcome('Min Roll (' + w.move + ')', 0.5, 0, { rollType: 'min' }));
+            minN.isBestCase = defSide === 'p2';
+            minN.isWorstCase = defSide === 'p1';
 
-            var minOutcome = new BattlePlanner.BattleOutcome(
-                'Min Roll (' + w.move + ')', 0.5, 0, { rollType: 'min' }
-            );
-            minOutcome.isBestCase = true;
-            var minNode = uiState.tree.addBranch(parentNodeId, minState, currentNode.actions, minOutcome);
-            minNode.isBestCase = defSide === 'p2';
-            minNode.isWorstCase = defSide === 'p1';
-
-            // Max roll branch
             var maxState = currentNode.state.clone();
-            maxState[defSide].active.currentHP = Math.max(0, w.detail.maxResult.hp);
+            maxState[defSide].active.currentHP = Math.max(0, d.maxResult.hp);
             maxState[defSide].active.percentHP = maxState[defSide].active.maxHP > 0
                 ? Math.round((maxState[defSide].active.currentHP / maxState[defSide].active.maxHP) * 100) : 0;
             maxState[defSide].active.hasFainted = maxState[defSide].active.currentHP <= 0;
-            if (w.detail.maxResult.itemConsumed) maxState[defSide].active.item = '';
+            if (d.maxResult.itemConsumed) maxState[defSide].active.item = '';
             syncActiveToTeam(maxState);
+            var maxN = uiState.tree.addBranch(parentNodeId, maxState, currentNode.actions,
+                new BattlePlanner.BattleOutcome('Max Roll (' + w.move + ')', 0.5, 0, { rollType: 'max' }));
+            maxN.isBestCase = defSide === 'p1';
+            maxN.isWorstCase = defSide === 'p2';
 
-            var maxOutcome = new BattlePlanner.BattleOutcome(
-                'Max Roll (' + w.move + ')', 0.5, 0, { rollType: 'max' }
-            );
-            var maxNode = uiState.tree.addBranch(parentNodeId, maxState, currentNode.actions, maxOutcome);
-            maxNode.isBestCase = defSide === 'p1';
-            maxNode.isWorstCase = defSide === 'p2';
+        } else if (d.isCrit) {
+            // Crit variance: normal vs crit branches
+            var normState = currentNode.state.clone();
+            var normOutcome = new BattlePlanner.BattleOutcome('No Crit (' + w.move + ')', 0.9375, 0, { rollType: 'noCrit' });
+            uiState.tree.addBranch(parentNodeId, normState, currentNode.actions, normOutcome);
+
+            var critState = currentNode.state.clone();
+            var critDef = critState[defSide].active;
+            var critDmg = Math.floor((d.critMin + d.critMax) / 2);
+            var normalDmg = Math.floor((d.normalMin + d.normalMax) / 2);
+            var dmgDiff = critDmg - normalDmg;
+            critDef.currentHP = Math.max(0, critDef.currentHP - dmgDiff);
+            critDef.percentHP = critDef.maxHP > 0 ? Math.round((critDef.currentHP / critDef.maxHP) * 100) : 0;
+            critDef.hasFainted = critDef.currentHP <= 0;
+            syncActiveToTeam(critState);
+            var critN = uiState.tree.addBranch(parentNodeId, critState, currentNode.actions,
+                new BattlePlanner.BattleOutcome('Crit! (' + w.move + ')', 0.0625, 0, { rollType: 'crit' }));
+            critN.isWorstCase = defSide === 'p1';
+            critN.isBestCase = defSide === 'p2';
+
+        } else if (d.isSecondary && d.secondaryEffect) {
+            // Secondary effect: hit vs miss branches
+            var sec = d.secondaryEffect;
+            var chance = sec.chance / 100;
+
+            var missState = currentNode.state.clone();
+            uiState.tree.addBranch(parentNodeId, missState, currentNode.actions,
+                new BattlePlanner.BattleOutcome('No Effect (' + w.move + ' ' + sec.chance + '%)', 1 - chance, 0, { rollType: 'noSecondary' }));
+
+            var hitState = currentNode.state.clone();
+            var effTarget = hitState[defSide].active;
+            var effUser = hitState[w.mover].active;
+            if (sec.status && (!effTarget.status || effTarget.status === 'Healthy')) {
+                effTarget.status = normalizeStatus(sec.status);
+            }
+            if (sec.boosts) applyBoosts(effTarget, sec.boosts);
+            if (sec.selfBoosts) applyBoosts(effUser, sec.selfBoosts);
+            syncActiveToTeam(hitState);
+
+            var effectDesc = sec.status || (sec.boosts ? 'stat change' : sec.volatileStatus || 'effect');
+            uiState.tree.addBranch(parentNodeId, hitState, currentNode.actions,
+                new BattlePlanner.BattleOutcome(effectDesc + ' (' + w.move + ' ' + sec.chance + '%)', chance, 0, { rollType: 'secondary' }));
+
+        } else if (d.isFlinch) {
+            // Flinch variance: flinch vs no flinch
+            var noFlinchState = currentNode.state.clone();
+            uiState.tree.addBranch(parentNodeId, noFlinchState, currentNode.actions,
+                new BattlePlanner.BattleOutcome('No Flinch (' + w.move + ')', 1 - d.flinchChance, 0, { rollType: 'noFlinch' }));
+
+            // Flinch branch: second mover's damage is reversed (they didn't move)
+            var flinchState = currentNode.state.clone();
+            uiState.tree.addBranch(parentNodeId, flinchState, currentNode.actions,
+                new BattlePlanner.BattleOutcome('Flinch! (' + w.move + ' ' + Math.round(d.flinchChance * 100) + '%)', d.flinchChance, 0, { rollType: 'flinch' }));
         }
-
-        renderTree();
     }
 
     /**
@@ -4862,9 +5027,8 @@
             var p1Priority = p1IsSwitch ? 6 : (getMovePriority(uiState.p1Action.moveName) + p1CustomPriority);
             var p2Priority = p2IsSwitch ? 6 : (getMovePriority(uiState.p2Action.moveName) + p2CustomPriority);
 
-            // Determine speed order (pass the side data which contains tailwind)
-            var p1Speed = newState.p1.active.getEffectiveSpeed ? newState.p1.active.getEffectiveSpeed(newState.sides.p1) : (newState.p1.active.stats ? newState.p1.active.stats.spe : 100);
-            var p2Speed = newState.p2.active.getEffectiveSpeed ? newState.p2.active.getEffectiveSpeed(newState.sides.p2) : (newState.p2.active.stats ? newState.p2.active.stats.spe : 100);
+            var p1Speed = calcEffectiveSpeed(newState.p1.active, newState.sides ? newState.sides.p1 : null);
+            var p2Speed = calcEffectiveSpeed(newState.p2.active, newState.sides ? newState.sides.p2 : null);
 
             var firstMover, secondMover;
             var isTrickRoom = newState.field && (newState.field.trickRoom || newState.field.isTrickRoom);
@@ -5075,6 +5239,62 @@
                     if (v2) varianceWarnings.push({ move: secondAction.moveName, mover: secondMover, detail: v2 });
                 }
 
+                // Crit variance: check if a critical hit would change outcomes
+                function checkCritVariance(moveName, attackerSnap, defenderSnap, side) {
+                    if (!moveName || moveName === '(No Move)') return;
+                    try {
+                        var critPreview = getMovePreviewInfo(side, attackerSnap, moveName, defenderSnap, true);
+                        var normPreview = getMovePreviewInfo(side, attackerSnap, moveName, defenderSnap, false);
+                        if (!critPreview || !normPreview) return;
+                        var normKills = normPreview.rawMax >= defenderSnap.currentHP;
+                        var critKills = critPreview.rawMin >= defenderSnap.currentHP;
+                        if (!normKills && critKills) {
+                            varianceWarnings.push({
+                                move: moveName + ' (crit)',
+                                mover: side,
+                                detail: {
+                                    reason: 'Critical hit would KO (crit min ' + critPreview.rawMin + ' vs HP ' + defenderSnap.currentHP + ')',
+                                    isCrit: true,
+                                    critMin: critPreview.rawMin,
+                                    critMax: critPreview.rawMax,
+                                    normalMin: normPreview.rawMin,
+                                    normalMax: normPreview.rawMax,
+                                    defenderHP: defenderSnap.currentHP,
+                                    defenderMaxHP: defenderSnap.maxHP
+                                }
+                            });
+                        }
+                    } catch (e) { /* ignore calc errors */ }
+                }
+                if (!firstIsSwitch) {
+                    checkCritVariance(firstAction.moveName, state[firstMover].active, state[secondMover].active, firstMover);
+                }
+                if (!secondIsSwitch) {
+                    checkCritVariance(secondAction.moveName, state[secondMover].active, state[firstMover].active, secondMover);
+                }
+
+                // Secondary effect variance: moves with <100% chance effects
+                function addSecondaryVariance(moveRes, moveName, mover) {
+                    if (!moveRes || !moveRes.secondaryEffects) return;
+                    moveRes.secondaryEffects.forEach(function (sec) {
+                        var desc = sec.chance + '% chance';
+                        if (sec.status) desc += ' ' + sec.status;
+                        if (sec.boosts) desc += ' stat change';
+                        if (sec.volatileStatus) desc += ' ' + sec.volatileStatus;
+                        varianceWarnings.push({
+                            move: moveName,
+                            mover: mover,
+                            detail: {
+                                reason: desc,
+                                isSecondary: true,
+                                secondaryEffect: sec
+                            }
+                        });
+                    });
+                }
+                addSecondaryVariance(firstMoveResult, firstAction.moveName, firstMover);
+                addSecondaryVariance(secondMoveResult, secondAction.moveName, secondMover);
+
                 // Check accumulated variance
                 var p1Range = (firstMover === 'p1' && firstMoveResult && firstMoveResult.range) ? firstMoveResult.range :
                               (secondMover === 'p1' && secondMoveResult && secondMoveResult.range) ? secondMoveResult.range : null;
@@ -5099,7 +5319,11 @@
                         varianceWarnings.push({
                             move: firstAction.moveName,
                             mover: firstMover,
-                            detail: { reason: flinchResult.reason + ' on ' + newState[secondMover].active.name }
+                            detail: {
+                                reason: flinchResult.reason + ' on ' + newState[secondMover].active.name,
+                                isFlinch: true,
+                                flinchChance: flinchResult.chance
+                            }
                         });
                     }
                 }
@@ -5307,9 +5531,16 @@
             var moveOptions = { isCrit: isCrit };
             var moveData = getMoveData(moveName, gen);
 
-            // Handle multi-hit moves
-            if (moveData && Array.isArray(moveData.multihit)) {
-                moveOptions.hits = hits;
+            // Handle multi-hit moves: use fixed count or action override
+            if (moveData && moveData.multihit) {
+                if (Array.isArray(moveData.multihit)) {
+                    // Variable hits (e.g. [2,5]) - use action.hits if specified, else max
+                    moveOptions.hits = (action.hits && action.hits > 0) ? action.hits : moveData.multihit[1];
+                } else {
+                    // Fixed hits (e.g. 2 for Double Kick)
+                    moveOptions.hits = moveData.multihit;
+                }
+                moveResult.totalHits = moveOptions.hits;
             }
 
             var move = new window.calc.Move(gen, moveName, moveOptions);
@@ -5353,9 +5584,12 @@
                 attacker.isInvulnerable = false;
             }
 
-            // Apply effects if toggled
-            if (applyEffect && moveData) {
-                applyMoveEffects(attacker, defender, moveData, state);
+            // Always apply guaranteed move effects (status, stat changes)
+            // Use RBDex data which has complete effect information
+            var rbdexMoveData = window.RBDex ? window.RBDex.getMove(moveName) : null;
+            var effectSource = rbdexMoveData || moveData;
+            if (effectSource && avgDamage >= 0) {
+                applyGuaranteedMoveEffects(attacker, defender, effectSource, state, moveResult);
             }
 
             // Use MoveDB for recoil/drain/heal when available
@@ -5454,45 +5688,74 @@
     /**
      * Apply move effects (status, stat changes, etc.)
      */
-    function applyMoveEffects(attacker, defender, moveData, state) {
-        // Status effects on defender
-        // Pokemon can only have one status condition - don't overwrite existing status
-        if (moveData.status && (!defender.status || defender.status === 'Healthy')) {
-            defender.status = moveData.status;
-        }
-
-        // Stat changes on defender
-        if (moveData.boosts) {
-            if (!defender.boosts) defender.boosts = {};
-            Object.keys(moveData.boosts).forEach(function (stat) {
-                defender.boosts[stat] = (defender.boosts[stat] || 0) + moveData.boosts[stat];
-                defender.boosts[stat] = Math.max(-6, Math.min(6, defender.boosts[stat]));
-            });
-        }
-
-        // Self stat changes
-        if (moveData.self && moveData.self.boosts) {
-            if (!attacker.boosts) attacker.boosts = {};
-            Object.keys(moveData.self.boosts).forEach(function (stat) {
-                attacker.boosts[stat] = (attacker.boosts[stat] || 0) + moveData.self.boosts[stat];
-                attacker.boosts[stat] = Math.max(-6, Math.min(6, attacker.boosts[stat]));
-            });
-        }
-
-        // Secondary effects (e.g., 30% chance to burn)
-        if (moveData.secondary) {
-            // Only apply secondary status if defender doesn't already have one
-            if (moveData.secondary.status && (!defender.status || defender.status === 'Healthy')) {
-                defender.status = moveData.secondary.status;
+    function applyBoosts(pokemon, boostMap) {
+        if (!boostMap || typeof boostMap !== 'object') return;
+        if (!pokemon.boosts) pokemon.boosts = {};
+        Object.keys(boostMap).forEach(function (stat) {
+            if (boostMap[stat]) {
+                pokemon.boosts[stat] = (pokemon.boosts[stat] || 0) + boostMap[stat];
+                pokemon.boosts[stat] = Math.max(-6, Math.min(6, pokemon.boosts[stat]));
             }
-            if (moveData.secondary.boosts) {
-                if (!defender.boosts) defender.boosts = {};
-                Object.keys(moveData.secondary.boosts).forEach(function (stat) {
-                    defender.boosts[stat] = (defender.boosts[stat] || 0) + moveData.secondary.boosts[stat];
-                    defender.boosts[stat] = Math.max(-6, Math.min(6, defender.boosts[stat]));
+        });
+    }
+
+    var STATUS_CODE_TO_NAME = {
+        'par': 'Paralyzed', 'brn': 'Burned', 'psn': 'Poisoned',
+        'tox': 'Badly Poisoned', 'slp': 'Asleep', 'frz': 'Frozen'
+    };
+    function normalizeStatus(code) {
+        return STATUS_CODE_TO_NAME[code] || code;
+    }
+
+    /**
+     * Apply guaranteed move effects (100% chance) automatically.
+     * Secondary effects with < 100% chance are recorded for branch creation.
+     */
+    function applyGuaranteedMoveEffects(attacker, defender, moveData, state, moveResult) {
+        if (!moveData) return;
+
+        if (moveData.status && (!defender.status || defender.status === 'Healthy')) {
+            defender.status = normalizeStatus(moveData.status);
+        }
+
+        // Guaranteed boosts on target (e.g. Leer → -1 def)
+        if (moveData.boosts) {
+            applyBoosts(defender, moveData.boosts);
+        }
+
+        // Self boosts (e.g. Close Combat → -1 def, -1 spd on user)
+        if (moveData.self && moveData.self.boosts) {
+            applyBoosts(attacker, moveData.self.boosts);
+        }
+
+        // Secondary effects: only apply guaranteed ones (chance === 100)
+        // Record non-guaranteed secondaries for potential branching
+        var secondaries = [];
+        if (moveData.secondary) secondaries.push(moveData.secondary);
+        if (moveData.secondaries) secondaries = secondaries.concat(moveData.secondaries);
+
+        if (!moveResult.secondaryEffects) moveResult.secondaryEffects = [];
+
+        secondaries.forEach(function (sec) {
+            if (!sec) return;
+            var chance = sec.chance || 100;
+            if (chance >= 100) {
+                if (sec.status && (!defender.status || defender.status === 'Healthy')) {
+                    defender.status = normalizeStatus(sec.status);
+                }
+                if (sec.boosts) applyBoosts(defender, sec.boosts);
+                if (sec.self && sec.self.boosts) applyBoosts(attacker, sec.self.boosts);
+            } else {
+                // Non-guaranteed → record for branch UI
+                moveResult.secondaryEffects.push({
+                    chance: chance,
+                    status: sec.status || null,
+                    boosts: sec.boosts || null,
+                    selfBoosts: (sec.self && sec.self.boosts) ? sec.self.boosts : null,
+                    volatileStatus: sec.volatileStatus || null
                 });
             }
-        }
+        });
     }
 
     /**

@@ -366,8 +366,9 @@ PokemonSnapshot.prototype.getEffectiveSpeed = function(field) {
     
     var speed = Math.floor(baseSpe * multiplier);
     
-    // Paralysis halves speed
-    if (this.status === 'Paralyzed') {
+    // Paralysis halves speed (handle both display and code forms)
+    var s = (this.status || '').toLowerCase();
+    if (s === 'paralyzed' || s === 'par') {
         speed = Math.floor(speed * 0.5);
     }
     
