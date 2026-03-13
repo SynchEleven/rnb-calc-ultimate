@@ -503,7 +503,7 @@
         sideData.teamSlot = targetSlot;
         sideData.active = sideData.team[targetSlot].clone();
         sideData.active.boosts = { atk: 0, def: 0, spa: 0, spd: 0, spe: 0, accuracy: 0, evasion: 0 };
-        sideData.active.turnsOnField = 0;
+        sideData.active.turnsOnField = -1;
 
         // Apply entry hazards
         var hazardEffects = applyEntryHazards(sideData.active, state.sides[side]);
@@ -830,9 +830,11 @@
         if (!hasFlinch) return result;
 
         // Fake Out: only works on the first turn after being sent in.
+        // turnsOnField: constructor=0 (starting mon), performSwitch=-1 (just switched),
+        // end-of-turn increments. At move execution: starting T1=0, switched first attack=0.
         var mName = (name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
         if (mName === 'fakeout') {
-            if (attacker && attacker.turnsOnField !== undefined && attacker.turnsOnField > 1) {
+            if (attacker && attacker.turnsOnField !== undefined && attacker.turnsOnField > 0) {
                 result.reason = 'Fake Out fails after first turn';
                 return result;
             }
@@ -862,6 +864,637 @@
         return result;
     }
 
+    // ================================================================
+    // AI MOVE SCORING ENGINE
+    // Based on Pokemon Run and Bun (1.07) AI document by Croven
+    // ================================================================
+
+    function toMoveId(name) {
+        return (name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    }
+
+    function getMoveDataFromRBDex(moveName) {
+        if (!moveName || typeof window === 'undefined' || !window.RBDex) return null;
+        return window.RBDex.getMove(moveName);
+    }
+
+    function analyzePlayerMoves(playerMon, aiMon, calcDamage) {
+        var result = {
+            canKO: false, can2HKO: false, can3HKO: false,
+            maxDamage: 0, hasPhysical: false, hasSpecial: false,
+            hasStatus: false, hasSoundMove: false, hasFlinchMove: false
+        };
+        var playerMoves = playerMon.moves || [];
+        playerMoves.forEach(function (mn) {
+            if (!mn || mn === '(No Move)') return;
+            var md = getMoveDataFromRBDex(mn);
+            if (!md) return;
+            if (md.category === 'Physical') result.hasPhysical = true;
+            else if (md.category === 'Special') result.hasSpecial = true;
+            else result.hasStatus = true;
+            if (md.flags && md.flags.sound) result.hasSoundMove = true;
+            if (md.secondary && md.secondary.volatileStatus === 'flinch') result.hasFlinchMove = true;
+            if (md.secondaries) {
+                md.secondaries.forEach(function (s) {
+                    if (s.volatileStatus === 'flinch') result.hasFlinchMove = true;
+                });
+            }
+            if (md.category !== 'Status') {
+                try {
+                    var dmg = calcDamage(playerMon, aiMon, mn);
+                    if (dmg && dmg.max > result.maxDamage) result.maxDamage = dmg.max;
+                } catch (e) { /* skip */ }
+            }
+        });
+        var aiHP = aiMon.currentHP || 0;
+        result.canKO = result.maxDamage >= aiHP;
+        result.can2HKO = (result.maxDamage * 2) >= aiHP;
+        result.can3HKO = (result.maxDamage * 3) >= aiHP;
+        return result;
+    }
+
+    function isPlayerIncapacitated(playerMon) {
+        var status = (playerMon.status || '').toLowerCase();
+        if (status === 'slp' || status === 'sleep') return true;
+        if (status === 'frz' || status === 'frozen') {
+            var thawing = { scald:1, flamewheel:1, sacredfire:1, flareblitz:1, fusionflare:1, burnup:1, pyroball:1 };
+            var hasThawy = (playerMon.moves || []).some(function (m) { return thawing[toMoveId(m)]; });
+            if (!hasThawy) return true;
+        }
+        return false;
+    }
+
+    function shouldAIRecover(aiMon, aiFaster, healPercent, playerMaxDamage) {
+        var aiHP = aiMon.currentHP || 0;
+        var aiMaxHP = aiMon.maxHP || 1;
+        var aiHPPct = (aiHP / aiMaxHP) * 100;
+        if (aiHPPct >= 100 || aiHPPct >= 85) return false;
+        var status = (aiMon.status || '').toLowerCase();
+        if (status === 'tox' || status === 'badly poisoned') return false;
+        var healAmt = Math.floor(aiMaxHP * healPercent / 100);
+        if (playerMaxDamage >= healAmt) return false;
+        if (aiFaster) {
+            var hpAfterHeal = Math.min(aiMaxHP, aiHP + healAmt);
+            if (playerMaxDamage >= aiHP && playerMaxDamage < hpAfterHeal) return true;
+            if (playerMaxDamage < aiHP) {
+                if (aiHPPct < 40) return true;
+                if (aiHPPct < 66) return true;
+            }
+        } else {
+            if (aiHPPct < 50) return true;
+            if (aiHPPct < 70) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Score all of the AI's moves based on the Run and Bun AI document.
+     *
+     * @param {object} aiMon      - AI's active PokemonSnapshot
+     * @param {object} playerMon  - Player's active PokemonSnapshot
+     * @param {object} state      - BattleStateSnapshot
+     * @param {function} calcDamage - (attacker, defender, moveName) => {min,max}|null
+     * @returns {Array<{moveName:string, score:number, reason:string}>}
+     */
+    function scoreAIMoves(aiMon, playerMon, state, calcDamage) {
+        var results = [];
+        var aiMoves = aiMon.moves || [];
+        if (!aiMoves.length) return results;
+
+        // --- Speed ---
+        var aiSpeed = aiMon.getEffectiveSpeed
+            ? aiMon.getEffectiveSpeed(state.sides ? state.sides.p2 : null)
+            : (aiMon.stats ? aiMon.stats.spe : 100);
+        var playerSpeed = playerMon.getEffectiveSpeed
+            ? playerMon.getEffectiveSpeed(state.sides ? state.sides.p1 : null)
+            : (playerMon.stats ? playerMon.stats.spe : 100);
+        var isTR = state.field && (state.field.trickRoom || state.field.isTrickRoom);
+        var aiFaster = isTR ? (aiSpeed <= playerSpeed) : (aiSpeed >= playerSpeed);
+
+        // --- HP ---
+        var aiHP = aiMon.currentHP || 0;
+        var aiMaxHP = aiMon.maxHP || 1;
+        var aiHPPct = (aiHP / aiMaxHP) * 100;
+        var playerHP = playerMon.currentHP || 0;
+        var playerMaxHP = playerMon.maxHP || 1;
+
+        // --- Abilities / Items ---
+        var aiAbId = toMoveId(aiMon.ability || '');
+        var aiItemId = toMoveId(aiMon.item || '');
+        var defAbId = toMoveId(playerMon.ability || '');
+
+        // --- Player analysis ---
+        var pa = analyzePlayerMoves(playerMon, aiMon, calcDamage);
+        var hasSturdy = aiAbId === 'sturdy' && aiHP >= aiMaxHP;
+        var hasSash = aiItemId === 'focussash' && aiHP >= aiMaxHP;
+        var hasProtection = hasSturdy || hasSash;
+
+        // --- Damage for each AI move ---
+        var moveDmgs = [];
+        var moveMds = [];
+        aiMoves.forEach(function (mn) {
+            if (!mn || mn === '(No Move)') { moveMds.push(null); moveDmgs.push(null); return; }
+            var md = getMoveDataFromRBDex(mn);
+            moveMds.push(md);
+            if (md && md.category !== 'Status') {
+                try { moveDmgs.push(calcDamage(aiMon, playerMon, mn)); }
+                catch (e) { moveDmgs.push(null); }
+            } else { moveDmgs.push(null); }
+        });
+
+        // --- Highest damage ---
+        var excl = { explosion:1,selfdestruct:1,finalgambit:1,relicsong:1,rollout:1,iceball:1,
+                     meteorbeam:1,futuresight:1,whirlpool:1,firespin:1,sandtomb:1,
+                     magmastorm:1,infestation:1,bind:1,wrap:1,clamp:1 };
+        var hiDmg = 0;
+        var hiIdx = [];
+        aiMoves.forEach(function (mn, i) {
+            var d = moveDmgs[i], md = moveMds[i];
+            if (!d || !md || md.category === 'Status') return;
+            if (excl[toMoveId(mn)]) return;
+            if (d.max > hiDmg) { hiDmg = d.max; hiIdx = [i]; }
+            else if (d.max === hiDmg && hiDmg > 0) hiIdx.push(i);
+        });
+        // All killing moves count as "highest"
+        aiMoves.forEach(function (mn, i) {
+            var d = moveDmgs[i], md = moveMds[i];
+            if (!d || !md || md.category === 'Status') return;
+            if (excl[toMoveId(mn)]) return;
+            if (d.max >= playerHP && hiIdx.indexOf(i) === -1) hiIdx.push(i);
+        });
+
+        var pIncap = isPlayerIncapacitated(playerMon);
+        var rawPStatus = (playerMon.status || '').toLowerCase();
+        var pStatus = (rawPStatus && rawPStatus !== 'healthy') ? rawPStatus : '';
+        var isFirstTurn = (aiMon.turnsOnField || 0) <= 0;
+        var p1Haz = state.sides && state.sides.p1 ? state.sides.p1 : {};
+        var p2Sides = state.sides && state.sides.p2 ? state.sides.p2 : {};
+
+        // Team counts for explosion / memento / baton pass
+        var aiTeam = state.p2 && state.p2.team ? state.p2.team : [];
+        var aiAlive = aiTeam.filter(function (p) { return p && p.currentHP > 0; }).length;
+
+        // --- Score each move ---
+        aiMoves.forEach(function (mn, i) {
+            if (!mn || mn === '(No Move)') {
+                results.push({ moveName: mn, score: -100, reason: 'No move' });
+                return;
+            }
+            var md = moveMds[i];
+            if (!md) { results.push({ moveName: mn, score: 0, reason: 'Unknown' }); return; }
+
+            var mid = toMoveId(mn);
+            var dmg = moveDmgs[i];
+            var isHi = hiIdx.indexOf(i) !== -1;
+            var kills = dmg && dmg.max >= playerHP;
+            var hasPrio = md.priority && md.priority > 0;
+            var s = 0;
+            var r = [];
+
+            // =============================================================
+            //  DAMAGING MOVES
+            // =============================================================
+            if (md.category !== 'Status') {
+
+                // -- Rollout / Ice Ball --
+                if (mid === 'rollout' || mid === 'iceball') {
+                    results.push({ moveName: mn, score: 7, reason: 'Rollout always +7' }); return;
+                }
+                // -- Meteor Beam --
+                if (mid === 'meteorbeam') {
+                    results.push({ moveName: mn, score: aiItemId === 'powerherb' ? 9 : -20,
+                        reason: aiItemId === 'powerherb' ? 'Meteor Beam+Power Herb +9' : 'No Power Herb' }); return;
+                }
+                // -- Fake Out --
+                if (mid === 'fakeout') {
+                    if (!isFirstTurn) { results.push({ moveName: mn, score: -20, reason: 'Fake Out not T1' }); return; }
+                    if (defAbId === 'shielddust' || defAbId === 'innerfocus') {
+                        results.push({ moveName: mn, score: -20, reason: 'Blocked by ' + (playerMon.ability||'ability') }); return;
+                    }
+                    results.push({ moveName: mn, score: 9, reason: 'Fake Out T1 +9' }); return;
+                }
+                // -- Explosion / Self-Destruct / Misty Explosion --
+                if (mid === 'explosion' || mid === 'selfdestruct' || mid === 'mistyexplosion') {
+                    var pTypes = playerMon.types || [];
+                    var ghostImm = pTypes.some(function (t) { return t && t.toLowerCase() === 'ghost'; });
+                    if (ghostImm && mid !== 'mistyexplosion') { results.push({ moveName: mn, score: -20, reason: 'Ghost immune' }); return; }
+                    var pAlive = (state.p1 && state.p1.team ? state.p1.team : []).filter(function (p) { return p && p.currentHP > 0; }).length;
+                    if (aiAlive <= 1 && pAlive > 1) { results.push({ moveName: mn, score: -20, reason: 'Last mon vs multiple' }); return; }
+                    if (aiHPPct < 10) { s = 10; r.push('Boom <10% +10'); }
+                    else if (aiHPPct < 33) { s = 8; r.push('Boom <33% +8'); }
+                    else if (aiHPPct < 66) { s = 7; r.push('Boom <66% +7'); }
+                    else { s = 0; r.push('Boom >66% likely +0'); }
+                    if (aiAlive <= 1 && pAlive <= 1) { s -= 1; r.push('-1 last v last'); }
+                    results.push({ moveName: mn, score: s, reason: r.join(', ') }); return;
+                }
+                // -- Final Gambit --
+                if (mid === 'finalgambit') {
+                    if (aiFaster && aiHP > playerHP) s = 8;
+                    else if (aiFaster && pa.canKO) s = 7;
+                    else s = 6;
+                    results.push({ moveName: mn, score: s, reason: 'Final Gambit +' + s }); return;
+                }
+                // -- Relic Song --
+                if (mid === 'relicsong') {
+                    if ((aiMon.name || '').toLowerCase().indexOf('pirouette') !== -1) {
+                        results.push({ moveName: mn, score: -20, reason: 'Pirouette never Relic Songs' }); return;
+                    }
+                    s = 10; r.push('Relic Song +10');
+                    if (kills) { s += aiFaster ? 6 : 3; r.push(aiFaster ? '+6 fast kill' : '+3 slow kill'); }
+                    results.push({ moveName: mn, score: s, reason: r.join(', ') }); return;
+                }
+                // -- Pursuit --
+                if (mid === 'pursuit') {
+                    var php = playerMaxHP > 0 ? (playerHP / playerMaxHP) * 100 : 100;
+                    if (kills) { s = 10; r.push('Pursuit KO +10'); }
+                    else if (php < 20) { s = 10; r.push('Pursuit <20% +10'); }
+                    else if (php < 40) { s = 8; r.push('Pursuit <40% +8'); }
+                    if (aiFaster) { s += 3; r.push('+3 faster'); }
+                    if (kills) { s += aiFaster ? 6 : 3; r.push(aiFaster ? '+6 fast kill' : '+3 slow kill'); }
+                    results.push({ moveName: mn, score: s, reason: r.join(', ') }); return;
+                }
+                // -- Fell Stinger --
+                if (mid === 'fellstinger') {
+                    var atkStg = (aiMon.boosts && aiMon.boosts.atk) || 0;
+                    if (atkStg < 6 && kills) {
+                        results.push({ moveName: mn, score: aiFaster ? 21 : 15,
+                            reason: 'Fell Stinger KO ' + (aiFaster ? '+21' : '+15') }); return;
+                    }
+                }
+                // -- Future Sight --
+                if (mid === 'futuresight') {
+                    s = (aiFaster && pa.canKO) ? 8 : 6;
+                    r.push('Future Sight +' + s);
+                    if (kills) { s += aiFaster ? 6 : 3; r.push(aiFaster ? '+6 fast kill' : '+3 slow kill'); }
+                    results.push({ moveName: mn, score: s, reason: r.join(', ') }); return;
+                }
+                // -- Damaging trapping moves --
+                var trap = { whirlpool:1,firespin:1,sandtomb:1,magmastorm:1,infestation:1,bind:1,wrap:1,clamp:1 };
+                if (trap[mid]) {
+                    s = 6; r.push('Trapping +6');
+                    if (kills) { s += (aiFaster||hasPrio) ? 6 : 3; r.push((aiFaster||hasPrio)?'+6 fast kill':'+3 slow kill'); }
+                    results.push({ moveName: mn, score: s, reason: r.join(', ') }); return;
+                }
+                // -- Damaging speed reduction --
+                var spdDrop = { icywind:1,electroweb:1,rocktomb:1,mudshot:1,lowsweep:1 };
+                if (spdDrop[mid] && !isHi) {
+                    var blocked = defAbId==='contrary'||defAbId==='clearbody'||defAbId==='whitesmoke';
+                    s = (!blocked && !aiFaster) ? 6 : 5;
+                    r.push('Speed drop ' + (s===6?'(slower) +6':'+5'));
+                    if (kills) { s += (aiFaster||hasPrio)?6:3; r.push((aiFaster||hasPrio)?'+6 fast kill':'+3 slow kill'); }
+                    results.push({ moveName: mn, score: s, reason: r.join(', ') }); return;
+                }
+                // -- Guaranteed Atk/SpAtk reduction --
+                var phyDrop = { tropkick:1,lunge:1 };
+                var spaDrop = { skittersmack:1,strugglebug:1,mysticalfire:1,snarl:1 };
+                if ((phyDrop[mid]||spaDrop[mid]) && !isHi) {
+                    var blocked2 = defAbId==='contrary'||defAbId==='clearbody'||defAbId==='whitesmoke';
+                    var corr = phyDrop[mid] ? pa.hasPhysical : pa.hasSpecial;
+                    s = (!blocked2 && corr) ? 6 : 5;
+                    r.push('Stat drop ' + (s===6?'(relevant) +6':'+5'));
+                    if (kills) { s += (aiFaster||hasPrio)?6:3; r.push((aiFaster||hasPrio)?'+6 fast kill':'+3 slow kill'); }
+                    results.push({ moveName: mn, score: s, reason: r.join(', ') }); return;
+                }
+                // -- Contrary setup (Overheat, Leaf Storm, Superpower) --
+                var contrarySetup = { overheat:1,leafstorm:1,superpower:1 };
+                if (contrarySetup[mid] && aiAbId === 'contrary' && !isHi && !kills) {
+                    s = 6; r.push('Contrary setup +6');
+                    if (pIncap) { s += 3; r.push('+3 incap'); }
+                    results.push({ moveName: mn, score: s, reason: r.join(', ') }); return;
+                }
+
+                // ---- Normal damaging move scoring ----
+                if (isHi) { s = 6; r.push('Highest dmg +6'); }
+
+                if (kills) {
+                    if (aiFaster || (hasPrio && !aiFaster)) { s += 6; r.push('+6 fast kill'); }
+                    else { s += 3; r.push('+3 slow kill'); }
+                    var boostAb = { moxie:1,beastboost:1,chillingneigh:1,grimneigh:1 };
+                    if (boostAb[aiAbId]) { s += 1; r.push('+1 ' + aiMon.ability); }
+                }
+
+                // Priority when AI dies to player and is slower
+                if (pa.canKO && !aiFaster && hasPrio) { s += 11; r.push('+11 prio (dying+slow)'); }
+
+                // Acid Spray always +6 additional
+                if (mid === 'acidspray') { s += 6; r.push('+6 Acid Spray -2SpDef'); }
+
+                if (!r.length) r.push('Damaging move');
+                results.push({ moveName: mn, score: s, reason: r.join(', ') }); return;
+            }
+
+            // =============================================================
+            //  STATUS MOVES
+            // =============================================================
+
+            // -- Stealth Rock --
+            if (mid === 'stealthrock') {
+                if (p1Haz.stealthRock) { results.push({ moveName: mn, score: -20, reason: 'SR already up' }); return; }
+                s = isFirstTurn ? 9 : 7;
+                results.push({ moveName: mn, score: s, reason: 'SR ' + (isFirstTurn?'T1 +9':'+7') }); return;
+            }
+            // -- Spikes / Toxic Spikes --
+            if (mid === 'spikes' || mid === 'toxicspikes') {
+                var layers = mid === 'spikes' ? (p1Haz.spikes||0) : (p1Haz.toxicSpikes||0);
+                var maxL = mid === 'spikes' ? 3 : 2;
+                if (layers >= maxL) { results.push({ moveName: mn, score: -20, reason: 'At max layers' }); return; }
+                s = isFirstTurn ? 9 : 7;
+                if (layers > 0) s -= 1;
+                results.push({ moveName: mn, score: s, reason: mn + (isFirstTurn?' T1':'') + ' +' + s }); return;
+            }
+            // -- Sticky Web --
+            if (mid === 'stickyweb') {
+                if (p1Haz.stickyWeb) { results.push({ moveName: mn, score: -20, reason: 'Web already up' }); return; }
+                s = isFirstTurn ? 12 : 9;
+                results.push({ moveName: mn, score: s, reason: 'Sticky Web ' + (isFirstTurn?'T1 +12':'+9') }); return;
+            }
+            // -- Protect / Detect / King's Shield --
+            if (mid==='protect'||mid==='detect'||mid==='kingsshield'||mid==='banefulbunker'||mid==='spikyshield') {
+                s = 6; r.push('Protect +6');
+                var badSt = ['psn','tox','brn','poison','burn','badly poisoned'];
+                var aiSt = (aiMon.status||'').toLowerCase();
+                if (badSt.indexOf(aiSt)!==-1) { s -= 2; r.push('-2 AI status'); }
+                if (badSt.indexOf(pStatus)!==-1) { s += 1; r.push('+1 player status'); }
+                if (isFirstTurn) { s -= 1; r.push('-1 T1'); }
+                results.push({ moveName: mn, score: s, reason: r.join(', ') }); return;
+            }
+            // -- Recovery --
+            var recov = { recover:1,slackoff:1,healorder:1,softboiled:1,roost:1,milkdrink:1,shoreup:1,strengthsap:1 };
+            var sunRecov = { morningsun:1,synthesis:1,moonlight:1 };
+            if (recov[mid] || sunRecov[mid] || mid === 'rest') {
+                if (aiHPPct >= 100) { results.push({ moveName: mn, score: -20, reason: 'Full HP' }); return; }
+                if (aiHPPct >= 85) { results.push({ moveName: mn, score: -6, reason: '>85% HP' }); return; }
+                var hpct = 50;
+                if (sunRecov[mid]) {
+                    var wx = state.field ? (state.field.weather||'') : '';
+                    hpct = (wx.toLowerCase().indexOf('sun')!==-1) ? 67 : 50;
+                }
+                if (mid === 'rest') hpct = 100;
+                var shouldR = shouldAIRecover(aiMon, aiFaster, hpct, pa.maxDamage);
+                if (mid === 'rest') {
+                    if (shouldR) {
+                        var cure = { lumberry:1,chestoberry:1 };
+                        var cureAb = { shedskin:1,earlybird:1,hydration:1 };
+                        var hasCure = !!cure[aiItemId] || !!cureAb[aiAbId];
+                        var hasTalk = (aiMon.moves||[]).some(function(m){var x=toMoveId(m);return x==='sleeptalk'||x==='snore';});
+                        s = (hasCure||hasTalk) ? 8 : 7;
+                    } else { s = 5; }
+                    r.push('Rest +' + s);
+                } else {
+                    s = shouldR ? 7 : 5;
+                    r.push('Recovery +' + s);
+                }
+                results.push({ moveName: mn, score: s, reason: r.join(', ') }); return;
+            }
+            // -- Thunder Wave / Stun Spore / Glare / Nuzzle --
+            var paraMoves = { thunderwave:1,stunspore:1,glare:1,nuzzle:1,zapcannon:1 };
+            if (paraMoves[mid]) {
+                if (pStatus) { results.push({ moveName: mn, score: -20, reason: 'Already statused' }); return; }
+                var pt = playerMon.types || [];
+                if (mid==='thunderwave') {
+                    if (pt.some(function(t){return t&&t.toLowerCase()==='electric';})) { results.push({moveName:mn,score:-20,reason:'Electric immune'}); return; }
+                    if (pt.some(function(t){return t&&t.toLowerCase()==='ground';})) { results.push({moveName:mn,score:-20,reason:'Ground immune'}); return; }
+                }
+                var pSpdAfterPara = playerSpeed / 4;
+                var paraCond = false;
+                if (!aiFaster && aiSpeed > pSpdAfterPara) paraCond = true;
+                if (pa.hasFlinchMove) paraCond = true;
+                var hasHex = (aiMon.moves||[]).some(function(m){return toMoveId(m)==='hex';});
+                if (hasHex) paraCond = true;
+                s = paraCond ? 8 : 7;
+                results.push({ moveName: mn, score: s, reason: 'Para ' + (paraCond?'+8 (speed flip/hex)':'+7') }); return;
+            }
+            // -- Will-o-Wisp --
+            if (mid === 'willowisp') {
+                if (pStatus) { results.push({ moveName: mn, score: -20, reason: 'Already statused' }); return; }
+                var pt2 = playerMon.types || [];
+                if (pt2.some(function(t){return t&&t.toLowerCase()==='fire';})) { results.push({moveName:mn,score:-20,reason:'Fire immune'}); return; }
+                s = 6; r.push('WoW +6');
+                if (pa.hasPhysical) { s += 1; r.push('+1 phys'); }
+                results.push({ moveName: mn, score: s, reason: r.join(', ') }); return;
+            }
+            // -- Sleep moves --
+            var sleepMv = { yawn:1,darkvoid:1,spore:1,sleeppowder:1,grasswhistle:1,sing:1,hypnosis:1,lovelykiss:1 };
+            if (sleepMv[mid]) {
+                if (pStatus) { results.push({ moveName: mn, score: -20, reason: 'Already statused' }); return; }
+                s = 6;
+                results.push({ moveName: mn, score: s, reason: 'Sleep +6' }); return;
+            }
+            // -- Poison status moves --
+            var poisonMv = { toxic:1,poisonpowder:1,poisongas:1 };
+            if (poisonMv[mid]) {
+                if (pStatus) { results.push({ moveName: mn, score: -20, reason: 'Already statused' }); return; }
+                var pt3 = playerMon.types || [];
+                if (pt3.some(function(t){return t&&(t.toLowerCase()==='poison'||t.toLowerCase()==='steel');})) {
+                    results.push({ moveName: mn, score: -20, reason: 'Immune to poison' }); return;
+                }
+                s = 6;
+                results.push({ moveName: mn, score: s, reason: 'Poison +6' }); return;
+            }
+            // -- Memento --
+            if (mid === 'memento') {
+                if (aiAlive <= 1) { results.push({ moveName: mn, score: -20, reason: 'Last mon' }); return; }
+                if (aiHPPct < 10) s = 16;
+                else if (aiHPPct < 33) s = 14;
+                else if (aiHPPct < 66) s = 13;
+                else s = 6;
+                results.push({ moveName: mn, score: s, reason: 'Memento +' + s }); return;
+            }
+            // -- Tailwind --
+            if (mid === 'tailwind') {
+                s = !aiFaster ? 9 : 5;
+                results.push({ moveName: mn, score: s, reason: 'Tailwind ' + (!aiFaster?'+9 slower':'+5') }); return;
+            }
+            // -- Trick Room --
+            if (mid === 'trickroom') {
+                if (isTR) { results.push({ moveName: mn, score: -20, reason: 'TR already up' }); return; }
+                s = !aiFaster ? 10 : 5;
+                results.push({ moveName: mn, score: s, reason: 'Trick Room +' + s }); return;
+            }
+            // -- Light Screen / Reflect --
+            if (mid === 'lightscreen' || mid === 'reflect') {
+                if (mid==='lightscreen' && p2Sides.lightScreen) { results.push({moveName:mn,score:-20,reason:'Already up'}); return; }
+                if (mid==='reflect' && p2Sides.reflect) { results.push({moveName:mn,score:-20,reason:'Already up'}); return; }
+                s = 6; r.push((mid==='reflect'?'Reflect':'Light Screen')+' +6');
+                var corrMov = mid==='reflect' ? pa.hasPhysical : pa.hasSpecial;
+                if (corrMov) { s += 1; r.push('+1 relevant'); if (aiItemId==='lightclay') { s += 1; r.push('+1 Light Clay'); } }
+                results.push({ moveName: mn, score: s, reason: r.join(', ') }); return;
+            }
+            // -- Substitute --
+            if (mid === 'substitute') {
+                if (aiHPPct <= 50) { results.push({ moveName: mn, score: -20, reason: 'Too low HP' }); return; }
+                if (defAbId === 'infiltrator') { results.push({ moveName: mn, score: -20, reason: 'Infiltrator' }); return; }
+                s = 6; r.push('Sub +6');
+                if (pStatus==='slp'||pStatus==='sleep') { s += 2; r.push('+2 asleep'); }
+                if (pa.hasSoundMove) { s -= 8; r.push('-8 sound move'); }
+                results.push({ moveName: mn, score: s, reason: r.join(', ') }); return;
+            }
+            // -- Taunt --
+            if (mid === 'taunt') {
+                var hasTR2 = (playerMon.moves||[]).some(function(m){return toMoveId(m)==='trickroom';});
+                var hasDefog = (playerMon.moves||[]).some(function(m){return toMoveId(m)==='defog';});
+                if (hasTR2 && !isTR) s = 9;
+                else if (hasDefog && p2Sides.auroraVeil && aiFaster) s = 9;
+                else s = 5;
+                results.push({ moveName: mn, score: s, reason: 'Taunt +' + s }); return;
+            }
+            // -- Encore --
+            if (mid === 'encore') {
+                if (isFirstTurn) { results.push({ moveName: mn, score: -20, reason: 'No move to Encore T1' }); return; }
+                s = aiFaster ? 7 : 6;
+                results.push({ moveName: mn, score: s, reason: 'Encore +' + s }); return;
+            }
+            // -- Trick / Switcheroo --
+            if (mid === 'trick' || mid === 'switcheroo') {
+                var bad = { toxicorb:1,flameorb:1,blacksludge:1,ironball:1,laggingtail:1,stickybarb:1 };
+                s = bad[aiItemId] ? 7 : 5;
+                results.push({ moveName: mn, score: s, reason: 'Trick +' + s }); return;
+            }
+            // -- Destiny Bond --
+            if (mid === 'destinybond') {
+                s = (aiFaster && pa.canKO) ? 7 : 5;
+                results.push({ moveName: mn, score: s, reason: 'Destiny Bond +' + s }); return;
+            }
+            // -- Baton Pass --
+            if (mid === 'batonpass') {
+                if (aiAlive <= 1) { results.push({ moveName: mn, score: -20, reason: 'Last mon' }); return; }
+                var hasBoosts = false;
+                if (aiMon.boosts) { Object.keys(aiMon.boosts).forEach(function(k){if(aiMon.boosts[k]>0)hasBoosts=true;}); }
+                s = hasBoosts ? 14 : 0;
+                results.push({ moveName: mn, score: s, reason: 'BP ' + (hasBoosts?'+14 boosts':'+0') }); return;
+            }
+            // -- Agility / Rock Polish / Autotomize --
+            if (mid==='agility'||mid==='rockpolish'||mid==='autotomize') {
+                if (aiFaster) { results.push({ moveName: mn, score: -20, reason: 'Already faster' }); return; }
+                results.push({ moveName: mn, score: 7, reason: mn + ' (slower) +7' }); return;
+            }
+            // -- Focus Energy / Laser Focus --
+            if (mid==='focusenergy'||mid==='laserfocus') {
+                if (defAbId==='shellarmor'||defAbId==='battlearmor') { results.push({moveName:mn,score:-20,reason:'Shell/Battle Armor'}); return; }
+                var hasHiCrit = (aiMon.moves||[]).some(function(m){var x=getMoveDataFromRBDex(m);return x&&x.critRatio&&x.critRatio>1;});
+                var critAb = aiAbId==='superluck'||aiAbId==='sniper';
+                var critItem = aiItemId==='scopelens'||aiItemId==='razorclaw';
+                s = (hasHiCrit||critAb||critItem) ? 7 : 6;
+                results.push({ moveName: mn, score: s, reason: 'Focus Energy +' + s }); return;
+            }
+            // -- Imprison --
+            if (mid === 'imprison') {
+                var hasCommon = (playerMon.moves||[]).some(function(pm){return (aiMon.moves||[]).some(function(am){return toMoveId(pm)===toMoveId(am);});});
+                results.push({ moveName: mn, score: hasCommon ? 9 : -20, reason: 'Imprison ' + (hasCommon?'+9':'-20 no shared') }); return;
+            }
+            // -- Terrain --
+            var terrain = { electricterrain:1,psychicterrain:1,grassyterrain:1,mistyterrain:1 };
+            if (terrain[mid]) {
+                s = aiItemId === 'terrainextender' ? 9 : 8;
+                results.push({ moveName: mn, score: s, reason: 'Terrain +' + s }); return;
+            }
+            // -- Helping Hand / Follow Me --
+            if (mid==='helpinghand'||mid==='followme') {
+                results.push({ moveName: mn, score: 6, reason: mn + ' +6' }); return;
+            }
+            // -- Counter / Mirror Coat --
+            if (mid==='counter'||mid==='mirrorcoat') {
+                if (pa.canKO && !hasProtection) { results.push({ moveName: mn, score: -20, reason: 'Player KOs' }); return; }
+                s = 6; r.push((mid==='counter'?'Counter':'Mirror Coat')+' +6');
+                var only = mid==='counter' ? (pa.hasPhysical&&!pa.hasSpecial) : (pa.hasSpecial&&!pa.hasPhysical);
+                if (only) { s += 2; r.push('+2 only matching split'); }
+                results.push({ moveName: mn, score: s, reason: r.join(', ') }); return;
+            }
+
+            // ===== SETUP MOVES =====
+            var offSetup = { swordsdance:1,howl:1,meditate:1,sharpen:1,honeclaws:1,poweruppunch:1 };
+            var defSetup = { acidarmor:1,barrier:1,cottonguard:1,harden:1,irondefense:1,stockpile:1,cosmicpower:1 };
+            var mixSetup = { bulkup:1,calmmind:1,quiverdance:1,coil:1,noretreat:1 };
+            var spaSetup = { tailglow:1,nastyplot:1,workup:1,growth:1,chargebeam:1 };
+            var isSetup = offSetup[mid]||defSetup[mid]||mixSetup[mid]||spaSetup[mid]||
+                mid==='shellsmash'||mid==='bellydrum'||mid==='dragondance'||mid==='shiftgear';
+
+            if (isSetup) {
+                // Unaware check (PuP/SD/Howl exempt)
+                var unawareExempt = { poweruppunch:1,swordsdance:1,howl:1 };
+                if (defAbId==='unaware' && !unawareExempt[mid]) { results.push({moveName:mn,score:-20,reason:'Unaware'}); return; }
+                // Player can KO check
+                if (pa.canKO && !hasProtection) { results.push({moveName:mn,score:-20,reason:'Player KOs, won\'t setup'}); return; }
+
+                // Shell Smash
+                if (mid === 'shellsmash') {
+                    var ab = (aiMon.boosts&&aiMon.boosts.atk)||0;
+                    var as2 = (aiMon.boosts&&aiMon.boosts.spa)||0;
+                    if (ab >= 1 || as2 >= 6 || ab >= 6) { results.push({moveName:mn,score:-20,reason:'Already boosted'}); return; }
+                    s = 6; r.push('Shell Smash +6');
+                    if (pIncap) { s += 3; r.push('+3 incap'); }
+                    if (!pa.canKO) { s += 2; r.push('+2 survives'); }
+                    else if (hasProtection) { s += 2; r.push('+2 Sturdy/Sash'); }
+                    else { s -= 2; r.push('-2 might die'); }
+                    results.push({ moveName: mn, score: s, reason: r.join(', ') }); return;
+                }
+                // Belly Drum
+                if (mid === 'bellydrum') {
+                    if (pIncap) s = 9;
+                    else if (!pa.canKO) s = 8;
+                    else s = 4;
+                    results.push({ moveName: mn, score: s, reason: 'Belly Drum +' + s }); return;
+                }
+                // Dragon Dance / Shift Gear (offensive)
+                if (mid==='dragondance'||mid==='shiftgear') {
+                    s = 6; r.push(mn + ' +6');
+                    if (pIncap) { s += 3; r.push('+3 incap'); }
+                    if (!aiFaster && pa.can2HKO) { s -= 5; r.push('-5 slower+2HKO'); }
+                    results.push({ moveName: mn, score: s, reason: r.join(', ') }); return;
+                }
+                // Mixed setup (Bulk Up, Calm Mind, Quiver Dance, Coil, No Retreat)
+                if (mixSetup[mid]) {
+                    var physMix = { bulkup:1,coil:1,noretreat:1 };
+                    var isDef = physMix[mid] ? (pa.hasPhysical&&!pa.hasSpecial) : (pa.hasSpecial&&!pa.hasPhysical);
+                    s = 6; r.push(mn + ' +6');
+                    if (isDef) {
+                        if (!aiFaster && pa.can2HKO) { s -= 5; r.push('-5 slower+2HKO'); }
+                        if (pIncap) { s += 2; r.push('+2 incap'); }
+                        var dS = (aiMon.boosts&&aiMon.boosts.def)||0;
+                        var sS = (aiMon.boosts&&aiMon.boosts.spd)||0;
+                        if (dS < 2 || sS < 2) { s += 2; r.push('+2 def/spd<+2'); }
+                    } else {
+                        if (pIncap) { s += 3; r.push('+3 incap'); }
+                        if (!aiFaster && pa.can2HKO) { s -= 5; r.push('-5 slower+2HKO'); }
+                    }
+                    results.push({ moveName: mn, score: s, reason: r.join(', ') }); return;
+                }
+                // Nasty Plot / Tail Glow / Work Up / Growth / Charge Beam
+                if (spaSetup[mid]) {
+                    s = 6; r.push(mn + ' +6');
+                    if (pIncap) { s += 3; r.push('+3 incap'); }
+                    else if (!pa.can3HKO) {
+                        s += 1; r.push('+1 can\'t 3HKO');
+                        if (aiFaster) { s += 1; r.push('+1 faster'); }
+                    }
+                    if (!aiFaster && pa.can2HKO) { s -= 5; r.push('-5 slower+2HKO'); }
+                    var spS = (aiMon.boosts&&aiMon.boosts.spa)||0;
+                    if (spS >= 2) { s -= 1; r.push('-1 already +2 SpA'); }
+                    results.push({ moveName: mn, score: s, reason: r.join(', ') }); return;
+                }
+                // Pure offensive setup (SD, Howl, etc.)
+                if (offSetup[mid]) {
+                    s = 6; r.push(mn + ' +6');
+                    if (pIncap) { s += 3; r.push('+3 incap'); }
+                    if (!aiFaster && pa.can2HKO) { s -= 5; r.push('-5 slower+2HKO'); }
+                    results.push({ moveName: mn, score: s, reason: r.join(', ') }); return;
+                }
+                // Defensive setup
+                if (defSetup[mid]) {
+                    s = 6; r.push(mn + ' +6');
+                    if (!aiFaster && pa.can2HKO) { s -= 5; r.push('-5 slower+2HKO'); }
+                    if (pIncap) { s += 2; r.push('+2 incap'); }
+                    results.push({ moveName: mn, score: s, reason: r.join(', ') }); return;
+                }
+            }
+
+            // -- Default status move --
+            results.push({ moveName: mn, score: 6, reason: 'Status default +6' });
+        });
+
+        return results;
+    }
+
     // Export
     window.BattlePlannerLogic = {
         getMovePriority: getMovePriority,
@@ -877,6 +1510,7 @@
         detectMeaningfulVariance: detectMeaningfulVariance,
         checkAccumulatedVariance: checkAccumulatedVariance,
         checkFlinch: checkFlinch,
+        scoreAIMoves: scoreAIMoves,
         PRIORITY_MOVES: PRIORITY_MOVES
     };
 

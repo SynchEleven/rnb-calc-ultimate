@@ -2343,18 +2343,29 @@
 
         var movesHtml = '<div class="move-grid-2x2">';
 
-        // Pre-calculate AI recommended move (highest max damage) for P2
+        // AI move scoring: use the full R&B AI scoring engine when available
         var aiRecommendedIdx = -1;
-        if (side === 'p2' && defender) {
-            var bestMaxDmg = 0;
-            (pokemon.moves || []).forEach(function (mn, idx) {
-                if (!mn || mn === '(No Move)') return;
-                var preview = getMovePreviewInfo('p2', pokemon, mn, defender, false);
-                if (preview && preview.rawMax > bestMaxDmg) {
-                    bestMaxDmg = preview.rawMax;
-                    aiRecommendedIdx = idx;
+        var aiScores = null;
+        if (side === 'p2' && defender && BattlePlannerLogic && BattlePlannerLogic.scoreAIMoves) {
+            var currentNode = uiState.tree ? uiState.tree.getCurrentNode() : null;
+            var scoreState = currentNode ? currentNode.state : null;
+            if (scoreState) {
+                var calcDmgForAI = function (attacker, target, moveName) {
+                    try {
+                        var aSide = attacker === pokemon ? 'p2' : 'p1';
+                        var preview = getMovePreviewInfo(aSide, attacker, moveName, target, false);
+                        if (!preview) return null;
+                        return { min: preview.rawMin || 0, max: preview.rawMax || 0 };
+                    } catch (e) { return null; }
+                };
+                aiScores = BattlePlannerLogic.scoreAIMoves(pokemon, defender, scoreState, calcDmgForAI);
+                var bestScore = -999;
+                if (aiScores) {
+                    aiScores.forEach(function (sc, idx) {
+                        if (sc.score > bestScore) { bestScore = sc.score; aiRecommendedIdx = idx; }
+                    });
                 }
-            });
+            }
         }
 
         (pokemon.moves || []).forEach(function (moveName, i) {
@@ -2397,8 +2408,10 @@
             // Move name with priority indicator and AI badge
             movesHtml += '<div class="move-cell-header">';
             movesHtml += '<span class="move-cell-name">' + moveName + '</span>';
-            if (side === 'p2' && i === aiRecommendedIdx) {
-                movesHtml += '<span class="ai-move-badge">AI</span>';
+            if (side === 'p2' && i === aiRecommendedIdx && aiScores && aiScores[i]) {
+                var scoreVal = aiScores[i].score;
+                var scoreReason = aiScores[i].reason || '';
+                movesHtml += '<span class="ai-move-badge" title="' + scoreReason.replace(/"/g, '&quot;') + '">AI +' + scoreVal + '</span>';
             }
             if (priority > 0) {
                 movesHtml += '<span class="priority-badge">+' + priority + '</span>';
@@ -2467,6 +2480,15 @@
                 if (dexDesc) {
                     movesHtml += '<div class="move-cell-desc">' + dexDesc + '</div>';
                 }
+            }
+
+            // AI score indicator for all P2 moves
+            if (side === 'p2' && aiScores && aiScores[i] && aiScores[i].score > -100) {
+                var sc = aiScores[i];
+                movesHtml += '<div class="ai-score-row" title="' + (sc.reason||'').replace(/"/g,'&quot;') + '">';
+                movesHtml += '<span class="ai-score-label">AI</span>';
+                movesHtml += '<span class="ai-score-val' + (sc.score < 0 ? ' ai-score-neg' : '') + '">+' + sc.score + '</span>';
+                movesHtml += '</div>';
             }
 
             movesHtml += '</button>';
@@ -3848,9 +3870,9 @@
             // Abilities
             if (species.abilities) {
                 var abils = [];
-                if (species.abilities['0']) abils.push(species.abilities['0']);
-                if (species.abilities['1']) abils.push(species.abilities['1']);
-                if (species.abilities.H) abils.push('<em>' + species.abilities.H + '</em> (H)');
+                if (species.abilities['0']) abils.push('<span class="card-ability">' + species.abilities['0'] + '</span>');
+                if (species.abilities['1']) abils.push('<span class="card-ability">' + species.abilities['1'] + '</span>');
+                if (species.abilities.H) abils.push('<span class="card-ability"><em>' + species.abilities.H + '</em></span> (H)');
                 html += '<div class="dex-row"><span class="dex-label">Abilities</span><span>' + abils.join(' | ') + '</span></div>';
             }
 

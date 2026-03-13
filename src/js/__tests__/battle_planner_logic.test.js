@@ -1002,16 +1002,16 @@ describe('checkFlinch', () => {
     expect(result.chance).toBe(1);
   });
 
-  test('Fake Out still works on first acting turn (turnsOnField=1)', () => {
+  test('Fake Out fails on second turn (turnsOnField=1)', () => {
     const result = Logic.checkFlinch(makeMoveWithFlinch(100), makeAttacker({ turnsOnField: 1 }), makeDefender(), 'Fake Out');
-    expect(result.flinches).toBe(true);
-    expect(result.isGuaranteed).toBe(true);
-  });
-
-  test('Fake Out fails after first turn (turnsOnField=2)', () => {
-    const result = Logic.checkFlinch(makeMoveWithFlinch(100), makeAttacker({ turnsOnField: 2 }), makeDefender(), 'Fake Out');
     expect(result.flinches).toBe(false);
     expect(result.reason).toContain('fails after first turn');
+  });
+
+  test('Fake Out works for just-switched-in Pokemon (turnsOnField=-1)', () => {
+    const result = Logic.checkFlinch(makeMoveWithFlinch(100), makeAttacker({ turnsOnField: -1 }), makeDefender(), 'Fake Out');
+    expect(result.flinches).toBe(true);
+    expect(result.isGuaranteed).toBe(true);
   });
 
   test('Rock Slide has 30% flinch chance', () => {
@@ -1168,7 +1168,7 @@ describe('detectMeaningfulVariance', () => {
 // turnsOnField tracking
 // ---------------------------------------------------------------------------
 describe('turnsOnField tracking', () => {
-  test('performSwitch resets turnsOnField to 0', () => {
+  test('performSwitch resets turnsOnField to -1', () => {
     const state = makeState(
       { name: 'Pikachu', turnsOnField: 3 },
       { name: 'Raichu' }
@@ -1180,7 +1180,7 @@ describe('turnsOnField tracking', () => {
     state.p1.teamSlot = 0;
 
     Logic.performSwitch(state, 'p1', 1);
-    expect(state.p1.active.turnsOnField).toBe(0);
+    expect(state.p1.active.turnsOnField).toBe(-1);
   });
 
   test('applyEndOfTurnEffects increments turnsOnField', () => {
@@ -1192,5 +1192,328 @@ describe('turnsOnField tracking', () => {
     Logic.applyEndOfTurnEffects(state, 3);
     expect(state.p1.active.turnsOnField).toBe(1);
     expect(state.p2.active.turnsOnField).toBe(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AI Move Scoring Engine
+// ---------------------------------------------------------------------------
+describe('scoreAIMoves', () => {
+  // Mock RBDex for AI scoring tests
+  const moveDB = {
+    flamethrower: { name: 'Flamethrower', basePower: 90, type: 'Fire', category: 'Special', accuracy: 100, pp: 15 },
+    thunderbolt: { name: 'Thunderbolt', basePower: 90, type: 'Electric', category: 'Special', accuracy: 100, pp: 15 },
+    icebeam: { name: 'Ice Beam', basePower: 90, type: 'Ice', category: 'Special', accuracy: 100, pp: 10 },
+    tackle: { name: 'Tackle', basePower: 40, type: 'Normal', category: 'Physical', accuracy: 100, pp: 35 },
+    fakeout: { name: 'Fake Out', basePower: 40, type: 'Normal', category: 'Physical', accuracy: 100, pp: 10, priority: 3,
+      secondary: { chance: 100, volatileStatus: 'flinch' } },
+    stealthrock: { name: 'Stealth Rock', basePower: 0, type: 'Rock', category: 'Status', pp: 20 },
+    swordsdance: { name: 'Swords Dance', basePower: 0, type: 'Normal', category: 'Status', pp: 20 },
+    protect: { name: 'Protect', basePower: 0, type: 'Normal', category: 'Status', pp: 10 },
+    recover: { name: 'Recover', basePower: 0, type: 'Normal', category: 'Status', pp: 10 },
+    dragondance: { name: 'Dragon Dance', basePower: 0, type: 'Dragon', category: 'Status', pp: 20 },
+    thunderwave: { name: 'Thunder Wave', basePower: 0, type: 'Electric', category: 'Status', pp: 20 },
+    willowisp: { name: 'Will-O-Wisp', basePower: 0, type: 'Fire', category: 'Status', pp: 15 },
+    tailwind: { name: 'Tailwind', basePower: 0, type: 'Flying', category: 'Status', pp: 15 },
+    explosion: { name: 'Explosion', basePower: 250, type: 'Normal', category: 'Physical', accuracy: 100, pp: 5 },
+    agility: { name: 'Agility', basePower: 0, type: 'Psychic', category: 'Status', pp: 30 },
+    spore: { name: 'Spore', basePower: 0, type: 'Grass', category: 'Status', accuracy: 100, pp: 15 },
+    toxic: { name: 'Toxic', basePower: 0, type: 'Poison', category: 'Status', accuracy: 90, pp: 10 },
+    aquajet: { name: 'Aqua Jet', basePower: 40, type: 'Water', category: 'Physical', accuracy: 100, pp: 20, priority: 1 },
+    lowsweep: { name: 'Low Sweep', basePower: 65, type: 'Fighting', category: 'Physical', accuracy: 100, pp: 20 },
+  };
+
+  let origRBDex;
+  beforeAll(() => {
+    origRBDex = global.window ? global.window.RBDex : undefined;
+    if (!global.window) global.window = {};
+    global.window.RBDex = {
+      getMove: (name) => {
+        if (!name) return null;
+        const id = name.toLowerCase().replace(/[^a-z0-9]/g, '');
+        return moveDB[id] || null;
+      },
+      getMoveDesc: () => '',
+      getItemDesc: () => '',
+      getAbilityDesc: () => '',
+    };
+  });
+  afterAll(() => {
+    if (origRBDex !== undefined) global.window.RBDex = origRBDex;
+    else if (global.window) delete global.window.RBDex;
+  });
+
+  function makeAIMon(overrides) {
+    return makePokemon({
+      name: 'AIMon', currentHP: 100, maxHP: 100,
+      moves: ['Flamethrower', 'Thunderbolt', 'Ice Beam', 'Tackle'],
+      stats: { hp: 100, atk: 80, def: 80, spa: 120, spd: 80, spe: 100 },
+      turnsOnField: 0, ability: '', item: '', boosts: {},
+      ...overrides,
+    });
+  }
+
+  function makePlayerMon(overrides) {
+    return makePokemon({
+      name: 'PlayerMon', currentHP: 100, maxHP: 100,
+      moves: ['Tackle'],
+      stats: { hp: 100, atk: 80, def: 80, spa: 80, spd: 80, spe: 90 },
+      turnsOnField: 0, ability: '', item: '', boosts: {},
+      ...overrides,
+    });
+  }
+
+  function makeScoreState(overrides) {
+    const s = makeState(makeAIMon(), makePlayerMon());
+    s.sides = { p1: {}, p2: {} };
+    if (overrides) Object.assign(s, overrides);
+    return s;
+  }
+
+  // Simple damage calc mock: returns fixed values based on move name
+  function mockCalc(attacker, defender, moveName) {
+    const md = moveDB[(moveName || '').toLowerCase().replace(/[^a-z0-9]/g, '')];
+    if (!md || md.category === 'Status') return null;
+    const bp = md.basePower || 0;
+    return { min: Math.floor(bp * 0.8), max: bp };
+  }
+
+  test('highest damage move gets +6', () => {
+    const ai = makeAIMon();
+    const player = makePlayerMon({ currentHP: 200, maxHP: 200 });
+    const state = makeScoreState();
+    state.p2.active = ai; state.p1.active = player;
+    const scores = Logic.scoreAIMoves(ai, player, state, mockCalc);
+    // Flamethrower/Tbolt/IceBeam all do 90 max, Tackle does 40
+    const tbolt = scores.find(s => s.moveName === 'Thunderbolt');
+    const tackle = scores.find(s => s.moveName === 'Tackle');
+    expect(tbolt.score).toBe(6);
+    expect(tackle.score).toBe(0);
+  });
+
+  test('kill bonus: +6 for faster kill', () => {
+    const ai = makeAIMon({ stats: { hp:100,atk:80,def:80,spa:120,spd:80,spe:100 } });
+    const player = makePlayerMon({ currentHP: 50, maxHP: 100, stats: { hp:100,atk:80,def:80,spa:80,spd:80,spe:80 } });
+    const state = makeScoreState();
+    state.p2.active = ai; state.p1.active = player;
+    const scores = Logic.scoreAIMoves(ai, player, state, mockCalc);
+    // Flamethrower max=90 >= 50 HP → kills. AI spe=100 > player spe=80 → faster → +6+6=12
+    const ft = scores.find(s => s.moveName === 'Flamethrower');
+    expect(ft.score).toBe(12);
+  });
+
+  test('kill bonus: +3 for slower kill', () => {
+    const ai = makeAIMon({ stats: { hp:100,atk:80,def:80,spa:120,spd:80,spe:50 } });
+    const player = makePlayerMon({ currentHP: 50, maxHP: 100 });
+    const state = makeScoreState();
+    state.p2.active = ai; state.p1.active = player;
+    const scores = Logic.scoreAIMoves(ai, player, state, mockCalc);
+    // AI spe=50 < player spe=90 → slower → +6+3=9
+    const ft = scores.find(s => s.moveName === 'Flamethrower');
+    expect(ft.score).toBe(9);
+  });
+
+  test('Fake Out gets +9 on first turn', () => {
+    const ai = makeAIMon({ moves: ['Fake Out', 'Tackle'], turnsOnField: 0 });
+    const player = makePlayerMon();
+    const state = makeScoreState();
+    state.p2.active = ai; state.p1.active = player;
+    const scores = Logic.scoreAIMoves(ai, player, state, mockCalc);
+    const fo = scores.find(s => s.moveName === 'Fake Out');
+    expect(fo.score).toBe(9);
+  });
+
+  test('Fake Out gets -20 after first turn', () => {
+    const ai = makeAIMon({ moves: ['Fake Out', 'Tackle'], turnsOnField: 1 });
+    const player = makePlayerMon();
+    const state = makeScoreState();
+    state.p2.active = ai; state.p1.active = player;
+    const scores = Logic.scoreAIMoves(ai, player, state, mockCalc);
+    const fo = scores.find(s => s.moveName === 'Fake Out');
+    expect(fo.score).toBe(-20);
+  });
+
+  test('Fake Out blocked by Inner Focus → -20', () => {
+    const ai = makeAIMon({ moves: ['Fake Out', 'Tackle'], turnsOnField: 0 });
+    const player = makePlayerMon({ ability: 'Inner Focus' });
+    const state = makeScoreState();
+    state.p2.active = ai; state.p1.active = player;
+    const scores = Logic.scoreAIMoves(ai, player, state, mockCalc);
+    const fo = scores.find(s => s.moveName === 'Fake Out');
+    expect(fo.score).toBe(-20);
+  });
+
+  test('Stealth Rock scores +9 on first turn', () => {
+    const ai = makeAIMon({ moves: ['Stealth Rock', 'Flamethrower'], turnsOnField: 0 });
+    const player = makePlayerMon({ currentHP: 200, maxHP: 200 });
+    const state = makeScoreState();
+    state.p2.active = ai; state.p1.active = player;
+    const scores = Logic.scoreAIMoves(ai, player, state, mockCalc);
+    const sr = scores.find(s => s.moveName === 'Stealth Rock');
+    expect(sr.score).toBe(9);
+  });
+
+  test('Stealth Rock scores -20 when already set', () => {
+    const ai = makeAIMon({ moves: ['Stealth Rock', 'Flamethrower'] });
+    const player = makePlayerMon({ currentHP: 200, maxHP: 200 });
+    const state = makeScoreState();
+    state.sides = { p1: { stealthRock: true }, p2: {} };
+    state.p2.active = ai; state.p1.active = player;
+    const scores = Logic.scoreAIMoves(ai, player, state, mockCalc);
+    const sr = scores.find(s => s.moveName === 'Stealth Rock');
+    expect(sr.score).toBe(-20);
+  });
+
+  test('setup move gets -20 when player can KO (no Sturdy/Sash)', () => {
+    const ai = makeAIMon({ moves: ['Swords Dance', 'Tackle'], stats: { hp:100,atk:80,def:80,spa:80,spd:80,spe:50 } });
+    const player = makePlayerMon({ moves: ['Flamethrower'] });
+    const state = makeScoreState();
+    state.p2.active = ai; state.p1.active = player;
+    // Player Flamethrower: max=90 >= AI HP 100? No. Let's make AI HP lower.
+    ai.currentHP = 80;
+    const scores = Logic.scoreAIMoves(ai, player, state, (atk, def, mn) => {
+      const md2 = moveDB[(mn||'').toLowerCase().replace(/[^a-z0-9]/g,'')];
+      if (!md2 || md2.category === 'Status') return null;
+      return { min: 70, max: 90 };
+    });
+    const sd = scores.find(s => s.moveName === 'Swords Dance');
+    expect(sd.score).toBe(-20);
+  });
+
+  test('Dragon Dance base +6 when safe', () => {
+    const ai = makeAIMon({ moves: ['Dragon Dance', 'Flamethrower'], turnsOnField: 1 });
+    const player = makePlayerMon({ currentHP: 200, maxHP: 200, moves: ['Tackle'] });
+    const state = makeScoreState();
+    state.p2.active = ai; state.p1.active = player;
+    const scores = Logic.scoreAIMoves(ai, player, state, (a,d,mn) => {
+      const md3 = moveDB[(mn||'').toLowerCase().replace(/[^a-z0-9]/g,'')];
+      if (!md3 || md3.category === 'Status') return null;
+      return { min: 10, max: 20 };
+    });
+    const dd = scores.find(s => s.moveName === 'Dragon Dance');
+    expect(dd.score).toBe(6);
+  });
+
+  test('priority move gets +11 when AI dying and slower', () => {
+    const ai = makeAIMon({
+      moves: ['Aqua Jet', 'Tackle'],
+      currentHP: 50, maxHP: 100,
+      stats: { hp:100,atk:80,def:80,spa:80,spd:80,spe:50 },
+    });
+    const player = makePlayerMon({
+      moves: ['Flamethrower'],
+      stats: { hp:100,atk:80,def:80,spa:120,spd:80,spe:100 },
+    });
+    const state = makeScoreState();
+    state.p2.active = ai; state.p1.active = player;
+    const scores = Logic.scoreAIMoves(ai, player, state, (atk, def, mn) => {
+      const md4 = moveDB[(mn||'').toLowerCase().replace(/[^a-z0-9]/g,'')];
+      if (!md4 || md4.category === 'Status') return null;
+      if (mn === 'Flamethrower') return { min: 60, max: 80 };
+      return { min: 20, max: 30 };
+    });
+    const aj = scores.find(s => s.moveName === 'Aqua Jet');
+    // Player Flamethrower max=80 >= AI HP=50 → player can KO
+    // Aqua Jet: priority, AI slower. +11 for priority dying+slow
+    expect(aj.score).toBeGreaterThanOrEqual(11);
+  });
+
+  test('Protect base +6, -1 on first turn', () => {
+    const ai = makeAIMon({ moves: ['Protect', 'Tackle'], turnsOnField: 0 });
+    const player = makePlayerMon();
+    const state = makeScoreState();
+    state.p2.active = ai; state.p1.active = player;
+    const scores = Logic.scoreAIMoves(ai, player, state, mockCalc);
+    const prot = scores.find(s => s.moveName === 'Protect');
+    expect(prot.score).toBe(5); // 6 - 1 for first turn
+  });
+
+  test('Tailwind +9 when AI is slower', () => {
+    const ai = makeAIMon({ moves: ['Tailwind', 'Tackle'], stats: { hp:100,atk:80,def:80,spa:80,spd:80,spe:50 } });
+    const player = makePlayerMon();
+    const state = makeScoreState();
+    state.p2.active = ai; state.p1.active = player;
+    const scores = Logic.scoreAIMoves(ai, player, state, mockCalc);
+    const tw = scores.find(s => s.moveName === 'Tailwind');
+    expect(tw.score).toBe(9);
+  });
+
+  test('Agility -20 when already faster', () => {
+    const ai = makeAIMon({ moves: ['Agility', 'Tackle'] });
+    const player = makePlayerMon({ stats: { hp:100,atk:80,def:80,spa:80,spd:80,spe:50 } });
+    const state = makeScoreState();
+    state.p2.active = ai; state.p1.active = player;
+    const scores = Logic.scoreAIMoves(ai, player, state, mockCalc);
+    const agi = scores.find(s => s.moveName === 'Agility');
+    expect(agi.score).toBe(-20);
+  });
+
+  test('Thunder Wave +8 when it causes speed flip', () => {
+    const ai = makeAIMon({
+      moves: ['Thunder Wave', 'Flamethrower'],
+      stats: { hp:100,atk:80,def:80,spa:120,spd:80,spe:60 },
+    });
+    const player = makePlayerMon({
+      stats: { hp:100,atk:80,def:80,spa:80,spd:80,spe:80 },
+      types: ['Normal'],
+    });
+    const state = makeScoreState();
+    state.p2.active = ai; state.p1.active = player;
+    // AI spe=60 < player spe=80 → AI slower
+    // After para: player spe = 80/4 = 20 < 60 → speed flip!
+    const scores = Logic.scoreAIMoves(ai, player, state, mockCalc);
+    const tw = scores.find(s => s.moveName === 'Thunder Wave');
+    expect(tw.score).toBe(8);
+  });
+
+  test('Explosion +10 when AI at <10% HP', () => {
+    const ai = makeAIMon({ moves: ['Explosion', 'Tackle'], currentHP: 5, maxHP: 100 });
+    const player = makePlayerMon({ types: ['Normal'] });
+    const state = makeScoreState();
+    state.p2.active = ai; state.p1.active = player;
+    state.p2.team = [ai, makePokemon({ name: 'Backup', currentHP: 100, maxHP: 100 })];
+    const scores = Logic.scoreAIMoves(ai, player, state, mockCalc);
+    const boom = scores.find(s => s.moveName === 'Explosion');
+    expect(boom.score).toBe(10);
+  });
+
+  test('Recovery +7 when AI is low HP and should recover', () => {
+    const ai = makeAIMon({ moves: ['Recover', 'Tackle'], currentHP: 30, maxHP: 100 });
+    const player = makePlayerMon({ moves: ['Tackle'] });
+    const state = makeScoreState();
+    state.p2.active = ai; state.p1.active = player;
+    const scores = Logic.scoreAIMoves(ai, player, state, (a,d,mn) => {
+      const md5 = moveDB[(mn||'').toLowerCase().replace(/[^a-z0-9]/g,'')];
+      if (!md5 || md5.category === 'Status') return null;
+      return { min: 15, max: 25 };
+    });
+    const rec = scores.find(s => s.moveName === 'Recover');
+    expect(rec.score).toBe(7);
+  });
+
+  test('Recovery -20 when at full HP', () => {
+    const ai = makeAIMon({ moves: ['Recover', 'Tackle'], currentHP: 100, maxHP: 100 });
+    const player = makePlayerMon();
+    const state = makeScoreState();
+    state.p2.active = ai; state.p1.active = player;
+    const scores = Logic.scoreAIMoves(ai, player, state, mockCalc);
+    const rec = scores.find(s => s.moveName === 'Recover');
+    expect(rec.score).toBe(-20);
+  });
+
+  test('Speed reduction move +6 when AI is slower', () => {
+    const ai = makeAIMon({ moves: ['Low Sweep', 'Flamethrower'], stats: { hp:100,atk:80,def:80,spa:120,spd:80,spe:50 } });
+    const player = makePlayerMon({ currentHP: 200, maxHP: 200 });
+    const state = makeScoreState();
+    state.p2.active = ai; state.p1.active = player;
+    const scores = Logic.scoreAIMoves(ai, player, state, (a,d,mn) => {
+      const mid2 = (mn||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+      if (mid2 === 'flamethrower') return { min: 72, max: 90 };
+      if (mid2 === 'lowsweep') return { min: 30, max: 50 };
+      return null;
+    });
+    const ls = scores.find(s => s.moveName === 'Low Sweep');
+    // Not highest damage (50 < 90), AI slower, no blocked ability → +6
+    expect(ls.score).toBe(6);
   });
 });

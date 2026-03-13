@@ -2724,6 +2724,34 @@ body.planner-active {
     flex-shrink: 0;
 }
 
+.ai-score-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 2px;
+    padding-top: 2px;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    cursor: help;
+}
+
+.ai-score-label {
+    font-size: 9px;
+    font-weight: 700;
+    color: rgba(255, 152, 0, 0.6);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.ai-score-val {
+    font-size: 10px;
+    font-weight: 600;
+    color: rgba(255, 152, 0, 0.8);
+}
+
+.ai-score-neg {
+    color: var(--planner-danger);
+}
+
 .multihit-badge {
     font-size: 9px;
     background: rgba(255, 165, 0, 0.2);
