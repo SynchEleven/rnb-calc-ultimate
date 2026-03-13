@@ -1083,66 +1083,7 @@
         $(document).on('click', '#inspector-reopen', toggleInspectorPanel);
         $(document).on('click', '#inspector-delete-node', deleteCurrentNode);
 
-        // AI tie branching
-        $(document).on('click', '.ai-tie-branch-btn', function () {
-            var parentNode = uiState.tree ? uiState.tree.getCurrentNode() : null;
-            if (!parentNode || !uiState.p1Action) return;
-            var parentNodeId = parentNode.id;
-            var state = parentNode.state;
-            var pokemon = state.p2.active;
-            var defender = state.p1.active;
-            if (!pokemon || !defender || !BattlePlannerLogic || !BattlePlannerLogic.scoreAIMoves) return;
-
-            var savedP1Action = JSON.parse(JSON.stringify(uiState.p1Action));
-
-            var calcDmgForAI = function (attacker, target, moveName) {
-                try {
-                    var aSide = attacker === pokemon ? 'p2' : 'p1';
-                    var preview = getMovePreviewInfo(aSide, attacker, moveName, target, false);
-                    if (!preview) return null;
-                    return { min: preview.rawMin || 0, max: preview.rawMax || 0 };
-                } catch (e) { return null; }
-            };
-
-            var aiScores = BattlePlannerLogic.scoreAIMoves(pokemon, defender, state, calcDmgForAI);
-            if (!aiScores) return;
-
-            var bestScore = -999;
-            aiScores.forEach(function (s) { if (s.score > bestScore) bestScore = s.score; });
-            var tiedMoves = aiScores.filter(function (s) { return s.score === bestScore; });
-
-            if (tiedMoves.length > 1) {
-                var branchIdx = 0;
-                function executeNextAITieBranch() {
-                    if (branchIdx >= tiedMoves.length) {
-                        $('#ai-tie-banner').hide();
-                        uiState.tree.navigate(parentNodeId);
-                        renderTree();
-                        renderStage();
-                        return;
-                    }
-                    var tm = tiedMoves[branchIdx];
-                    branchIdx++;
-
-                    uiState.tree.navigate(parentNodeId);
-                    uiState.p1Action = JSON.parse(JSON.stringify(savedP1Action));
-                    uiState.p2Action = {
-                        type: 'move',
-                        index: (pokemon.moves || []).indexOf(tm.moveName),
-                        moveName: tm.moveName,
-                        isCrit: false,
-                        hits: 3,
-                        applyEffect: false
-                    };
-
-                    setTimeout(function () {
-                        executeTurn();
-                        setTimeout(executeNextAITieBranch, 100);
-                    }, 50);
-                }
-                executeNextAITieBranch();
-            }
-        });
+        // AI tie branching now handled automatically in executeTurn()
         $(document).on('change', '#inspector-notes', function () {
             updateNodeNotes($(this).val());
         });
@@ -1886,6 +1827,16 @@
             uiState.p2Action = null;
             uiState.collapsedBranches = {};
             uiState.expandedNodes = {};
+
+            // Clear all UI banners and selections
+            $('#ai-tie-banner').hide();
+            $('#variance-banner').remove();
+            $('#stage-ko-banner').remove();
+            $('#p1-selected-move').text('Select a move').removeClass('selected');
+            $('#p2-selected-move').text('Select a move').removeClass('selected');
+            $('#p1-move-list .move-row, #p2-move-list .move-row').removeClass('selected');
+            updateTurnActionsPanel();
+            updateExecuteTurnButton();
 
             renderTree();
             renderStage();
@@ -4232,8 +4183,7 @@
                 $('#turn-actions-panel').append($banner);
             }
             $banner.html(
-                '<span class="ai-tie-text">AI Tie: ' + tiedMoves.length + ' moves scored +' + bestScore + ' (' + moveNames + ')</span>' +
-                '<button class="planner-btn-xs ai-tie-branch-btn">Branch All</button>'
+                '<span class="ai-tie-text">AI Tie: ' + tiedMoves.length + ' moves scored +' + bestScore + ' (' + moveNames + ') — will auto-branch on execute</span>'
             ).show();
         } else {
             $('#ai-tie-banner').hide();
@@ -5660,9 +5610,57 @@
     }
 
     var isExecutingTurn = false;
+    var isExecutingAITieBranches = false;
 
     /**
-     * Execute the full turn with both moves
+     * When AI has tied moves, execute the turn once per tied move to create branches.
+     * Each branch represents a different AI choice with equal probability.
+     */
+    function executeAITieBranches(tiedMoves, parentNode) {
+        var savedP1Action = JSON.parse(JSON.stringify(uiState.p1Action));
+        var parentNodeId = parentNode.id;
+        var aiPokemon = parentNode.state.p2.active;
+        var branchIdx = 0;
+        isExecutingAITieBranches = true;
+
+        function executeNextBranch() {
+            if (branchIdx >= tiedMoves.length) {
+                $('#ai-tie-banner').hide();
+                isExecutingTurn = false;
+                isExecutingAITieBranches = false;
+                uiState.tree.navigate(parentNodeId);
+                renderTree();
+                renderStage();
+                return;
+            }
+
+            var tm = tiedMoves[branchIdx];
+            branchIdx++;
+
+            uiState.tree.navigate(parentNodeId);
+            uiState.p1Action = JSON.parse(JSON.stringify(savedP1Action));
+            uiState.p2Action = {
+                type: 'move',
+                index: (aiPokemon.moves || []).indexOf(tm.moveName),
+                moveName: tm.moveName,
+                isCrit: false,
+                hits: 3,
+                applyEffect: false
+            };
+
+            setTimeout(function () {
+                executeTurn();
+                setTimeout(executeNextBranch, 100);
+            }, 50);
+        }
+
+        isExecutingTurn = false;
+        executeNextBranch();
+    }
+
+    /**
+     * Execute the full turn with both moves.
+     * If the AI has tied moves, automatically creates branches for each tied move.
      */
     function executeTurn() {
         if (isExecutingTurn) {
@@ -5675,7 +5673,36 @@
             return;
         }
 
+        // Check for AI tied moves and auto-branch (skip if already executing tie branches)
         var currentNode = uiState.tree.getCurrentNode();
+        if (!isExecutingAITieBranches && currentNode && uiState.p2Action.type === 'move' && BattlePlannerLogic && BattlePlannerLogic.scoreAIMoves) {
+            var state = currentNode.state;
+            var aiPokemon = state.p2.active;
+            var playerPokemon = state.p1.active;
+            if (aiPokemon && playerPokemon) {
+                var calcDmgForAI = function (attacker, target, moveName) {
+                    try {
+                        var aSide = attacker === aiPokemon ? 'p2' : 'p1';
+                        var preview = getMovePreviewInfo(aSide, attacker, moveName, target, false);
+                        if (!preview) return null;
+                        return { min: preview.rawMin || 0, max: preview.rawMax || 0 };
+                    } catch (e) { return null; }
+                };
+                var aiScores = BattlePlannerLogic.scoreAIMoves(aiPokemon, playerPokemon, state, calcDmgForAI);
+                if (aiScores) {
+                    var bestScore = -999;
+                    aiScores.forEach(function (s) { if (s.score > bestScore) bestScore = s.score; });
+                    var tiedMoves = aiScores.filter(function (s) { return s.score === bestScore; });
+
+                    if (tiedMoves.length > 1) {
+                        executeAITieBranches(tiedMoves, currentNode);
+                        return;
+                    }
+                }
+            }
+        }
+
+        if (!currentNode) currentNode = uiState.tree.getCurrentNode();
         if (!currentNode) return;
 
         var state = currentNode.state;
@@ -6089,8 +6116,8 @@
                     renderTree();
                     renderStage();
 
-                    // Show variance warnings if any
-                    if (varianceWarnings.length > 0) {
+                    // Show variance warnings if any (skip popup during AI tie branching)
+                    if (varianceWarnings.length > 0 && !isExecutingAITieBranches) {
                         showVarianceNotification(varianceWarnings, currentNode.id, newNode.id);
                     }
 
@@ -6111,8 +6138,25 @@
                     }
                 };
 
-                // Handle KO replacements if needed
-                if (needsP1Replacement && needsP2Replacement) {
+                // During AI tie branching, defer all switch-ins as pendingKO
+                if (isExecutingAITieBranches && (needsP1Replacement || needsP2Replacement)) {
+                    completeTurn(null, null);
+                    var lastNode = uiState.tree.getNode(uiState.tree.currentNodeId);
+                    if (lastNode) {
+                        var ko = {};
+                        if (needsP1Replacement && newState.p1.active.currentHP <= 0) ko.p1 = true;
+                        if (needsP2Replacement && newState.p2.active.currentHP <= 0) ko.p2 = true;
+                        if (ko.p1 || ko.p2) {
+                            lastNode.pendingKO = ko;
+                            if (!lastNode.outcome.effects) lastNode.outcome.effects = {};
+                            lastNode.outcome.effects.hadKO = ko;
+                            if (ko.p1) lastNode.outcome.effects.p1KOName = newState.p1.active.name;
+                            if (ko.p2) lastNode.outcome.effects.p2KOName = newState.p2.active.name;
+                        }
+                    }
+                }
+                // Normal flow: show modal for switch-ins
+                else if (needsP1Replacement && needsP2Replacement) {
                     var p1Title = p1ForcedSwitch ? "Your Pokemon Forced to Switch!" : null;
                     showKOReplacementModal('p1', newState, function (p1Rep) {
                         handleP2Replacement(function (p2Rep) {
@@ -6137,25 +6181,18 @@
             // This switch happens IMMEDIATELY, before the second mover attacks
             var firstMoverNeedsSwitchNow = pendingSwitchAfterMove[firstMover] && !firstKO && newState[firstMover].active.currentHP > 0;
 
-            if (firstMoverNeedsSwitchNow) {
-                // Show switch modal for first mover, then execute second action
-                // Use custom title for U-turn/Volt Switch
+            if (firstMoverNeedsSwitchNow && !isExecutingAITieBranches) {
                 var switchTitle = "Select Pokemon to switch to (U-turn/Volt Switch):";
                 showKOReplacementModal(firstMover, newState, function (switchChoice) {
                     if (switchChoice !== null && switchChoice !== undefined) {
-                        // Execute the switch immediately
                         performSwitch(firstMover, { targetSlot: switchChoice }, newState);
                     }
-                    // Clear the pending switch since we handled it
                     pendingSwitchAfterMove[firstMover] = false;
-
-                    // Now execute the second action (opponent attacks the new Pokemon)
                     executeSecondAction(function () {
-                        // Continue with the rest of the turn
                         continueTurnAfterActions();
                     });
                 }, switchTitle);
-                return; // Exit early - continueTurnAfterActions will be called in callback
+                return;
             } else {
                 // No immediate switch needed, execute second action synchronously
                 executeSecondAction(function () { });
@@ -6422,8 +6459,9 @@
         var BERRY_DESTROY_MOVES = { incinerate: 1 };
 
         if (BERRY_STEAL_MOVES[moveId] && isBerry) {
+            var stolenBerry = defItem;
             defender.item = '';
-            // Berry is consumed by attacker (simplified: don't simulate berry effects on attacker)
+            applyBerryEffect(attacker, stolenBerry);
         } else if (ITEM_REMOVE_MOVES[moveId] && defItem) {
             defender.item = '';
         } else if (ITEM_STEAL_MOVES[moveId] && defItem && !atkItem) {
@@ -6435,6 +6473,43 @@
         } else if (BERRY_DESTROY_MOVES[moveId] && isBerry) {
             defender.item = '';
         }
+    }
+
+    /**
+     * Simulate eating a berry: apply its healing/stat effects to the Pokemon.
+     */
+    function applyBerryEffect(pokemon, berryName) {
+        if (!pokemon || !berryName) return;
+        var id = berryName.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+        // Healing berries
+        if (id === 'oranberry') {
+            pokemon.currentHP = Math.min(pokemon.maxHP, pokemon.currentHP + 10);
+        } else if (id === 'sitrusberry') {
+            pokemon.currentHP = Math.min(pokemon.maxHP, pokemon.currentHP + Math.floor(pokemon.maxHP / 4));
+        }
+        // Status-curing berries
+        else if (id === 'lumberry') {
+            if (pokemon.status && pokemon.status !== 'Healthy') pokemon.status = 'Healthy';
+        } else if (id === 'chestoberry') {
+            if (pokemon.status === 'Asleep' || pokemon.status === 'slp') pokemon.status = 'Healthy';
+        } else if (id === 'pechaberry') {
+            if (pokemon.status === 'Poisoned' || pokemon.status === 'Badly Poisoned' || pokemon.status === 'psn' || pokemon.status === 'tox') pokemon.status = 'Healthy';
+        } else if (id === 'rawstberry') {
+            if (pokemon.status === 'Burned' || pokemon.status === 'brn') pokemon.status = 'Healthy';
+        } else if (id === 'aspearberry') {
+            if (pokemon.status === 'Frozen' || pokemon.status === 'frz') pokemon.status = 'Healthy';
+        } else if (id === 'cheriberry') {
+            if (pokemon.status === 'Paralyzed' || pokemon.status === 'par') pokemon.status = 'Healthy';
+        }
+        // Stat-boosting pinch berries (activate when eaten via Bug Bite regardless of HP)
+        else if (id === 'liechiberry') { applyBoosts(pokemon, { atk: 1 }); }
+        else if (id === 'ganlonberry') { applyBoosts(pokemon, { def: 1 }); }
+        else if (id === 'petayaberry') { applyBoosts(pokemon, { spa: 1 }); }
+        else if (id === 'apicotberry') { applyBoosts(pokemon, { spd: 1 }); }
+        else if (id === 'salacberry') { applyBoosts(pokemon, { spe: 1 }); }
+        else if (id === 'lansatberry') { /* crit rate +1 - not tracked */ }
+        else if (id === 'starfberry') { /* random +2 - simplified */ }
     }
 
     /**
@@ -6713,26 +6788,33 @@
     }
 
     /**
-     * Restore the Turn Actions panel from a node's first child's actions.
-     * This lets users see what was done on this turn and modify it to create branches.
+     * Restore the Turn Actions panel from either:
+     * 1) This node's own actions (if it has any — branch/leaf nodes)
+     * 2) This node's first child's actions (parent nodes — shows what was done next)
      */
     function restoreActionsFromNode(node) {
-        if (!node || node.children.length === 0) {
+        if (!node) {
             uiState.p1Action = null;
             uiState.p2Action = null;
             updateTurnActionsPanel();
             return;
         }
 
-        var childNode = uiState.tree.getNode(node.children[0]);
-        if (!childNode || !childNode.actions) {
+        // Prefer the node's own actions (shows what happened to reach this state)
+        var acts = null;
+        if (node.actions && (node.actions.p1 || node.actions.p2)) {
+            acts = node.actions;
+        } else if (node.children.length > 0) {
+            var childNode = uiState.tree.getNode(node.children[0]);
+            if (childNode && childNode.actions) acts = childNode.actions;
+        }
+
+        if (!acts) {
             uiState.p1Action = null;
             uiState.p2Action = null;
             updateTurnActionsPanel();
             return;
         }
-
-        var acts = childNode.actions;
 
         // Restore P1 action
         if (acts.p1) {
