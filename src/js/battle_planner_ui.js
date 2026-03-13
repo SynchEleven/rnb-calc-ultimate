@@ -238,34 +238,30 @@
                                 <!-- P1 Pokemon Card -->
                                 <div class="pokemon-card pokemon-card-p1" id="stage-p1">
                                     <div class="card-header">
-                                        <span class="card-label">PLAYER</span>
-                                        <button class="card-switch-btn" id="p1-card-switch-btn" title="Switch Pokemon (uses your turn)">⇄</button>
+                                        <img class="card-header-sprite" id="stage-p1-sprite" src="" alt="P1">
+                                        <div class="card-header-info">
+                                            <span class="card-label">PLAYER</span>
+                                            <span class="card-name" id="stage-p1-name">---</span>
+                                            <span class="card-level" id="stage-p1-level">Lv. --</span>
+                                        </div>
+                                        <div class="card-types" id="stage-p1-types"></div>
+                                        <button class="card-switch-btn" id="p1-card-switch-btn" title="Switch Pokemon (uses your turn)">&#8644;</button>
                                     </div>
                                     <div class="card-body">
-                                        <div class="card-sprite-container">
-                                            <img class="card-sprite" id="stage-p1-sprite" src="" alt="P1">
-                                            <div class="card-types" id="stage-p1-types"></div>
+                                        <div class="card-hp-container">
+                                            <div class="card-hp-bar">
+                                                <div class="card-hp-fill" id="stage-p1-hp-fill"></div>
+                                                <div class="card-hp-shadow" id="stage-p1-hp-shadow"></div>
+                                            </div>
+                                            <span class="card-hp-text" id="stage-p1-hp-text">---/---</span>
                                         </div>
-                                        <div class="card-info">
-                                            <div class="card-name" id="stage-p1-name">---</div>
-                                            <div class="card-details">
-                                                <span class="card-level" id="stage-p1-level">Lv. --</span>
-                                                <span class="card-ability" id="stage-p1-ability"></span>
-                                            </div>
-                                            <div class="card-hp-container">
-                                                <div class="card-hp-bar">
-                                                    <div class="card-hp-fill" id="stage-p1-hp-fill"></div>
-                                                    <div class="card-hp-shadow" id="stage-p1-hp-shadow"></div>
-                                                </div>
-                                                <span class="card-hp-text" id="stage-p1-hp-text">---/---</span>
-                                            </div>
-                                            <div class="card-status-boosts">
-                                                <span class="card-status" id="stage-p1-status"></span>
-                                                <span class="card-item" id="stage-p1-item"></span>
-                                            </div>
-                                            <div class="card-boosts" id="stage-p1-boosts"></div>
-                                            <div class="card-stats-mini" id="stage-p1-stats-mini"></div>
+                                        <div class="card-meta-row">
+                                            <span class="card-ability" id="stage-p1-ability"></span>
+                                            <span class="card-item" id="stage-p1-item"></span>
+                                            <span class="card-status" id="stage-p1-status"></span>
+                                            <span class="card-boosts" id="stage-p1-boosts"></span>
                                         </div>
+                                        <div class="card-stats-row" id="stage-p1-stats-mini"></div>
                                     </div>
                                     <div class="card-moves" id="stage-p1-moves"></div>
                                 </div>
@@ -279,34 +275,34 @@
                                 <!-- P2 Pokemon Card -->
                                 <div class="pokemon-card pokemon-card-p2" id="stage-p2">
                                     <div class="card-header">
-                                        <span class="card-label">OPPONENT</span>
-                                        <button class="card-switch-btn" id="p2-card-switch-btn" title="Switch Pokemon (uses opponent's turn)">⇄</button>
+                                        <img class="card-header-sprite" id="stage-p2-sprite" src="" alt="P2">
+                                        <div class="card-header-info">
+                                            <span class="card-label">OPPONENT</span>
+                                            <span class="card-name" id="stage-p2-name">---</span>
+                                            <span class="card-level" id="stage-p2-level">Lv. --</span>
+                                        </div>
+                                        <div class="card-types" id="stage-p2-types"></div>
+                                        <div class="card-nav-btns" id="p2-nav-btns" style="display:none;">
+                                            <button class="card-nav-btn" id="p2-nav-prev" title="Previous enemy Pokemon">&#9664;</button>
+                                            <button class="card-nav-btn" id="p2-nav-next" title="Next enemy Pokemon">&#9654;</button>
+                                        </div>
+                                        <button class="card-switch-btn" id="p2-card-switch-btn" title="Switch Pokemon (uses opponent's turn)">&#8644;</button>
                                     </div>
                                     <div class="card-body">
-                                        <div class="card-sprite-container">
-                                            <img class="card-sprite" id="stage-p2-sprite" src="" alt="P2">
-                                            <div class="card-types" id="stage-p2-types"></div>
+                                        <div class="card-hp-container">
+                                            <div class="card-hp-bar">
+                                                <div class="card-hp-fill" id="stage-p2-hp-fill"></div>
+                                                <div class="card-hp-shadow" id="stage-p2-hp-shadow"></div>
+                                            </div>
+                                            <span class="card-hp-text" id="stage-p2-hp-text">---/---</span>
                                         </div>
-                                        <div class="card-info">
-                                            <div class="card-name" id="stage-p2-name">---</div>
-                                            <div class="card-details">
-                                                <span class="card-level" id="stage-p2-level">Lv. --</span>
-                                                <span class="card-ability" id="stage-p2-ability"></span>
-                                            </div>
-                                            <div class="card-hp-container">
-                                                <div class="card-hp-bar">
-                                                    <div class="card-hp-fill" id="stage-p2-hp-fill"></div>
-                                                    <div class="card-hp-shadow" id="stage-p2-hp-shadow"></div>
-                                                </div>
-                                                <span class="card-hp-text" id="stage-p2-hp-text">---/---</span>
-                                            </div>
-                                            <div class="card-status-boosts">
-                                                <span class="card-status" id="stage-p2-status"></span>
-                                                <span class="card-item" id="stage-p2-item"></span>
-                                            </div>
-                                            <div class="card-boosts" id="stage-p2-boosts"></div>
-                                            <div class="card-stats-mini" id="stage-p2-stats-mini"></div>
+                                        <div class="card-meta-row">
+                                            <span class="card-ability" id="stage-p2-ability"></span>
+                                            <span class="card-item" id="stage-p2-item"></span>
+                                            <span class="card-status" id="stage-p2-status"></span>
+                                            <span class="card-boosts" id="stage-p2-boosts"></span>
                                         </div>
+                                        <div class="card-stats-row" id="stage-p2-stats-mini"></div>
                                     </div>
                                     <div class="card-moves" id="stage-p2-moves"></div>
                                 </div>
@@ -1006,6 +1002,12 @@
         });
         $(document).on('click', '#p2-card-switch-btn', function () {
             openSwitchSelectorModal('p2');
+        });
+
+        // P2 forward/backward navigation
+        $(document).on('click', '#p2-nav-prev, #p2-nav-next', function () {
+            var direction = $(this).attr('id') === 'p2-nav-next' ? 1 : -1;
+            cycleP2Pokemon(direction);
         });
 
         // Execute Turn button
@@ -2007,18 +2009,27 @@
             return;
         }
 
-        // Name and level
+        // Header: sprite, name, level
         $('#' + prefix + '-name').text(pokemon.name);
         $('#' + prefix + '-level').text('Lv. ' + pokemon.level);
 
-        // Ability
-        if (pokemon.ability) {
-            $('#' + prefix + '-ability').text(pokemon.ability).show();
-        } else {
-            $('#' + prefix + '-ability').empty().hide();
-        }
+        var spriteUrl = 'https://raw.githubusercontent.com/May8th1995/sprites/master/' + pokemon.name + '.png';
+        $('#' + prefix + '-sprite')
+            .attr('src', spriteUrl)
+            .show()
+            .off('error')
+            .on('error', function () {
+                var spriteName = pokemon.name.toLowerCase().replace(/ /g, '-').replace(/[^a-z0-9-]/g, '');
+                $(this).attr('src', 'https://play.pokemonshowdown.com/sprites/gen5/' + spriteName + '.png');
+            });
 
-        // HP - calculate from currentHP/maxHP directly
+        // Types (in header)
+        var typesHtml = (pokemon.types || []).map(function (t) {
+            return '<span class="type-badge type-' + t.toLowerCase() + '">' + t + '</span>';
+        }).join('');
+        $('#' + prefix + '-types').html(typesHtml);
+
+        // HP bar
         var curHP = Math.max(0, pokemon.currentHP || 0);
         var maxHP = pokemon.maxHP || 1;
         var hpPercent = Math.round((curHP / maxHP) * 100);
@@ -2029,25 +2040,19 @@
             .addClass(hpColor)
             .css('width', hpPercent + '%');
 
-        // Sprite - use the same sprite source as the main app
-        var spriteUrl = 'https://raw.githubusercontent.com/May8th1995/sprites/master/' + pokemon.name + '.png';
-        $('#' + prefix + '-sprite')
-            .attr('src', spriteUrl)
-            .show()
-            .off('error')
-            .on('error', function () {
-                // Fallback to Showdown sprites if May8th1995 doesn't have it
-                var spriteName = pokemon.name.toLowerCase().replace(/ /g, '-').replace(/[^a-z0-9-]/g, '');
-                $(this).attr('src', 'https://play.pokemonshowdown.com/sprites/gen5/' + spriteName + '.png');
-            });
+        // Meta row: ability, item, status
+        if (pokemon.ability) {
+            $('#' + prefix + '-ability').text(pokemon.ability).show();
+        } else {
+            $('#' + prefix + '-ability').empty().hide();
+        }
 
-        // Types
-        var typesHtml = (pokemon.types || []).map(function (t) {
-            return '<span class="type-badge type-' + t.toLowerCase() + '">' + t + '</span>';
-        }).join('');
-        $('#' + prefix + '-types').html(typesHtml);
+        if (pokemon.item) {
+            $('#' + prefix + '-item').html('<span class="item-badge">🎒 ' + pokemon.item + '</span>');
+        } else {
+            $('#' + prefix + '-item').empty();
+        }
 
-        // Status
         if (pokemon.status && pokemon.status !== 'Healthy') {
             var statusClass = 'status-' + pokemon.status.toLowerCase().replace(' ', '-');
             $('#' + prefix + '-status').html('<span class="status-badge ' + statusClass + '">' + pokemon.status + '</span>');
@@ -2055,74 +2060,68 @@
             $('#' + prefix + '-status').empty();
         }
 
-        // Item
-        if (pokemon.item) {
-            $('#' + prefix + '-item').html('<span class="item-badge">🎒 ' + pokemon.item + '</span>');
-        } else {
-            $('#' + prefix + '-item').empty();
-        }
-
-        // Hide the separate boosts container - boosts are shown in stat grid only
-        $('#' + prefix + '-boosts').empty();
-
-        // Full stats display with boost indicators
+        // Boosts (inline badges)
         var boosts = pokemon.boosts || {};
-        var statsHtml = '<div class="stats-grid">';
+        var boostHtml = '';
+        ['atk', 'def', 'spa', 'spd', 'spe'].forEach(function (s) {
+            var b = boosts[s] || 0;
+            if (b > 0) boostHtml += '<span class="boost-badge boost-up">' + s.toUpperCase() + '+' + b + '</span>';
+            else if (b < 0) boostHtml += '<span class="boost-badge boost-down">' + s.toUpperCase() + b + '</span>';
+        });
+        $('#' + prefix + '-boosts').html(boostHtml);
 
-        // HP row
-        statsHtml += '<div class="stat-item"><span class="stat-label">HP</span><span class="stat-value">' + (pokemon.maxHP || '?') + '</span></div>';
-
-        // Other stats with boost indicators
+        // Stats row: 6-column horizontal grid
         var statDefs = [
-            { key: 'atk', label: 'Atk' },
-            { key: 'def', label: 'Def' },
-            { key: 'spa', label: 'SpA' },
-            { key: 'spd', label: 'SpD' },
-            { key: 'spe', label: 'Spe' }
+            { key: 'hp', label: 'HP', val: pokemon.maxHP || 0 },
+            { key: 'atk', label: 'ATK' },
+            { key: 'def', label: 'DEF' },
+            { key: 'spa', label: 'SPA' },
+            { key: 'spd', label: 'SPD' },
+            { key: 'spe', label: 'SPE' }
         ];
-
-        statDefs.forEach(function (statDef) {
-            var boost = boosts[statDef.key] || 0;
-            var baseStat = pokemon.stats[statDef.key] || 0;
+        var statsHtml = '';
+        statDefs.forEach(function (sd) {
+            var baseStat = sd.val !== undefined ? sd.val : (pokemon.stats ? (pokemon.stats[sd.key] || 0) : 0);
+            var boost = sd.key === 'hp' ? 0 : (boosts[sd.key] || 0);
             var effectiveStat = baseStat;
 
-            // Calculate effective stat with boost modifier
             if (boost !== 0) {
-                var multiplier;
-                if (boost > 0) {
-                    multiplier = (2 + boost) / 2; // +1 = 1.5, +2 = 2, +3 = 2.5, etc.
-                } else {
-                    multiplier = 2 / (2 - boost); // -1 = 0.67, -2 = 0.5, -3 = 0.4, etc.
-                }
+                var multiplier = boost > 0 ? (2 + boost) / 2 : 2 / (2 - boost);
                 effectiveStat = Math.floor(baseStat * multiplier);
             }
 
             var statClass = 'stat-item';
             var valueClass = 'stat-value';
             var boostIndicator = '';
-
             if (boost > 0) {
                 statClass += ' stat-boosted';
                 valueClass += ' boosted';
-                boostIndicator = ' <span class="stat-boost-arrow">↑' + boost + '</span>';
+                boostIndicator = '<span class="stat-boost-arrow">↑' + boost + '</span>';
             } else if (boost < 0) {
                 statClass += ' stat-lowered';
                 valueClass += ' lowered';
-                boostIndicator = ' <span class="stat-boost-arrow">↓' + Math.abs(boost) + '</span>';
+                boostIndicator = '<span class="stat-boost-arrow">↓' + Math.abs(boost) + '</span>';
             }
+            if (sd.key === 'spe') statClass += ' stat-speed';
 
-            if (statDef.key === 'spe') statClass += ' stat-speed';
-
-            statsHtml += '<div class="' + statClass + '">';
-            statsHtml += '<span class="stat-label">' + statDef.label + '</span>';
-            statsHtml += '<span class="' + valueClass + '">' + effectiveStat + boostIndicator + '</span>';
-            statsHtml += '</div>';
+            statsHtml += '<div class="' + statClass + '">' +
+                '<span class="stat-label">' + sd.label + '</span>' +
+                '<span class="' + valueClass + '">' + effectiveStat + boostIndicator + '</span>' +
+                '</div>';
         });
-
-        statsHtml += '</div>';
         $('#' + prefix + '-stats-mini').html(statsHtml);
 
-        // Render moves with damage preview
+        // Show/hide P2 nav buttons based on team size
+        if (side === 'p2') {
+            var currentNode = uiState.tree.getCurrentNode();
+            var p2TeamSize = currentNode && currentNode.state.p2.team ? currentNode.state.p2.team.length : 0;
+            if (p2TeamSize > 1) {
+                $('#p2-nav-btns').show();
+            } else {
+                $('#p2-nav-btns').hide();
+            }
+        }
+
         renderMoves(side, pokemon, defender);
     }
 
@@ -2195,28 +2194,30 @@
             }
             movesHtml += '</div>';
 
-            // Damage or status indicator
+            // Damage or status info
             movesHtml += '<div class="move-cell-damage">';
             if (normalDamage && normalDamage.rawMin !== undefined && normalDamage.rawMax > 0) {
                 var defHP = defender ? defender.maxHP : 100;
                 var minPct = Math.round((normalDamage.rawMin / defHP) * 100);
                 var maxPct = Math.round((normalDamage.rawMax / defHP) * 100);
 
+                movesHtml += '<div class="move-cell-damage-row">';
                 movesHtml += '<span class="dmg-range">' + normalDamage.rawMin + '-' + normalDamage.rawMax + '</span>';
                 movesHtml += '<span class="dmg-percent">(' + minPct + '-' + maxPct + '%)</span>';
-
-                // Effectiveness icon
                 if (normalDamage.effectiveness && normalDamage.effectivenessIcon) {
                     movesHtml += '<span class="eff-icon">' + normalDamage.effectivenessIcon + '</span>';
                 }
+                movesHtml += '</div>';
 
-                // Crit damage (smaller)
                 if (critDamage && critDamage.rawMin !== undefined) {
                     var critMinPct = Math.round((critDamage.rawMin / defHP) * 100);
                     var critMaxPct = Math.round((critDamage.rawMax / defHP) * 100);
+                    movesHtml += '<div class="move-cell-damage-row">';
                     movesHtml += '<span class="crit-range">Crit: ' + critDamage.rawMin + '-' + critDamage.rawMax + ' (' + critMinPct + '-' + critMaxPct + '%)</span>';
+                    movesHtml += '</div>';
                 }
             } else {
+                movesHtml += '<div class="move-cell-damage-row">';
                 movesHtml += '<span class="status-label">Status</span>';
                 if (moveData && moveData.status) {
                     movesHtml += '<span class="status-effect">' + moveData.status.toUpperCase() + '</span>';
@@ -2227,15 +2228,14 @@
                     }).join(' ');
                     movesHtml += '<span class="boost-effect">' + boostStr + '</span>';
                 }
+                movesHtml += '</div>';
             }
 
-            // Multi-hit indicator
             if (moveData && moveData.multihit) {
                 var hits = Array.isArray(moveData.multihit) ? moveData.multihit[0] + '-' + moveData.multihit[1] : moveData.multihit;
-                movesHtml += '<span class="multihit-badge">' + hits + ' hits</span>';
+                movesHtml += '<div class="move-cell-damage-row"><span class="multihit-badge">' + hits + ' hits</span></div>';
             }
 
-            // Recoil/Drain small icons
             if (moveData && moveData.recoil) {
                 movesHtml += '<span class="move-recoil">⚠️</span>';
             }
@@ -3397,8 +3397,23 @@
     }
 
     /**
-     * Open switch selector for a side (as a turn action)
+     * Cycle through P2 team members for preview (does not consume a turn)
      */
+    function cycleP2Pokemon(direction) {
+        var currentNode = uiState.tree ? uiState.tree.getCurrentNode() : null;
+        if (!currentNode) return;
+        var team = currentNode.state.p2.team;
+        if (!team || team.length <= 1) return;
+
+        var currentSlot = uiState.p2HoverOverride !== null ? uiState.p2HoverOverride : currentNode.state.p2.teamSlot;
+        var newSlot = currentSlot + direction;
+        if (newSlot < 0) newSlot = team.length - 1;
+        if (newSlot >= team.length) newSlot = 0;
+
+        uiState.p2HoverOverride = newSlot;
+        renderStage();
+    }
+
     /**
      * Open a nice modal for selecting switch target (only sets the action, doesn't execute)
      */
@@ -4000,6 +4015,88 @@
     }
 
     /**
+     * Show AI prediction banner for P2 switch-in, auto-selecting after a short delay
+     * unless the user clicks "Override" to manually pick.
+     */
+    function showAIPredictBanner(prediction, newState, onDone) {
+        var bannerHtml = '<div class="ai-predict-banner" id="ai-predict-banner">' +
+            '<span class="ai-label">AI Predicts</span>' +
+            '<span class="ai-mon">' + prediction.pokemon.name + '</span>' +
+            '<span class="ai-score">Score: ' + prediction.score + ' (' + prediction.reason + ')</span>' +
+            '<button class="planner-btn planner-btn-sm" id="ai-predict-accept" style="margin-left:8px;">Accept</button>' +
+            '<button class="planner-btn planner-btn-sm planner-btn-outline" id="ai-predict-override" style="margin-left:4px;">Override</button>' +
+            '</div>';
+
+        $('#stage-container').prepend(bannerHtml);
+
+        var handled = false;
+
+        $('#ai-predict-accept').on('click', function () {
+            if (handled) return;
+            handled = true;
+            $('#ai-predict-banner').remove();
+            onDone(prediction.slot);
+        });
+
+        $('#ai-predict-override').on('click', function () {
+            if (handled) return;
+            handled = true;
+            $('#ai-predict-banner').remove();
+            showKOReplacementModal('p2', newState, onDone);
+        });
+    }
+
+    /**
+     * Calculate the best (highest max-roll) damage an attacker can deal to a defender,
+     * iterating over all of the attacker's moves. Used for AI switch-in scoring.
+     */
+    function calcBestDamageForAI(attacker, defender, gen) {
+        if (!attacker || !defender || !attacker.moves) return 0;
+        var best = 0;
+        var genNum = typeof gen === 'number' ? gen : (gen && gen.num ? gen.num : 3);
+
+        for (var i = 0; i < attacker.moves.length; i++) {
+            var moveName = attacker.moves[i];
+            if (!moveName || moveName === '(No Move)') continue;
+
+            try {
+                var moveData = null;
+                if (window.calc && window.calc.Generations) {
+                    var genObj = window.calc.Generations.get(genNum);
+                    if (genObj && genObj.moves) {
+                        moveData = genObj.moves.get(window.calc.toID(moveName));
+                    }
+                }
+                if (!moveData || moveData.category === 'Status' || !moveData.basePower) continue;
+
+                var aPoke = CalcIntegration.snapshotToPokemon(attacker, genNum);
+                var dPoke = CalcIntegration.snapshotToPokemon(defender, genNum);
+                if (!aPoke || !dPoke) continue;
+
+                var move = new window.calc.Move(genNum, moveName);
+                var result = window.calc.calculate(genNum, aPoke, dPoke, move, window.createField ? window.createField() : null);
+                var range = CalcIntegration.getDamageRange(result);
+                if (range.max > best) best = range.max;
+            } catch (e) { /* skip */ }
+        }
+        return best;
+    }
+
+    /**
+     * Attempt to auto-predict the AI switch-in for P2 when an enemy faints.
+     * Returns { slot, pokemon, score, reason } or null.
+     */
+    function tryPredictP2SwitchIn(newState) {
+        if (!BattlePlannerLogic || !BattlePlannerLogic.predictAISwitchIn) return null;
+        var gen = getGenNum();
+        var playerActive = newState.p1.active;
+        var p2Team = newState.p2.team;
+        var faintedSlot = newState.p2.teamSlot;
+
+        return BattlePlannerLogic.predictAISwitchIn(playerActive, p2Team, faintedSlot, gen, calcBestDamageForAI);
+    }
+
+    /**
      * Apply end-of-turn effects (poison, burn, weather, etc.)
      */
     function applyEndOfTurnEffects(state, gen) {
@@ -4301,16 +4398,27 @@
                     isExecutingTurn = false;
                 };
 
+                // AI prediction helper for P2 replacement
+                var handleP2Replacement = function (onDone) {
+                    if (p2ForcedSwitch) {
+                        showKOReplacementModal('p2', newState, onDone, "Opponent Forced to Switch!");
+                        return;
+                    }
+                    var prediction = tryPredictP2SwitchIn(newState);
+                    if (prediction) {
+                        showAIPredictBanner(prediction, newState, onDone);
+                    } else {
+                        showKOReplacementModal('p2', newState, onDone);
+                    }
+                };
+
                 // Handle KO replacements if needed
                 if (needsP1Replacement && needsP2Replacement) {
-                    // Both need replacement
                     var p1Title = p1ForcedSwitch ? "Your Pokemon Forced to Switch!" : null;
-                    var p2Title = p2ForcedSwitch ? "Opponent Forced to Switch!" : null;
-
                     showKOReplacementModal('p1', newState, function (p1Rep) {
-                        showKOReplacementModal('p2', newState, function (p2Rep) {
+                        handleP2Replacement(function (p2Rep) {
                             completeTurn(p1Rep, p2Rep);
-                        }, p2Title);
+                        });
                     }, p1Title);
                 } else if (needsP1Replacement) {
                     var p1Title = p1ForcedSwitch ? "Your Pokemon Forced to Switch!" : null;
@@ -4318,10 +4426,9 @@
                         completeTurn(p1Rep, null);
                     }, p1Title);
                 } else if (needsP2Replacement) {
-                    var p2Title = p2ForcedSwitch ? "Opponent Forced to Switch!" : null;
-                    showKOReplacementModal('p2', newState, function (p2Rep) {
+                    handleP2Replacement(function (p2Rep) {
                         completeTurn(null, p2Rep);
-                    }, p2Title);
+                    });
                 } else {
                     completeTurn(null, null);
                 }

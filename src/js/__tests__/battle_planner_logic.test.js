@@ -656,3 +656,317 @@ describe('end-of-turn integration', () => {
     expect(state.p1.active.currentHP).toBe(300 - poisonDamage - sludgeDamage);
   });
 });
+
+// ---------------------------------------------------------------------------
+// scoreAISwitchIn
+// ---------------------------------------------------------------------------
+describe('scoreAISwitchIn', () => {
+  function makeParams(overrides) {
+    return Object.assign({
+      candidateName: 'Gardevoir',
+      candidateSpeed: 80,
+      candidateHP: 150,
+      playerSpeed: 100,
+      playerHP: 120,
+      bestAIMoveDamage: 60,
+      bestAIMovePct: 50,
+      bestPlayerMoveDamage: 40,
+      bestPlayerMovePct: 26
+    }, overrides);
+  }
+
+  test('Ditto always scores 2 regardless of stats', () => {
+    const result = Logic.scoreAISwitchIn(makeParams({
+      candidateName: 'Ditto',
+      candidateSpeed: 1,
+      candidateHP: 1,
+      bestAIMoveDamage: 0,
+      bestAIMovePct: 0
+    }));
+    expect(result.score).toBe(2);
+    expect(result.reason).toContain('Ditto');
+  });
+
+  test('Wynaut scores 2 when faster or equal', () => {
+    const result = Logic.scoreAISwitchIn(makeParams({
+      candidateName: 'Wynaut',
+      candidateSpeed: 100,
+      candidateHP: 200
+    }));
+    expect(result.score).toBe(2);
+    expect(result.reason).toContain('trapper');
+  });
+
+  test('Wobbuffet scores 0 when slower and OHKO\'d', () => {
+    const result = Logic.scoreAISwitchIn(makeParams({
+      candidateName: 'Wobbuffet',
+      candidateSpeed: 50,
+      candidateHP: 100,
+      playerSpeed: 100,
+      bestPlayerMoveDamage: 150
+    }));
+    expect(result.score).toBe(0);
+    expect(result.reason).toContain('slower');
+  });
+
+  test('Wobbuffet scores 2 when slower but not OHKO\'d', () => {
+    const result = Logic.scoreAISwitchIn(makeParams({
+      candidateName: 'Wobbuffet',
+      candidateSpeed: 50,
+      candidateHP: 200,
+      playerSpeed: 100,
+      bestPlayerMoveDamage: 50
+    }));
+    expect(result.score).toBe(2);
+  });
+
+  test('Score 5: faster + OHKOs player', () => {
+    const result = Logic.scoreAISwitchIn(makeParams({
+      candidateSpeed: 120,
+      playerSpeed: 100,
+      playerHP: 100,
+      bestAIMoveDamage: 100
+    }));
+    expect(result.score).toBe(5);
+    expect(result.reason).toContain('faster');
+    expect(result.reason).toContain('OHKO');
+  });
+
+  test('Score 4: slower but OHKOs player, not OHKO\'d itself', () => {
+    const result = Logic.scoreAISwitchIn(makeParams({
+      candidateSpeed: 80,
+      candidateHP: 200,
+      playerSpeed: 100,
+      playerHP: 100,
+      bestAIMoveDamage: 100,
+      bestPlayerMoveDamage: 50
+    }));
+    expect(result.score).toBe(4);
+    expect(result.reason).toContain('slower');
+  });
+
+  test('Score 3: faster + deals better damage%', () => {
+    const result = Logic.scoreAISwitchIn(makeParams({
+      candidateSpeed: 120,
+      playerSpeed: 100,
+      playerHP: 200,
+      bestAIMoveDamage: 80,
+      bestAIMovePct: 40,
+      bestPlayerMoveDamage: 30,
+      bestPlayerMovePct: 20
+    }));
+    expect(result.score).toBe(3);
+    expect(result.reason).toContain('faster');
+    expect(result.reason).toContain('better damage');
+  });
+
+  test('Score 2: slower but deals better damage%', () => {
+    const result = Logic.scoreAISwitchIn(makeParams({
+      candidateSpeed: 80,
+      playerSpeed: 100,
+      playerHP: 200,
+      bestAIMoveDamage: 80,
+      bestAIMovePct: 40,
+      bestPlayerMoveDamage: 30,
+      bestPlayerMovePct: 20
+    }));
+    expect(result.score).toBe(2);
+    expect(result.reason).toContain('slower');
+    expect(result.reason).toContain('better damage');
+  });
+
+  test('Score 1: faster but worse damage%', () => {
+    const result = Logic.scoreAISwitchIn(makeParams({
+      candidateSpeed: 120,
+      playerSpeed: 100,
+      bestAIMovePct: 15,
+      bestPlayerMovePct: 40,
+      bestAIMoveDamage: 20,
+      bestPlayerMoveDamage: 30,
+      playerHP: 200,
+      candidateHP: 200
+    }));
+    expect(result.score).toBe(1);
+    expect(result.reason).toContain('faster');
+    expect(result.reason).toContain('worse damage');
+  });
+
+  test('Score -1: slower and OHKO\'d by player', () => {
+    const result = Logic.scoreAISwitchIn(makeParams({
+      candidateSpeed: 50,
+      candidateHP: 100,
+      playerSpeed: 120,
+      bestAIMoveDamage: 20,
+      bestAIMovePct: 10,
+      bestPlayerMoveDamage: 100,
+      bestPlayerMovePct: 100
+    }));
+    expect(result.score).toBe(-1);
+    expect(result.reason).toContain('slower');
+    expect(result.reason).toContain('OHKO');
+  });
+
+  test('Score 0: slower, worse damage%, not OHKO\'d', () => {
+    const result = Logic.scoreAISwitchIn(makeParams({
+      candidateSpeed: 50,
+      candidateHP: 200,
+      playerSpeed: 120,
+      bestAIMoveDamage: 20,
+      bestAIMovePct: 10,
+      bestPlayerMoveDamage: 50,
+      bestPlayerMovePct: 25
+    }));
+    expect(result.score).toBe(0);
+    expect(result.reason).toBe('default');
+  });
+
+  test('edge: equal speed is not "faster" for general scoring', () => {
+    const result = Logic.scoreAISwitchIn(makeParams({
+      candidateSpeed: 100,
+      playerSpeed: 100,
+      bestAIMovePct: 80,
+      bestPlayerMovePct: 20,
+      bestAIMoveDamage: 50,
+      bestPlayerMoveDamage: 20,
+      playerHP: 100,
+      candidateHP: 200
+    }));
+    // Equal speed: aiIsFaster is false, but aiDealsBetterPct is true => score 2
+    expect(result.score).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// predictAISwitchIn
+// ---------------------------------------------------------------------------
+describe('predictAISwitchIn', () => {
+  function makeTeamMember(name, hp, speed, maxHP) {
+    return makePokemon({
+      name: name,
+      currentHP: hp,
+      maxHP: maxHP || hp,
+      stats: { atk: 100, def: 80, spa: 100, spd: 80, spe: speed },
+      moves: ['Tackle']
+    });
+  }
+
+  test('returns null when no team provided', () => {
+    const result = Logic.predictAISwitchIn(makeTeamMember('Pikachu', 100, 90), null, 0, 3, null);
+    expect(result).toBeNull();
+  });
+
+  test('returns null when no alive candidates remain', () => {
+    const fainted1 = makeTeamMember('Pikachu', 0, 90);
+    const fainted2 = makeTeamMember('Raichu', 0, 100);
+    const result = Logic.predictAISwitchIn(
+      makeTeamMember('Gardevoir', 100, 80),
+      [fainted1, fainted2],
+      0,
+      3,
+      () => 0
+    );
+    expect(result).toBeNull();
+  });
+
+  test('returns only option when single candidate alive', () => {
+    const active = makeTeamMember('Fainted', 0, 50);
+    const alive = makeTeamMember('Pikachu', 100, 90);
+    const result = Logic.predictAISwitchIn(
+      makeTeamMember('Gardevoir', 100, 80),
+      [active, alive],
+      0,
+      3,
+      () => 0
+    );
+    expect(result).not.toBeNull();
+    expect(result.slot).toBe(1);
+    expect(result.pokemon.name).toBe('Pikachu');
+    expect(result.reason).toBe('only option');
+  });
+
+  test('picks highest score candidate', () => {
+    const fainted = makeTeamMember('Fainted', 0, 50);
+    const slow = makeTeamMember('Slowpoke', 200, 15, 200);
+    const fast = makeTeamMember('Jolteon', 200, 130, 200);
+
+    const playerActive = makeTeamMember('Gardevoir', 100, 80, 100);
+
+    const mockCalc = (attacker, defender) => {
+      if (attacker.name === 'Jolteon') return 120; // OHKOs player
+      if (attacker.name === 'Slowpoke') return 30;
+      if (attacker.name === 'Gardevoir') return 40;
+      return 0;
+    };
+
+    const result = Logic.predictAISwitchIn(
+      playerActive,
+      [fainted, slow, fast],
+      0,
+      3,
+      mockCalc
+    );
+
+    expect(result).not.toBeNull();
+    expect(result.pokemon.name).toBe('Jolteon');
+    expect(result.score).toBe(5); // faster + OHKO
+  });
+
+  test('skips the fainted slot', () => {
+    const mon0 = makeTeamMember('Pikachu', 100, 90);
+    const mon1 = makeTeamMember('Raichu', 100, 100);
+    const mon2 = makeTeamMember('Jolteon', 100, 130);
+
+    const result = Logic.predictAISwitchIn(
+      makeTeamMember('Gardevoir', 100, 80, 100),
+      [mon0, mon1, mon2],
+      1, // slot 1 fainted
+      3,
+      () => 50
+    );
+
+    expect(result).not.toBeNull();
+    expect(result.slot).not.toBe(1);
+  });
+
+  test('Ditto in team always gets score 2', () => {
+    const fainted = makeTeamMember('Fainted', 0, 50);
+    const ditto = makeTeamMember('Ditto', 100, 48, 100);
+    const weak = makeTeamMember('Magikarp', 100, 80, 100);
+
+    const mockCalc = (attacker, defender) => {
+      if (attacker.name === 'Magikarp') return 5;
+      return 0;
+    };
+
+    const result = Logic.predictAISwitchIn(
+      makeTeamMember('Gardevoir', 100, 80, 100),
+      [fainted, ditto, weak],
+      0,
+      3,
+      mockCalc
+    );
+
+    expect(result).not.toBeNull();
+    // Ditto gets 2, Magikarp likely gets 0 or -1
+    expect(result.pokemon.name).toBe('Ditto');
+    expect(result.score).toBe(2);
+  });
+
+  test('tie-breaking: first in team order wins', () => {
+    const fainted = makeTeamMember('Fainted', 0, 50);
+    const mon1 = makeTeamMember('Pikachu', 100, 90, 100);
+    const mon2 = makeTeamMember('Raichu', 100, 90, 100);
+
+    const result = Logic.predictAISwitchIn(
+      makeTeamMember('Gardevoir', 100, 80, 100),
+      [fainted, mon1, mon2],
+      0,
+      3,
+      () => 50
+    );
+
+    expect(result).not.toBeNull();
+    // Both should have the same score; first in order (index 1) wins
+    expect(result.slot).toBe(1);
+  });
+});

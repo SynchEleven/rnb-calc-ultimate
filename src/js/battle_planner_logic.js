@@ -421,6 +421,129 @@
         return hazardEffects;
     }
 
+    /**
+     * Score an AI candidate switch-in against the player's active Pokemon.
+     *
+     * @param {object} params
+     * @param {string} params.candidateName      - species name of the candidate
+     * @param {number} params.candidateSpeed      - effective speed of the candidate
+     * @param {number} params.candidateHP         - current HP of the candidate
+     * @param {number} params.playerSpeed         - effective speed of the player active
+     * @param {number} params.playerHP            - current HP of the player active
+     * @param {number} params.bestAIMoveDamage    - max damage the candidate's best move does to player
+     * @param {number} params.bestAIMovePct       - that damage as % of player max HP
+     * @param {number} params.bestPlayerMoveDamage - max damage player's best move does to candidate
+     * @param {number} params.bestPlayerMovePct   - that damage as % of candidate max HP
+     *
+     * @returns {object} { score: number, reason: string }
+     */
+    function scoreAISwitchIn(params) {
+        var name = params.candidateName || '';
+
+        if (name === 'Ditto') {
+            return { score: 2, reason: 'Ditto always scores 2' };
+        }
+
+        if (name === 'Wynaut' || name === 'Wobbuffet') {
+            var wFaster = params.candidateSpeed >= params.playerSpeed;
+            var wOHKOd = params.bestPlayerMoveDamage >= params.candidateHP;
+            if (!wFaster && wOHKOd) {
+                return { score: 0, reason: name + ' slower and OHKO\'d' };
+            }
+            return { score: 2, reason: name + ' trapper' };
+        }
+
+        var aiIsFaster = params.candidateSpeed > params.playerSpeed;
+        var aiOHKOs = params.bestAIMoveDamage >= params.playerHP;
+        var playerOHKOs = params.bestPlayerMoveDamage >= params.candidateHP;
+        var aiDealsBetterPct = params.bestAIMovePct > params.bestPlayerMovePct;
+
+        if (aiIsFaster && aiOHKOs) {
+            return { score: 5, reason: 'faster + OHKO' };
+        }
+        if (!aiIsFaster && aiOHKOs && !playerOHKOs) {
+            return { score: 4, reason: 'slower but OHKOs, not OHKOd' };
+        }
+        if (aiIsFaster && aiDealsBetterPct) {
+            return { score: 3, reason: 'faster + better damage%' };
+        }
+        if (!aiIsFaster && aiDealsBetterPct) {
+            return { score: 2, reason: 'slower but better damage%' };
+        }
+        if (aiIsFaster) {
+            return { score: 1, reason: 'faster but worse damage%' };
+        }
+        if (!aiIsFaster && playerOHKOs) {
+            return { score: -1, reason: 'slower and OHKO\'d' };
+        }
+        return { score: 0, reason: 'default' };
+    }
+
+    /**
+     * Predict the best AI switch-in from the opponent's alive team members.
+     *
+     * @param {object}   playerActive  - PokemonSnapshot of the player's active
+     * @param {Array}    p2Team        - array of PokemonSnapshot (opponent's full team)
+     * @param {number}   faintedSlot   - team index of the fainted Pokemon to exclude
+     * @param {number}   gen           - generation number
+     * @param {function} calcBestDamage - function(attacker, defender, gen) => number (max damage)
+     *
+     * @returns {object|null} { slot: number, pokemon: PokemonSnapshot, score: number, reason: string } or null
+     */
+    function predictAISwitchIn(playerActive, p2Team, faintedSlot, gen, calcBestDamage) {
+        if (!playerActive || !p2Team) return null;
+
+        var candidates = [];
+        for (var i = 0; i < p2Team.length; i++) {
+            if (i === faintedSlot) continue;
+            var mon = p2Team[i];
+            if (!mon || mon.currentHP <= 0) continue;
+            candidates.push({ slot: i, pokemon: mon });
+        }
+
+        if (candidates.length === 0) return null;
+        if (candidates.length === 1) {
+            return { slot: candidates[0].slot, pokemon: candidates[0].pokemon, score: 0, reason: 'only option' };
+        }
+
+        var playerSpeed = playerActive.stats ? (playerActive.stats.spe || 0) : 0;
+        var playerHP = playerActive.currentHP || 0;
+        var playerMaxHP = playerActive.maxHP || 1;
+
+        var best = null;
+        for (var c = 0; c < candidates.length; c++) {
+            var cand = candidates[c].pokemon;
+            var candSpeed = cand.stats ? (cand.stats.spe || 0) : 0;
+            var candHP = cand.currentHP || 0;
+            var candMaxHP = cand.maxHP || 1;
+
+            var bestAIDmg = 0;
+            var bestPlayerDmg = 0;
+            if (typeof calcBestDamage === 'function') {
+                bestAIDmg = calcBestDamage(cand, playerActive, gen) || 0;
+                bestPlayerDmg = calcBestDamage(playerActive, cand, gen) || 0;
+            }
+
+            var result = scoreAISwitchIn({
+                candidateName: cand.name,
+                candidateSpeed: candSpeed,
+                candidateHP: candHP,
+                playerSpeed: playerSpeed,
+                playerHP: playerHP,
+                bestAIMoveDamage: bestAIDmg,
+                bestAIMovePct: playerMaxHP > 0 ? (bestAIDmg / playerMaxHP) * 100 : 0,
+                bestPlayerMoveDamage: bestPlayerDmg,
+                bestPlayerMovePct: candMaxHP > 0 ? (bestPlayerDmg / candMaxHP) * 100 : 0
+            });
+
+            if (!best || result.score > best.score) {
+                best = { slot: candidates[c].slot, pokemon: cand, score: result.score, reason: result.reason };
+            }
+        }
+
+        return best;
+    }
+
     // Export
     window.BattlePlannerLogic = {
         getMovePriority: getMovePriority,
@@ -430,6 +553,8 @@
         applyMoveEffects: applyMoveEffects,
         performSwitch: performSwitch,
         getHazardEffectiveness: getHazardEffectiveness,
+        scoreAISwitchIn: scoreAISwitchIn,
+        predictAISwitchIn: predictAISwitchIn,
         PRIORITY_MOVES: PRIORITY_MOVES
     };
 
