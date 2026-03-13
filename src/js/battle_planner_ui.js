@@ -90,27 +90,53 @@
     function createPlannerUI() {
         var html = `
             <style>
-                /* KO Highlighting for Moves (Player side follows Green/GoldOHKO rules) */
+                /* KO Highlighting for Moves - reduced opacity, enforced white text */
+                .move-cell.match-dmg-1,
+                .move-cell.match-dmg-2,
+                .move-cell.match-dmg-3,
+                .move-cell.match-dmg-4 {
+                    color: #fff !important;
+                    text-shadow: 0 1px 3px rgba(0,0,0,0.7) !important;
+                }
+                .move-cell.match-dmg-1 .dmg-range,
+                .move-cell.match-dmg-1 .dmg-percent,
+                .move-cell.match-dmg-1 .crit-range,
+                .move-cell.match-dmg-1 .move-cell-name,
+                .move-cell.match-dmg-2 .dmg-range,
+                .move-cell.match-dmg-2 .dmg-percent,
+                .move-cell.match-dmg-2 .crit-range,
+                .move-cell.match-dmg-2 .move-cell-name,
+                .move-cell.match-dmg-3 .dmg-range,
+                .move-cell.match-dmg-3 .dmg-percent,
+                .move-cell.match-dmg-3 .crit-range,
+                .move-cell.match-dmg-3 .move-cell-name,
+                .move-cell.match-dmg-4 .dmg-range,
+                .move-cell.match-dmg-4 .dmg-percent,
+                .move-cell.match-dmg-4 .crit-range,
+                .move-cell.match-dmg-4 .move-cell-name {
+                    color: #fff !important;
+                    text-shadow: 0 1px 3px rgba(0,0,0,0.7) !important;
+                }
                 .move-cell.match-dmg-1 {
-                    background: rgba(76, 175, 80, 0.45) !important;
+                    background: rgba(76, 175, 80, 0.25) !important;
                     border-left: 4px solid #4caf50;
-                    box-shadow: inset 0 0 12px rgba(76, 175, 80, 0.5) !important;
+                    box-shadow: inset 0 0 8px rgba(76, 175, 80, 0.3) !important;
                 }
                 .move-cell.match-dmg-2 {
-                    background: rgba(255, 215, 0, 0.45) !important;
+                    background: rgba(255, 215, 0, 0.2) !important;
                     border-left: 4px solid #ffd700;
-                    box-shadow: inset 0 0 12px rgba(255, 215, 0, 0.4) !important;
+                    box-shadow: inset 0 0 8px rgba(255, 215, 0, 0.25) !important;
                 }
                 /* Opponent side follows Orange/Red rules */
                 .move-cell.match-dmg-3 {
-                    background: rgba(255, 140, 0, 0.45) !important;
+                    background: rgba(255, 140, 0, 0.2) !important;
                     border-left: 4px solid #ff8c00;
-                    box-shadow: inset 0 0 12px rgba(255, 140, 0, 0.5) !important;
+                    box-shadow: inset 0 0 8px rgba(255, 140, 0, 0.3) !important;
                 }
                 .move-cell.match-dmg-4 {
-                    background: rgba(211, 47, 47, 0.45) !important;
+                    background: rgba(211, 47, 47, 0.25) !important;
                     border-left: 4px solid #d32f2f;
-                    box-shadow: inset 0 0 12px rgba(211, 47, 47, 0.5) !important;
+                    box-shadow: inset 0 0 8px rgba(211, 47, 47, 0.3) !important;
                 }
 
                 /* Matchup Color Coding (Speed Borders) */
@@ -119,18 +145,20 @@
                 .team-overview-slot.match-speed-s, .box-slot.match-speed-s { border-color: #555 !important; border-width: 2px !important; }
 
                 /* Matchup Color Coding (OHKO Backgrounds) */
-                .match-dmg-1, .match-dmg-W1 { background: rgba(76, 175, 80, 0.45) !important; box-shadow: inset 0 0 12px rgba(76, 175, 80, 0.5) !important; }
-                .match-dmg-2, .match-dmg-W2 { background: rgba(255, 215, 0, 0.45) !important; box-shadow: inset 0 0 12px rgba(255, 215, 0, 0.4) !important; }
-                .match-dmg-3 { background: rgba(255, 140, 0, 0.45) !important; box-shadow: inset 0 0 12px rgba(255, 140, 0, 0.5) !important; }
-                .match-dmg-4 { background: rgba(211, 47, 47, 0.45) !important; box-shadow: inset 0 0 12px rgba(211, 47, 47, 0.5) !important; }
+                .match-dmg-1, .match-dmg-W1 { background: rgba(76, 175, 80, 0.25) !important; box-shadow: inset 0 0 8px rgba(76, 175, 80, 0.3) !important; }
+                .match-dmg-2, .match-dmg-W2 { background: rgba(255, 215, 0, 0.2) !important; box-shadow: inset 0 0 8px rgba(255, 215, 0, 0.25) !important; }
+                .match-dmg-3 { background: rgba(255, 140, 0, 0.2) !important; box-shadow: inset 0 0 8px rgba(255, 140, 0, 0.3) !important; }
+                .match-dmg-4 { background: rgba(211, 47, 47, 0.25) !important; box-shadow: inset 0 0 8px rgba(211, 47, 47, 0.3) !important; }
                 
                 .match-dmg-13, .match-dmg-14, .match-dmg-23, .match-dmg-24 { 
-                    box-shadow: inset 0 0 12px rgba(255, 255, 255, 0.1) !important;
+                    box-shadow: inset 0 0 8px rgba(255, 255, 255, 0.05) !important;
+                    color: #fff !important;
+                    text-shadow: 0 1px 3px rgba(0,0,0,0.7) !important;
                 }
-                .match-dmg-13 { background: linear-gradient(135deg, rgba(76, 175, 80, 0.5) 50%, rgba(255, 140, 0, 0.5) 50%) !important; }
-                .match-dmg-14 { background: linear-gradient(135deg, rgba(76, 175, 80, 0.5) 50%, rgba(211, 47, 47, 0.5) 50%) !important; }
-                .match-dmg-23 { background: linear-gradient(135deg, rgba(255, 215, 0, 0.5) 50%, rgba(255, 140, 0, 0.5) 50%) !important; }
-                .match-dmg-24 { background: linear-gradient(135deg, rgba(255, 215, 0, 0.5) 50%, rgba(211, 47, 47, 0.5) 50%) !important; }
+                .match-dmg-13 { background: linear-gradient(135deg, rgba(76, 175, 80, 0.3) 50%, rgba(255, 140, 0, 0.3) 50%) !important; }
+                .match-dmg-14 { background: linear-gradient(135deg, rgba(76, 175, 80, 0.3) 50%, rgba(211, 47, 47, 0.3) 50%) !important; }
+                .match-dmg-23 { background: linear-gradient(135deg, rgba(255, 215, 0, 0.3) 50%, rgba(255, 140, 0, 0.3) 50%) !important; }
+                .match-dmg-24 { background: linear-gradient(135deg, rgba(255, 215, 0, 0.3) 50%, rgba(211, 47, 47, 0.3) 50%) !important; }
                 
                 .match-dmg-W, .match-dmg-W1, .match-dmg-W2 { box-shadow: inset 3px 0 0 #ffffff !important; }
                 .match-dmg-W { background: none !important; }
@@ -174,6 +202,33 @@
             </style>
             <div id="battle-planner" class="battle-planner-container" style="display: none;">
                 <div class="planner-tooltip" id="planner-tooltip" style="display:none;"></div>
+                <!-- Pokedex Overlay -->
+                <div class="dex-overlay" id="dex-overlay" style="display:none;">
+                    <div class="dex-overlay-backdrop" id="dex-backdrop"></div>
+                    <div class="dex-overlay-panel">
+                        <div class="dex-overlay-header">
+                            <span class="dex-overlay-title">Pokedex</span>
+                            <button class="dex-overlay-close" id="dex-close">&times;</button>
+                        </div>
+                        <div class="dex-overlay-search">
+                            <input type="text" id="dex-search-input" placeholder="Search Pokemon, moves, abilities, items, types, or more" autocomplete="off">
+                            <button class="dex-search-clear" id="dex-search-clear">&times;</button>
+                        </div>
+                        <div class="dex-overlay-tabs">
+                            <button class="dex-tab-btn active" data-dex-tab="all">Search</button>
+                            <button class="dex-tab-btn" data-dex-tab="pokemon">Pokemon</button>
+                            <button class="dex-tab-btn" data-dex-tab="moves">Moves</button>
+                            <button class="dex-tab-btn" data-dex-tab="items">Items</button>
+                        </div>
+                        <div class="dex-overlay-results" id="dex-results">
+                            <p class="dex-placeholder">Type to search the Pokedex...</p>
+                        </div>
+                        <div class="dex-overlay-detail" id="dex-detail" style="display:none;">
+                            <button class="dex-detail-back" id="dex-detail-back">&larr; Back</button>
+                            <div class="dex-detail-content" id="dex-detail-content"></div>
+                        </div>
+                    </div>
+                </div>
                 <div class="planner-header">
                     <h2 class="planner-title">
                         <span class="planner-icon">⚔️</span>
@@ -229,17 +284,8 @@
                             </div>
                         </div>
                         <div class="panel-content" id="stage-container">
-                            <!-- Pokedex Slide-in Panel -->
+                            <!-- Pokedex Floating Button -->
                             <div class="dex-tab" id="dex-tab">DEX</div>
-                            <div class="dex-panel" id="dex-panel" style="display:none;">
-                                <div class="dex-panel-header">
-                                    <span class="dex-panel-title" id="dex-title">Pokedex</span>
-                                    <button class="dex-panel-close" id="dex-close">&times;</button>
-                                </div>
-                                <div class="dex-panel-body" id="dex-body">
-                                    <p class="dex-placeholder">Hover over a Pokemon to view its Dex entry.</p>
-                                </div>
-                            </div>
                             <!-- Speed Comparison Bar -->
                             <div class="speed-comparison-bar" id="speed-comparison">
                                 <span class="speed-icon">⚡</span>
@@ -1080,13 +1126,36 @@
             $('#planner-tooltip').hide();
         });
 
-        // Dex panel toggle
+        // Dex overlay toggle
         $(document).on('click', '#dex-tab', function () {
-            var panel = $('#dex-panel');
-            panel.is(':visible') ? panel.slideUp(200) : panel.slideDown(200);
+            $('#dex-overlay').fadeIn(150);
+            $('#dex-search-input').focus();
         });
-        $(document).on('click', '#dex-close', function () {
-            $('#dex-panel').slideUp(200);
+        $(document).on('click', '#dex-close, #dex-backdrop', function () {
+            $('#dex-overlay').fadeOut(150);
+        });
+        $(document).on('click', '#dex-search-clear', function () {
+            $('#dex-search-input').val('').trigger('input');
+        });
+        $(document).on('input', '#dex-search-input', function () {
+            var query = $(this).val().trim().toLowerCase();
+            var activeTab = $('.dex-tab-btn.active').data('dex-tab') || 'all';
+            renderDexSearchResults(query, activeTab);
+        });
+        $(document).on('click', '.dex-tab-btn', function () {
+            $('.dex-tab-btn').removeClass('active');
+            $(this).addClass('active');
+            var query = $('#dex-search-input').val().trim().toLowerCase();
+            renderDexSearchResults(query, $(this).data('dex-tab'));
+        });
+        $(document).on('click', '.dex-result-row', function () {
+            var type = $(this).data('dex-type');
+            var id = $(this).data('dex-id');
+            showDexDetail(type, id);
+        });
+        $(document).on('click', '#dex-detail-back', function () {
+            $('#dex-detail').hide();
+            $('#dex-results').show();
         });
 
         // Execute Turn button
@@ -2269,6 +2338,20 @@
 
         var movesHtml = '<div class="move-grid-2x2">';
 
+        // Pre-calculate AI recommended move (highest max damage) for P2
+        var aiRecommendedIdx = -1;
+        if (side === 'p2' && defender) {
+            var bestMaxDmg = 0;
+            (pokemon.moves || []).forEach(function (mn, idx) {
+                if (!mn || mn === '(No Move)') return;
+                var preview = getMovePreviewInfo('p2', pokemon, mn, defender, false);
+                if (preview && preview.rawMax > bestMaxDmg) {
+                    bestMaxDmg = preview.rawMax;
+                    aiRecommendedIdx = idx;
+                }
+            });
+        }
+
         (pokemon.moves || []).forEach(function (moveName, i) {
             if (!moveName || moveName === '(No Move)') return;
 
@@ -2299,11 +2382,19 @@
                 }
             }
 
+            // AI recommended move highlight for opponent
+            if (side === 'p2' && i === aiRecommendedIdx) {
+                cellClasses.push('ai-recommended');
+            }
+
             movesHtml += '<button class="' + cellClasses.join(' ') + '" data-side="' + side + '" data-index="' + i + '" data-move="' + moveName + '">';
 
-            // Move name with priority indicator
+            // Move name with priority indicator and AI badge
             movesHtml += '<div class="move-cell-header">';
             movesHtml += '<span class="move-cell-name">' + moveName + '</span>';
+            if (side === 'p2' && i === aiRecommendedIdx) {
+                movesHtml += '<span class="ai-move-badge">AI</span>';
+            }
             if (priority > 0) {
                 movesHtml += '<span class="priority-badge">+' + priority + '</span>';
             } else if (priority < 0) {
@@ -3526,70 +3617,181 @@
     }
 
     /**
-     * Update the Pokedex slide-in panel with species info from RBDex.
+     * Search RBDex data and render results in the overlay.
+     */
+    function renderDexSearchResults(query, tab) {
+        var $results = $('#dex-results');
+        $('#dex-detail').hide();
+        $results.show();
+
+        if (!query || query.length < 2) {
+            $results.html('<p class="dex-placeholder">Type to search the Pokedex...</p>');
+            return;
+        }
+
+        var html = '';
+        var count = 0;
+        var maxResults = 50;
+
+        // Pokemon
+        if ((tab === 'all' || tab === 'pokemon') && window.BattlePokedex) {
+            var pokemonMatches = [];
+            for (var pid in window.BattlePokedex) {
+                var p = window.BattlePokedex[pid];
+                if (!p || !p.name) continue;
+                if (p.name.toLowerCase().indexOf(query) !== -1 || pid.indexOf(query) !== -1) {
+                    pokemonMatches.push(p);
+                    if (pokemonMatches.length >= maxResults) break;
+                }
+            }
+            if (pokemonMatches.length > 0) {
+                html += '<div class="dex-section-header">Pokemon</div>';
+                pokemonMatches.forEach(function (p) {
+                    var bs = p.baseStats || {};
+                    var bst = (bs.hp || 0) + (bs.atk || 0) + (bs.def || 0) + (bs.spa || 0) + (bs.spd || 0) + (bs.spe || 0);
+                    var types = (p.types || []).map(function (t) {
+                        return '<span class="type-badge type-' + t.toLowerCase() + '">' + t + '</span>';
+                    }).join(' ');
+                    var abils = [];
+                    if (p.abilities) {
+                        if (p.abilities['0']) abils.push(p.abilities['0']);
+                        if (p.abilities['1']) abils.push(p.abilities['1']);
+                        if (p.abilities.H) abils.push(p.abilities.H);
+                    }
+                    html += '<div class="dex-result-row" data-dex-type="pokemon" data-dex-id="' + (p.name || '').toLowerCase().replace(/[^a-z0-9]/g, '') + '">';
+                    html += '<span class="dex-res-name">' + p.name + '</span>';
+                    html += '<span class="dex-res-types">' + types + '</span>';
+                    html += '<span class="dex-res-info">' + abils.join(' / ') + '</span>';
+                    html += '<span class="dex-res-stats">HP ' + (bs.hp || '?') + ' / Atk ' + (bs.atk || '?') + ' / Def ' + (bs.def || '?') + ' / SpA ' + (bs.spa || '?') + ' / SpD ' + (bs.spd || '?') + ' / Spe ' + (bs.spe || '?') + ' <em>BST ' + bst + '</em></span>';
+                    html += '</div>';
+                    count++;
+                });
+            }
+        }
+
+        // Moves
+        if ((tab === 'all' || tab === 'moves') && window.BattleMovedex) {
+            var moveMatches = [];
+            for (var mid in window.BattleMovedex) {
+                var m = window.BattleMovedex[mid];
+                if (!m || !m.name) continue;
+                if (m.name.toLowerCase().indexOf(query) !== -1 || mid.indexOf(query) !== -1) {
+                    moveMatches.push(m);
+                    if (moveMatches.length >= maxResults) break;
+                }
+            }
+            if (moveMatches.length > 0) {
+                html += '<div class="dex-section-header">Moves</div>';
+                moveMatches.forEach(function (m) {
+                    html += '<div class="dex-result-row" data-dex-type="move" data-dex-id="' + (m.name || '').toLowerCase().replace(/[^a-z0-9]/g, '') + '">';
+                    html += '<span class="dex-res-name">' + m.name + '</span>';
+                    html += '<span class="type-badge type-' + (m.type || 'normal').toLowerCase() + '">' + (m.type || '?') + '</span>';
+                    html += '<span class="dex-res-info">' + (m.category || '?') + ' | ' + (m.basePower || '-') + ' BP | ' + (m.accuracy === true ? '—' : (m.accuracy || '?')) + ' Acc</span>';
+                    html += '<span class="dex-res-desc">' + (m.shortDesc || m.desc || '') + '</span>';
+                    html += '</div>';
+                    count++;
+                });
+            }
+        }
+
+        // Items
+        if ((tab === 'all' || tab === 'items') && window.BattleItems) {
+            var itemMatches = [];
+            for (var iid in window.BattleItems) {
+                var it = window.BattleItems[iid];
+                if (!it || !it.name) continue;
+                if (it.name.toLowerCase().indexOf(query) !== -1 || iid.indexOf(query) !== -1) {
+                    itemMatches.push(it);
+                    if (itemMatches.length >= maxResults) break;
+                }
+            }
+            if (itemMatches.length > 0) {
+                html += '<div class="dex-section-header">Items</div>';
+                itemMatches.forEach(function (it) {
+                    html += '<div class="dex-result-row" data-dex-type="item" data-dex-id="' + (it.name || '').toLowerCase().replace(/[^a-z0-9]/g, '') + '">';
+                    html += '<span class="dex-res-name">' + it.name + '</span>';
+                    html += '<span class="dex-res-desc">' + (it.desc || it.shortDesc || '') + '</span>';
+                    html += '</div>';
+                    count++;
+                });
+            }
+        }
+
+        if (count === 0) {
+            html = '<p class="dex-placeholder">No results found for "' + query + '"</p>';
+        }
+
+        $results.html(html);
+    }
+
+    /**
+     * Show detailed view for a specific Dex entry.
+     */
+    function showDexDetail(type, id) {
+        var $detail = $('#dex-detail-content');
+        var html = '';
+
+        if (type === 'pokemon') {
+            var species = window.RBDex ? window.RBDex.getSpecies(id) : null;
+            if (!species) { $detail.html('<p>Not found</p>'); return; }
+            html += '<h3>' + (species.name || id) + ' #' + (species.num || '?') + '</h3>';
+            if (species.types) {
+                html += '<div class="dex-row">' + species.types.map(function (t) {
+                    return '<span class="type-badge type-' + t.toLowerCase() + '">' + t + '</span>';
+                }).join(' ') + '</div>';
+            }
+            if (species.baseStats) {
+                var bs = species.baseStats;
+                var bst = (bs.hp||0)+(bs.atk||0)+(bs.def||0)+(bs.spa||0)+(bs.spd||0)+(bs.spe||0);
+                html += '<div class="dex-detail-stats">';
+                ['hp','atk','def','spa','spd','spe'].forEach(function (s) {
+                    var val = bs[s] || 0;
+                    var pct = Math.min(100, Math.round((val / 255) * 100));
+                    html += '<div class="dex-stat-bar"><span class="dex-stat-label">' + s.toUpperCase() + '</span><div class="dex-stat-fill-bg"><div class="dex-stat-fill" style="width:' + pct + '%"></div></div><span class="dex-stat-val">' + val + '</span></div>';
+                });
+                html += '<div class="dex-stat-bar"><span class="dex-stat-label">BST</span><span class="dex-stat-val" style="margin-left:auto">' + bst + '</span></div>';
+                html += '</div>';
+            }
+            if (species.abilities) {
+                var abils = [];
+                if (species.abilities['0']) abils.push(species.abilities['0']);
+                if (species.abilities['1']) abils.push(species.abilities['1']);
+                if (species.abilities.H) abils.push(species.abilities.H + ' (Hidden)');
+                html += '<div class="dex-row"><span class="dex-label">Abilities</span><span>' + abils.join(', ') + '</span></div>';
+            }
+            if (species.weightkg) html += '<div class="dex-row"><span class="dex-label">Weight</span><span>' + species.weightkg + ' kg</span></div>';
+            if (species.evos && species.evos.length) html += '<div class="dex-row"><span class="dex-label">Evolves into</span><span>' + species.evos.join(', ') + '</span></div>';
+            if (species.prevo) html += '<div class="dex-row"><span class="dex-label">Pre-evo</span><span>' + species.prevo + '</span></div>';
+        } else if (type === 'move') {
+            var move = window.RBDex ? window.RBDex.getMove(id) : null;
+            if (!move) { $detail.html('<p>Not found</p>'); return; }
+            html += '<h3>' + (move.name || id) + '</h3>';
+            html += '<div class="dex-row"><span class="type-badge type-' + (move.type || 'normal').toLowerCase() + '">' + (move.type || '?') + '</span> ' + (move.category || '?') + '</div>';
+            html += '<div class="dex-row"><span class="dex-label">Power</span><span>' + (move.basePower || '-') + '</span></div>';
+            html += '<div class="dex-row"><span class="dex-label">Accuracy</span><span>' + (move.accuracy === true ? '—' : (move.accuracy || '?')) + '</span></div>';
+            html += '<div class="dex-row"><span class="dex-label">PP</span><span>' + (move.pp || '?') + '</span></div>';
+            if (move.priority) html += '<div class="dex-row"><span class="dex-label">Priority</span><span>' + move.priority + '</span></div>';
+            if (move.desc) html += '<div class="dex-row dex-desc">' + move.desc + '</div>';
+            else if (move.shortDesc) html += '<div class="dex-row dex-desc">' + move.shortDesc + '</div>';
+        } else if (type === 'item') {
+            var item = window.RBDex ? window.RBDex.getItem(id) : null;
+            if (!item) { $detail.html('<p>Not found</p>'); return; }
+            html += '<h3>' + (item.name || id) + '</h3>';
+            if (item.desc) html += '<div class="dex-row dex-desc">' + item.desc + '</div>';
+        }
+
+        $detail.html(html);
+        $('#dex-results').hide();
+        $('#dex-detail').show();
+    }
+
+    /**
+     * Open the dex overlay pre-filled with a Pokemon name.
      */
     function updateDexPanel(pokemonName) {
-        if (!pokemonName || !window.RBDex) {
-            $('#dex-body').html('<p class="dex-placeholder">Hover over a Pokemon to view its Dex entry.</p>');
-            $('#dex-title').text('Pokedex');
-            return;
-        }
-
-        var species = window.RBDex.getSpecies(pokemonName);
-        if (!species) {
-            $('#dex-body').html('<p class="dex-placeholder">No Dex data for ' + pokemonName + '</p>');
-            $('#dex-title').text(pokemonName);
-            return;
-        }
-
-        $('#dex-title').text('#' + (species.num || '?') + ' ' + (species.name || pokemonName));
-
-        var html = '<div class="dex-info">';
-
-        // Types
-        if (species.types) {
-            html += '<div class="dex-row"><span class="dex-label">Type</span>';
-            html += species.types.map(function (t) {
-                return '<span class="type-badge type-' + t.toLowerCase() + '">' + t + '</span>';
-            }).join(' ');
-            html += '</div>';
-        }
-
-        // Base Stats
-        if (species.baseStats) {
-            var bs = species.baseStats;
-            var bst = (bs.hp || 0) + (bs.atk || 0) + (bs.def || 0) + (bs.spa || 0) + (bs.spd || 0) + (bs.spe || 0);
-            html += '<div class="dex-row"><span class="dex-label">Base Stats</span>' +
-                '<span class="dex-stats">' +
-                'HP:' + bs.hp + ' Atk:' + bs.atk + ' Def:' + bs.def +
-                ' SpA:' + bs.spa + ' SpD:' + bs.spd + ' Spe:' + bs.spe +
-                ' <em>(BST:' + bst + ')</em></span></div>';
-        }
-
-        // Abilities
-        if (species.abilities) {
-            var abils = [];
-            if (species.abilities['0']) abils.push(species.abilities['0']);
-            if (species.abilities['1']) abils.push(species.abilities['1']);
-            if (species.abilities.H) abils.push(species.abilities.H + ' (H)');
-            html += '<div class="dex-row"><span class="dex-label">Abilities</span><span>' + abils.join(', ') + '</span></div>';
-        }
-
-        // Weight
-        if (species.weightkg) {
-            html += '<div class="dex-row"><span class="dex-label">Weight</span><span>' + species.weightkg + ' kg</span></div>';
-        }
-
-        // Evolution
-        if (species.evos && species.evos.length > 0) {
-            html += '<div class="dex-row"><span class="dex-label">Evolves into</span><span>' + species.evos.join(', ') + '</span></div>';
-        }
-        if (species.prevo) {
-            html += '<div class="dex-row"><span class="dex-label">Pre-evo</span><span>' + species.prevo + '</span></div>';
-        }
-
-        html += '</div>';
-        $('#dex-body').html(html);
+        if (!pokemonName) return;
+        $('#dex-overlay').fadeIn(150);
+        $('#dex-search-input').val(pokemonName).trigger('input');
     }
 
     /**
@@ -4244,6 +4446,8 @@
 
     /**
      * Show a notification banner about meaningful damage variance detected this turn.
+     * Includes a "Create Min/Max Branches" button that clones the current node
+     * into two sibling branches under the parent (one with min roll HP, one with max roll HP).
      */
     function showVarianceNotification(warnings, parentNodeId, currentNodeId) {
         var lines = warnings.map(function (w) {
@@ -4251,10 +4455,18 @@
             return '<div class="variance-line"><strong>' + moverLabel + '</strong> ' + w.move + ': ' + w.detail.reason + '</div>';
         }).join('');
 
+        var hasKOVariance = warnings.some(function (w) {
+            return w.detail && w.detail.reason && (
+                w.detail.reason.indexOf('KO') !== -1 ||
+                w.detail.reason.indexOf('triggers') !== -1
+            );
+        });
+
         var html = '<div class="variance-banner" id="variance-banner">' +
             '<div class="variance-header">⚠ Roll Variance Detected</div>' +
             '<div class="variance-body">' + lines + '</div>' +
             '<div class="variance-actions">' +
+            (hasKOVariance ? '<button class="planner-btn planner-btn-sm planner-btn-accent" id="variance-branch">Create Min/Max Branches</button>' : '') +
             '<button class="planner-btn planner-btn-sm" id="variance-dismiss">Dismiss</button>' +
             '</div>' +
             '</div>';
@@ -4265,6 +4477,63 @@
         $('#variance-dismiss').on('click', function () {
             $('#variance-banner').remove();
         });
+
+        $('#variance-branch').on('click', function () {
+            createVarianceBranches(warnings, parentNodeId, currentNodeId);
+            $('#variance-banner').remove();
+        });
+    }
+
+    /**
+     * Create two alternate branches (min roll / max roll) from variance data.
+     * Clones the current node's state, adjusting the defender's HP to reflect
+     * min-roll vs max-roll outcomes.
+     */
+    function createVarianceBranches(warnings, parentNodeId, currentNodeId) {
+        var currentNode = uiState.tree.getNode(currentNodeId);
+        if (!currentNode) return;
+
+        for (var i = 0; i < warnings.length; i++) {
+            var w = warnings[i];
+            if (!w.detail || !w.detail.minResult || !w.detail.maxResult) continue;
+
+            var defSide = w.mover === 'p1' ? 'p2' : 'p1';
+
+            // Min roll branch
+            var minState = currentNode.state.clone();
+            minState[defSide].active.currentHP = Math.max(0, w.detail.minResult.hp);
+            minState[defSide].active.percentHP = minState[defSide].active.maxHP > 0
+                ? Math.round((minState[defSide].active.currentHP / minState[defSide].active.maxHP) * 100) : 0;
+            minState[defSide].active.hasFainted = minState[defSide].active.currentHP <= 0;
+            if (w.detail.minResult.itemConsumed) minState[defSide].active.item = '';
+            syncActiveToTeam(minState);
+
+            var minOutcome = new BattlePlanner.BattleOutcome(
+                'Min Roll (' + w.move + ')', 0.5, 0, { rollType: 'min' }
+            );
+            minOutcome.isBestCase = true;
+            var minNode = uiState.tree.addBranch(parentNodeId, minState, currentNode.actions, minOutcome);
+            minNode.isBestCase = defSide === 'p2';
+            minNode.isWorstCase = defSide === 'p1';
+
+            // Max roll branch
+            var maxState = currentNode.state.clone();
+            maxState[defSide].active.currentHP = Math.max(0, w.detail.maxResult.hp);
+            maxState[defSide].active.percentHP = maxState[defSide].active.maxHP > 0
+                ? Math.round((maxState[defSide].active.currentHP / maxState[defSide].active.maxHP) * 100) : 0;
+            maxState[defSide].active.hasFainted = maxState[defSide].active.currentHP <= 0;
+            if (w.detail.maxResult.itemConsumed) maxState[defSide].active.item = '';
+            syncActiveToTeam(maxState);
+
+            var maxOutcome = new BattlePlanner.BattleOutcome(
+                'Max Roll (' + w.move + ')', 0.5, 0, { rollType: 'max' }
+            );
+            var maxNode = uiState.tree.addBranch(parentNodeId, maxState, currentNode.actions, maxOutcome);
+            maxNode.isBestCase = defSide === 'p1';
+            maxNode.isWorstCase = defSide === 'p2';
+        }
+
+        renderTree();
     }
 
     /**
@@ -4440,11 +4709,14 @@
                     delete firstDefender.needsForcedSwitch;
                 }
 
-                // Flinch check: if the first move can flinch, check if second mover is blocked
-                if (!firstKO && !firstAttackerFainted && firstMoveResult && firstMoveResult.moveData) {
-                    flinchResult = BattlePlannerLogic.checkFlinch(
-                        firstMoveResult.moveData, firstAttacker, firstDefender, firstAction.moveName
-                    );
+                // Flinch check: use RBDex data which has proper secondary/flinch info
+                if (!firstKO && !firstAttackerFainted && !firstIsSwitch) {
+                    var rbdexMove = window.RBDex ? window.RBDex.getMove(firstAction.moveName) : null;
+                    if (rbdexMove) {
+                        flinchResult = BattlePlannerLogic.checkFlinch(
+                            rbdexMove, firstAttacker, firstDefender, firstAction.moveName
+                        );
+                    }
                 }
             }
 
@@ -4837,6 +5109,7 @@
             // Check if custom effects override damage
             if (customEffects.noDamage) {
                 avgDamage = 0;
+                moveResult.range = { min: 0, max: 0, avg: 0, rolls: [] };
             }
 
             // Check if defender is invulnerable (from their own move like Bounce/Fly)

@@ -9,7 +9,8 @@
  *   1. rbdex/moves.js
  *   2. rbdex/items.js
  *   3. rbdex/pokedex.js
- *   4. rbdex/rbdex_adapter.js   <-- this file (runs last, copies to window)
+ *   4. rbdex/abilities.js
+ *   5. rbdex/rbdex_adapter.js   <-- this file (runs last, copies to window)
  */
 (function () {
     'use strict';
@@ -23,6 +24,9 @@
         }
         if (window.exports.BattlePokedex && !window.BattlePokedex) {
             window.BattlePokedex = window.exports.BattlePokedex;
+        }
+        if (window.exports.BattleAbilities && !window.BattleAbilities) {
+            window.BattleAbilities = window.exports.BattleAbilities;
         }
     }
 
