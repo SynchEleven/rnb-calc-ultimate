@@ -1035,7 +1035,8 @@ describe('checkFlinch', () => {
   });
 
   test('Serene Grace makes 60% flinch guaranteed at 100%+ cap', () => {
-    const result = Logic.checkFlinch(makeMoveWithFlinch(50), makeAttacker({ ability: 'Serene Grace' }), makeDefender(), 'Air Slash');
+    // Use a fictitious move name so MoveDB falls back to raw moveData
+    const result = Logic.checkFlinch(makeMoveWithFlinch(50), makeAttacker({ ability: 'Serene Grace' }), makeDefender(), 'FlinchTestMove');
     expect(result.flinches).toBe(true);
     expect(result.chance).toBe(1);
     expect(result.isGuaranteed).toBe(true);

@@ -19,8 +19,22 @@ function setupBattlePlanner() {
   return window.BattlePlanner;
 }
 
+function setupMoveDB() {
+  if (!window.BattleMovedex) {
+    window.exports = window.exports || {};
+    loadScript('data/rbdex/moves.js');
+    window.BattleMovedex = window.exports.BattleMovedex;
+  }
+  if (!window.MoveDB) {
+    loadScript('data/move_db.js');
+    window.MoveDB.init();
+  }
+  return window.MoveDB;
+}
+
 function setupCalcIntegration(calcMock) {
   window.calc = calcMock || createDefaultCalcMock();
+  setupMoveDB();
   loadScript('calc_integration.js');
   return window.BattlePlanner.CalcIntegration;
 }
@@ -119,6 +133,7 @@ module.exports = {
   loadScript,
   setupBattlePlanner,
   setupCalcIntegration,
+  setupMoveDB,
   setupLogic,
   createDefaultCalcMock,
   makePokemon,

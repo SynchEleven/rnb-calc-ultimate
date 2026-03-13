@@ -7,5 +7,6 @@ module.exports = {
     'src/js/battle_planner.js',
     'src/js/battle_planner_logic.js',
     'src/js/calc_integration.js',
+    'src/js/data/move_db.js',
   ],
 };

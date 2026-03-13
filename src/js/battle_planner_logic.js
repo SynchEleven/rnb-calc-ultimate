@@ -352,33 +352,124 @@
         return multiplier;
     }
 
+    function clampBoost(val) { return Math.max(-6, Math.min(6, val)); }
+
+    function applyBoostMap(target, boosts) {
+        if (!boosts) return;
+        if (!target.boosts) target.boosts = {};
+        var stats = Object.keys(boosts);
+        for (var i = 0; i < stats.length; i++) {
+            var s = stats[i];
+            target.boosts[s] = clampBoost((target.boosts[s] || 0) + boosts[s]);
+        }
+    }
+
     /**
-     * Apply move secondary effects (status, stat changes) to attacker/defender.
+     * Apply move effects (status, stat changes, volatiles, side conditions,
+     * weather, terrain, switches) to attacker/defender.
+     *
+     * Uses MoveDB when available, falling back to raw moveData fields.
      * Deterministic -- the caller decides whether to apply them.
+     *
+     * @param {object} attacker  - PokemonSnapshot
+     * @param {object} defender  - PokemonSnapshot
+     * @param {object} moveData  - raw move object (from calc or RBDex)
+     * @param {object} [state]   - BattleStateSnapshot (needed for side/field effects)
+     * @param {string} [attackerSide] - 'p1' or 'p2' (needed for side effects)
      */
-    function applyMoveEffects(attacker, defender, moveData) {
+    function applyMoveEffects(attacker, defender, moveData, state, attackerSide) {
         if (!moveData) return;
 
+        var db = typeof window !== 'undefined' ? window.MoveDB : null;
+        var fx = db ? db.getEffects(moveData.name) : null;
+
+        if (fx) {
+            // Primary status
+            if (fx.status && (!defender.status || defender.status === 'Healthy')) {
+                defender.status = fx.status;
+            }
+
+            // Volatile status on target
+            if (fx.volatileStatus) {
+                if (!defender.volatiles) defender.volatiles = {};
+                defender.volatiles[fx.volatileStatus] = true;
+            }
+
+            // Target stat changes
+            applyBoostMap(defender, fx.targetBoosts);
+
+            // Self stat changes
+            applyBoostMap(attacker, fx.selfBoosts);
+
+            // Self volatile (mustrecharge etc.)
+            if (fx.selfVolatile) {
+                if (!attacker.volatiles) attacker.volatiles = {};
+                attacker.volatiles[fx.selfVolatile] = true;
+            }
+
+            // Secondaries (applied deterministically when caller opted in)
+            for (var i = 0; i < fx.secondaries.length; i++) {
+                var sec = fx.secondaries[i];
+                if (sec.status && (!defender.status || defender.status === 'Healthy')) {
+                    defender.status = sec.status;
+                }
+                if (sec.volatileStatus) {
+                    if (!defender.volatiles) defender.volatiles = {};
+                    defender.volatiles[sec.volatileStatus] = true;
+                }
+                applyBoostMap(defender, sec.targetBoosts);
+                applyBoostMap(attacker, sec.selfBoosts);
+            }
+
+            // Self-switch / force-switch
+            if (fx.selfSwitch) {
+                attacker.needsSwitchAfterMove = true;
+            }
+            if (fx.forceSwitch) {
+                defender.needsForcedSwitch = true;
+            }
+
+            // Side conditions (hazards, screens, tailwind)
+            if (fx.sideCondition && state && attackerSide) {
+                var defSide = attackerSide === 'p1' ? 'p2' : 'p1';
+                var sc = fx.sideCondition;
+                if (sc === 'stealthrock')  state.sides[defSide].stealthRock = true;
+                if (sc === 'spikes')       state.sides[defSide].spikes = Math.min(3, (state.sides[defSide].spikes || 0) + 1);
+                if (sc === 'toxicspikes')  state.sides[defSide].toxicSpikes = Math.min(2, (state.sides[defSide].toxicSpikes || 0) + 1);
+                if (sc === 'stickyweb')    state.sides[defSide].stickyWeb = true;
+                if (sc === 'reflect')      { state.sides[attackerSide].reflect = true; state.sides[attackerSide].reflectTurns = 5; }
+                if (sc === 'lightscreen')  { state.sides[attackerSide].lightScreen = true; state.sides[attackerSide].lightScreenTurns = 5; }
+                if (sc === 'auroraveil')   { state.sides[attackerSide].auroraVeil = true; state.sides[attackerSide].auroraVeilTurns = 5; }
+                if (sc === 'tailwind')     { state.sides[attackerSide].tailwind = true; state.sides[attackerSide].tailwindTurns = 4; }
+            }
+
+            // Weather
+            if (fx.weather && state) {
+                var WEATHER_MAP = { RainDance: 'Rain', sunnyday: 'Sun', Sandstorm: 'Sand', hail: 'Hail', snow: 'Snow' };
+                state.field.weather = WEATHER_MAP[fx.weather] || fx.weather;
+                state.field.weatherTurns = 5;
+            }
+
+            // Terrain
+            if (fx.terrain && state) {
+                state.field.terrain = fx.terrain;
+                state.field.terrainTurns = 5;
+            }
+
+            return;
+        }
+
+        // Fallback: raw moveData fields (when MoveDB not available)
         if (moveData.status && (!defender.status || defender.status === 'Healthy')) {
             defender.status = moveData.status;
         }
 
         if (moveData.boosts) {
-            if (!defender.boosts) defender.boosts = {};
-            var stats = Object.keys(moveData.boosts);
-            for (var i = 0; i < stats.length; i++) {
-                var stat = stats[i];
-                defender.boosts[stat] = Math.max(-6, Math.min(6, (defender.boosts[stat] || 0) + moveData.boosts[stat]));
-            }
+            applyBoostMap(defender, moveData.boosts);
         }
 
         if (moveData.self && moveData.self.boosts) {
-            if (!attacker.boosts) attacker.boosts = {};
-            var stats = Object.keys(moveData.self.boosts);
-            for (var i = 0; i < stats.length; i++) {
-                var stat = stats[i];
-                attacker.boosts[stat] = Math.max(-6, Math.min(6, (attacker.boosts[stat] || 0) + moveData.self.boosts[stat]));
-            }
+            applyBoostMap(attacker, moveData.self.boosts);
         }
 
         if (moveData.secondary) {
@@ -386,12 +477,7 @@
                 defender.status = moveData.secondary.status;
             }
             if (moveData.secondary.boosts) {
-                if (!defender.boosts) defender.boosts = {};
-                var stats = Object.keys(moveData.secondary.boosts);
-                for (var i = 0; i < stats.length; i++) {
-                    var stat = stats[i];
-                    defender.boosts[stat] = Math.max(-6, Math.min(6, (defender.boosts[stat] || 0) + moveData.secondary.boosts[stat]));
-                }
+                applyBoostMap(defender, moveData.secondary.boosts);
             }
         }
     }
@@ -693,31 +779,50 @@
     /**
      * Check whether a move causes flinch on the target.
      *
-     * @param {object} moveData    - calc engine move data (with .secondary)
+     * Accepts either raw moveData (legacy) or a moveName string.
+     * Prefers MoveDB when available.
+     *
+     * @param {object|string} moveDataOrName - raw move data OR move name
      * @param {object} attacker    - PokemonSnapshot of the attacker
      * @param {object} defender    - PokemonSnapshot of the defender
-     * @param {string} moveName    - name of the move
+     * @param {string} [moveName]  - name of the move (optional if first arg is string)
      *
      * @returns {object} { flinches: bool, chance: number, isGuaranteed: bool, blocked: bool, reason: string }
      */
-    function checkFlinch(moveData, attacker, defender, moveName) {
+    function checkFlinch(moveDataOrName, attacker, defender, moveName) {
         var result = { flinches: false, chance: 0, isGuaranteed: false, blocked: false, reason: '' };
 
-        if (!moveData) return result;
+        var name = moveName || (typeof moveDataOrName === 'string' ? moveDataOrName : (moveDataOrName && moveDataOrName.name) || '');
+        var moveData = typeof moveDataOrName === 'object' ? moveDataOrName : null;
 
-        // Check for flinch in secondary
         var hasFlinch = false;
         var flinchChance = 0;
 
-        if (moveData.secondary && moveData.secondary.volatileStatus === 'flinch') {
-            hasFlinch = true;
-            flinchChance = (moveData.secondary.chance || 100) / 100;
-        } else if (moveData.secondaries) {
-            for (var i = 0; i < moveData.secondaries.length; i++) {
-                if (moveData.secondaries[i].volatileStatus === 'flinch') {
+        // Try MoveDB first
+        var db = typeof window !== 'undefined' ? window.MoveDB : null;
+        if (db && name) {
+            var secs = db.getSecondaries(name);
+            for (var i = 0; i < secs.length; i++) {
+                if (secs[i].volatileStatus === 'flinch') {
                     hasFlinch = true;
-                    flinchChance = (moveData.secondaries[i].chance || 100) / 100;
+                    flinchChance = (secs[i].chance || 100) / 100;
                     break;
+                }
+            }
+        }
+
+        // Fallback to raw moveData
+        if (!hasFlinch && moveData) {
+            if (moveData.secondary && moveData.secondary.volatileStatus === 'flinch') {
+                hasFlinch = true;
+                flinchChance = (moveData.secondary.chance || 100) / 100;
+            } else if (moveData.secondaries) {
+                for (var j = 0; j < moveData.secondaries.length; j++) {
+                    if (moveData.secondaries[j].volatileStatus === 'flinch') {
+                        hasFlinch = true;
+                        flinchChance = (moveData.secondaries[j].chance || 100) / 100;
+                        break;
+                    }
                 }
             }
         }
@@ -725,19 +830,16 @@
         if (!hasFlinch) return result;
 
         // Fake Out: only works on the first turn after being sent in.
-        // turnsOnField is incremented at end-of-turn, so on the first turn
-        // the Pokemon can act, turnsOnField is 0 (just switched in this turn)
-        // or 1 (was on field at start, end-of-turn incremented it once).
-        var mName = (moveName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        var mName = (name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
         if (mName === 'fakeout') {
-            if (attacker.turnsOnField !== undefined && attacker.turnsOnField > 1) {
+            if (attacker && attacker.turnsOnField !== undefined && attacker.turnsOnField > 1) {
                 result.reason = 'Fake Out fails after first turn';
                 return result;
             }
         }
 
         // Inner Focus: immune to flinch
-        var defAbility = (defender.ability || '').replace(/\s/g, '').toLowerCase();
+        var defAbility = defender ? (defender.ability || '').replace(/\s/g, '').toLowerCase() : '';
         if (defAbility === 'innerfocus') {
             result.blocked = true;
             result.reason = 'Inner Focus prevents flinch';
@@ -750,7 +852,7 @@
         result.reason = result.isGuaranteed ? 'Guaranteed flinch' : (Math.round(flinchChance * 100) + '% flinch chance');
 
         // Serene Grace doubles flinch chance
-        var atkAbility = (attacker.ability || '').replace(/\s/g, '').toLowerCase();
+        var atkAbility = attacker ? (attacker.ability || '').replace(/\s/g, '').toLowerCase() : '';
         if (atkAbility === 'serenegrace' && !result.isGuaranteed) {
             result.chance = Math.min(1, flinchChance * 2);
             result.isGuaranteed = result.chance >= 1;

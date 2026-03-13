@@ -2666,15 +2666,19 @@
     function getMoveData(moveName, gen) {
         try {
             if (window.calc && window.calc.Generations) {
-                // Handle gen as object or number
                 var genNum = (gen && gen.num) ? gen.num : (typeof gen === 'number' ? gen : 8);
                 var genObj = window.calc.Generations.get(genNum);
                 if (genObj && genObj.moves) {
-                    return genObj.moves.get(window.calc.toID(moveName));
+                    var calcMove = genObj.moves.get(window.calc.toID(moveName));
+                    if (calcMove) return calcMove;
                 }
             }
         } catch (e) {
             console.error('getMoveData error:', e);
+        }
+        // Fall back to MoveDB (RBDex-derived) when calc data is unavailable
+        if (window.MoveDB) {
+            return window.MoveDB.get(moveName);
         }
         return null;
     }
@@ -2738,20 +2742,78 @@
     function getEffectLabel(moveData) {
         if (!moveData) return null;
 
-        // Status moves
-        if (moveData.status) {
-            var statusMap = {
-                'par': 'Paralyze',
-                'slp': 'Sleep',
-                'frz': 'Freeze',
-                'brn': 'Burn',
-                'psn': 'Poison',
-                'tox': 'Toxic'
-            };
-            return statusMap[moveData.status] || moveData.status;
+        var STATUS_NAMES = {
+            'par': 'Paralyze', 'slp': 'Sleep', 'frz': 'Freeze',
+            'brn': 'Burn', 'psn': 'Poison', 'tox': 'Toxic'
+        };
+
+        // Try MoveDB first for comprehensive labels
+        var moveName = moveData.name || '';
+        var db = window.MoveDB;
+        if (db && moveName) {
+            var fx = db.getEffects(moveName);
+            if (fx) {
+                if (fx.status) return STATUS_NAMES[fx.status] || fx.status;
+
+                if (fx.selfBoosts) {
+                    var sb = Object.keys(fx.selfBoosts).map(function (s) {
+                        var v = fx.selfBoosts[s];
+                        return (v > 0 ? '+' : '') + v + ' ' + s.toUpperCase();
+                    });
+                    return 'Self: ' + sb.join(', ');
+                }
+
+                if (fx.targetBoosts) {
+                    var tb = Object.keys(fx.targetBoosts).map(function (s) {
+                        var v = fx.targetBoosts[s];
+                        return (v > 0 ? '+' : '') + v + ' ' + s.toUpperCase();
+                    });
+                    return tb.join(', ');
+                }
+
+                if (fx.sideCondition) {
+                    var SC_LABELS = {
+                        stealthrock: 'Stealth Rock', spikes: 'Spikes',
+                        toxicspikes: 'Toxic Spikes', stickyweb: 'Sticky Web',
+                        reflect: 'Reflect', lightscreen: 'Light Screen',
+                        auroraveil: 'Aurora Veil', tailwind: 'Tailwind'
+                    };
+                    return SC_LABELS[fx.sideCondition] || fx.sideCondition;
+                }
+
+                if (fx.weather) return 'Weather';
+                if (fx.terrain) return 'Terrain';
+                if (fx.volatileStatus) {
+                    var VOL_LABELS = {
+                        confusion: 'Confuse', attract: 'Attract', leechseed: 'Leech Seed',
+                        taunt: 'Taunt', encore: 'Encore', disable: 'Disable',
+                        curse: 'Curse', yawn: 'Yawn', torment: 'Torment'
+                    };
+                    return VOL_LABELS[fx.volatileStatus] || fx.volatileStatus;
+                }
+
+                if (fx.selfSwitch) return 'Switch Out';
+                if (fx.forceSwitch) return 'Force Switch';
+
+                if (fx.drain) return 'Drain ' + Math.round((fx.drain.numerator / fx.drain.denominator) * 100) + '%';
+                if (fx.recoil) return 'Recoil ' + Math.round((fx.recoil.numerator / fx.recoil.denominator) * 100) + '%';
+                if (fx.heal) return 'Heal ' + Math.round((fx.heal.numerator / fx.heal.denominator) * 100) + '%';
+
+                for (var i = 0; i < fx.secondaries.length; i++) {
+                    var sec = fx.secondaries[i];
+                    if (sec.volatileStatus === 'flinch') return sec.chance + '% Flinch';
+                    if (sec.status) return sec.chance + '% ' + (STATUS_NAMES[sec.status] || sec.status).toUpperCase();
+                    if (sec.targetBoosts) return sec.chance + '% stat drop';
+                }
+
+                if (fx.selfDestruct) return 'Self-Destruct';
+                if (fx.multihit) return 'Multi-hit';
+            }
         }
 
-        // Stat changes
+        // Fallback: raw moveData fields
+        if (moveData.status) return STATUS_NAMES[moveData.status] || moveData.status;
+
         if (moveData.boosts) {
             var boosts = Object.keys(moveData.boosts).map(function (stat) {
                 var val = moveData.boosts[stat];
@@ -2760,7 +2822,6 @@
             return boosts.join(', ');
         }
 
-        // Self stat changes
         if (moveData.self && moveData.self.boosts) {
             var selfBoosts = Object.keys(moveData.self.boosts).map(function (stat) {
                 var val = moveData.self.boosts[stat];
@@ -2769,40 +2830,18 @@
             return 'Self: ' + selfBoosts.join(', ');
         }
 
-        // Secondary effects
         if (moveData.secondary) {
-            if (moveData.secondary.status) {
-                return moveData.secondary.chance + '% ' + moveData.secondary.status.toUpperCase();
-            }
-            if (moveData.secondary.boosts) {
-                return moveData.secondary.chance + '% stat drop';
-            }
+            if (moveData.secondary.status) return moveData.secondary.chance + '% ' + moveData.secondary.status.toUpperCase();
+            if (moveData.secondary.boosts) return moveData.secondary.chance + '% stat drop';
+            if (moveData.secondary.volatileStatus === 'flinch') return moveData.secondary.chance + '% Flinch';
         }
 
-        // Switch effects
         if (moveData.selfSwitch) return 'Switch Out';
         if (moveData.forceSwitch) return 'Force Switch';
 
-        // Drain/Recoil
-        if (moveData.drain) {
-            var drainPct = Math.round((moveData.drain[0] / moveData.drain[1]) * 100);
-            return 'Drain ' + drainPct + '%';
-        }
-        if (moveData.recoil) {
-            var recoilPct = Math.round((moveData.recoil[0] / moveData.recoil[1]) * 100);
-            return 'Recoil ' + recoilPct + '%';
-        }
-
-        // Healing
-        if (moveData.heal) {
-            var healPct = Math.round((moveData.heal[0] / moveData.heal[1]) * 100);
-            return 'Heal ' + healPct + '%';
-        }
-
-        // Flinch (from secondary)
-        if (moveData.secondary && moveData.secondary.volatileStatus === 'flinch') {
-            return moveData.secondary.chance + '% Flinch';
-        }
+        if (moveData.drain) return 'Drain ' + Math.round((moveData.drain[0] / moveData.drain[1]) * 100) + '%';
+        if (moveData.recoil) return 'Recoil ' + Math.round((moveData.recoil[0] / moveData.recoil[1]) * 100) + '%';
+        if (moveData.heal) return 'Heal ' + Math.round((moveData.heal[0] / moveData.heal[1]) * 100) + '%';
 
         return null;
     }
@@ -4864,10 +4903,11 @@
 
                 // Flinch check: use RBDex data which has proper secondary/flinch info
                 if (!firstKO && !firstAttackerFainted && !firstIsSwitch) {
-                    var rbdexMove = window.RBDex ? window.RBDex.getMove(firstAction.moveName) : null;
-                    if (rbdexMove) {
+                    var flinchMoveData = (window.MoveDB && window.MoveDB.get(firstAction.moveName)) ||
+                                         (window.RBDex ? window.RBDex.getMove(firstAction.moveName) : null);
+                    if (flinchMoveData) {
                         flinchResult = BattlePlannerLogic.checkFlinch(
-                            rbdexMove, firstAttacker, firstDefender, firstAction.moveName
+                            flinchMoveData, firstAttacker, firstDefender, firstAction.moveName
                         );
                     }
                 }
@@ -5296,21 +5336,32 @@
                 applyMoveEffects(attacker, defender, moveData, state);
             }
 
+            // Use MoveDB for recoil/drain/heal when available
+            var dbFx = window.MoveDB ? window.MoveDB.getEffects(moveName) : null;
+
             // Handle recoil
-            if (moveData && moveData.recoil) {
+            if (dbFx && dbFx.recoil) {
+                var recoilDamage = Math.floor(avgDamage * dbFx.recoil.numerator / dbFx.recoil.denominator);
+                attacker.currentHP = Math.max(0, attacker.currentHP - recoilDamage);
+            } else if (moveData && moveData.recoil) {
                 var recoilDamage = Math.floor(avgDamage * moveData.recoil[0] / moveData.recoil[1]);
                 attacker.currentHP = Math.max(0, attacker.currentHP - recoilDamage);
             }
 
             // Handle drain
-            if (moveData && moveData.drain) {
+            if (dbFx && dbFx.drain) {
+                var drainHeal = Math.floor(avgDamage * dbFx.drain.numerator / dbFx.drain.denominator);
+                attacker.currentHP = Math.min(attacker.maxHP, attacker.currentHP + drainHeal);
+            } else if (moveData && moveData.drain) {
                 var drainHeal = Math.floor(avgDamage * moveData.drain[0] / moveData.drain[1]);
                 attacker.currentHP = Math.min(attacker.maxHP, attacker.currentHP + drainHeal);
             }
 
             // Handle healing moves (like Recover, Soft-Boiled, Roost, Synthesis, etc.)
-            if (moveData && moveData.heal) {
-                // heal is typically [1, 2] for 50% heal
+            if (dbFx && dbFx.heal) {
+                var healAmount = Math.floor(attacker.maxHP * dbFx.heal.numerator / dbFx.heal.denominator);
+                attacker.currentHP = Math.min(attacker.maxHP, attacker.currentHP + healAmount);
+            } else if (moveData && moveData.heal) {
                 var healAmount = Math.floor(attacker.maxHP * moveData.heal[0] / moveData.heal[1]);
                 attacker.currentHP = Math.min(attacker.maxHP, attacker.currentHP + healAmount);
             }
@@ -5446,20 +5497,32 @@
             defender.percentHP = defender.maxHP > 0 ? Math.round((defender.currentHP / defender.maxHP) * 100) : 0;
             defender.hasFainted = defender.currentHP <= 0;
 
-            // Apply recoil if applicable
-            var moveData = null;
-            try {
-                var genObj = window.calc.Generations.get(gen);
-                if (genObj && genObj.moves) {
-                    moveData = genObj.moves.get(window.calc.toID(moveName));
-                }
-            } catch (e) { }
-
-            if (moveData && moveData.recoil) {
-                var recoilDamage = Math.floor(avgDamage * (moveData.recoil[0] / moveData.recoil[1]));
+            // Apply recoil/drain via MoveDB, falling back to calc data
+            var dbFx = window.MoveDB ? window.MoveDB.getEffects(moveName) : null;
+            if (dbFx && dbFx.recoil) {
+                var recoilDamage = Math.floor(avgDamage * (dbFx.recoil.numerator / dbFx.recoil.denominator));
                 attacker.currentHP = Math.max(0, attacker.currentHP - recoilDamage);
                 attacker.percentHP = attacker.maxHP > 0 ? Math.round((attacker.currentHP / attacker.maxHP) * 100) : 0;
                 attacker.hasFainted = attacker.currentHP <= 0;
+            } else {
+                var moveData = null;
+                try {
+                    var genObj = window.calc.Generations.get(gen);
+                    if (genObj && genObj.moves) {
+                        moveData = genObj.moves.get(window.calc.toID(moveName));
+                    }
+                } catch (e) { }
+                if (moveData && moveData.recoil) {
+                    var recoilDamage = Math.floor(avgDamage * (moveData.recoil[0] / moveData.recoil[1]));
+                    attacker.currentHP = Math.max(0, attacker.currentHP - recoilDamage);
+                    attacker.percentHP = attacker.maxHP > 0 ? Math.round((attacker.currentHP / attacker.maxHP) * 100) : 0;
+                    attacker.hasFainted = attacker.currentHP <= 0;
+                }
+            }
+            if (dbFx && dbFx.drain) {
+                var drainHeal = Math.floor(avgDamage * (dbFx.drain.numerator / dbFx.drain.denominator));
+                attacker.currentHP = Math.min(attacker.maxHP, attacker.currentHP + drainHeal);
+                attacker.percentHP = attacker.maxHP > 0 ? Math.round((attacker.currentHP / attacker.maxHP) * 100) : 0;
             }
 
             return result;

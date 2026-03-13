@@ -108,11 +108,39 @@
      */
     function isStatusMove(moveData) {
         if (!moveData) return false;
-        return moveData.category === 'Status';
+        if (moveData.category === 'Status') return true;
+        if (moveData.name && window.MoveDB) return window.MoveDB.isStatus(moveData.name);
+        return false;
     }
 
     /**
-     * Get status move effects
+     * Mapping from RBDex sideCondition ids to the legacy hazard/screen shapes
+     * used by applyOutcomeToState and downstream callers.
+     */
+    var SIDE_CONDITION_HAZARDS = {
+        stealthrock: { hazard: 'stealthRock', side: 'defender' },
+        spikes:      { hazard: 'spikes',      side: 'defender' },
+        toxicspikes: { hazard: 'toxicSpikes',  side: 'defender' },
+        stickyweb:   { hazard: 'stickyWeb',    side: 'defender' }
+    };
+    var SIDE_CONDITION_SCREENS = {
+        reflect:    { screen: 'reflect',     turns: 5 },
+        lightscreen:{ screen: 'lightScreen', turns: 5 },
+        auroraveil: { screen: 'auroraVeil',  turns: 5 }
+    };
+
+    var WEATHER_DISPLAY = {
+        RainDance:  'Rain',
+        sunnyday:   'Sun',
+        Sandstorm:  'Sand',
+        hail:       'Hail',
+        snow:       'Snow'
+    };
+
+    /**
+     * Get status move effects.
+     * Derives everything from MoveDB (RBDex data) instead of hardcoded maps.
+     * Return shape is unchanged so downstream callers keep working.
      */
     function getStatusMoveEffects(moveName, moveData) {
         var effects = {
@@ -129,196 +157,106 @@
 
         if (!moveData) return effects;
 
-        // Status-inflicting moves
-        var statusMoves = {
-            'Thunder Wave': { targetStatus: 'par' },
-            'Toxic': { targetStatus: 'tox' },
-            'Will-O-Wisp': { targetStatus: 'brn' },
-            'Hypnosis': { targetStatus: 'slp' },
-            'Sleep Powder': { targetStatus: 'slp' },
-            'Spore': { targetStatus: 'slp' },
-            'Sing': { targetStatus: 'slp' },
-            'Lovely Kiss': { targetStatus: 'slp' },
-            'Dark Void': { targetStatus: 'slp' },
-            'Stun Spore': { targetStatus: 'par' },
-            'Glare': { targetStatus: 'par' },
-            'Nuzzle': { targetStatus: 'par' },
-            'Poison Gas': { targetStatus: 'psn' },
-            'Poison Powder': { targetStatus: 'psn' }
-        };
+        var db = window.MoveDB;
+        if (!db) return effects;
 
-        // Stat boosting moves
-        var boostMoves = {
-            'Swords Dance': { atk: 2 },
-            'Dragon Dance': { atk: 1, spe: 1 },
-            'Nasty Plot': { spa: 2 },
-            'Calm Mind': { spa: 1, spd: 1 },
-            'Bulk Up': { atk: 1, def: 1 },
-            'Iron Defense': { def: 2 },
-            'Amnesia': { spd: 2 },
-            'Agility': { spe: 2 },
-            'Rock Polish': { spe: 2 },
-            'Quiver Dance': { spa: 1, spd: 1, spe: 1 },
-            'Shell Smash': { atk: 2, spa: 2, spe: 2, def: -1, spd: -1 },
-            'Curse': { atk: 1, def: 1, spe: -1 },
-            'Growth': { atk: 1, spa: 1 },
-            'Work Up': { atk: 1, spa: 1 },
-            'Hone Claws': { atk: 1, accuracy: 1 },
-            'Coil': { atk: 1, def: 1, accuracy: 1 },
-            'Tail Glow': { spa: 3 },
-            'Cotton Guard': { def: 3 },
-            'Belly Drum': { atk: 6 },
-            'Minimize': { evasion: 2 },
-            'Double Team': { evasion: 1 },
-            'Autotomize': { spe: 2 }
-        };
+        var fx = db.getEffects(moveName);
+        if (!fx) return effects;
 
-        // Stat lowering moves
-        var lowerMoves = {
-            'Growl': { targetBoosts: { atk: -1 } },
-            'Leer': { targetBoosts: { def: -1 } },
-            'Screech': { targetBoosts: { def: -2 } },
-            'Fake Tears': { targetBoosts: { spd: -2 } },
-            'Metal Sound': { targetBoosts: { spd: -2 } },
-            'Scary Face': { targetBoosts: { spe: -2 } },
-            'Cotton Spore': { targetBoosts: { spe: -2 } },
-            'String Shot': { targetBoosts: { spe: -2 } },
-            'Charm': { targetBoosts: { atk: -2 } },
-            'Feather Dance': { targetBoosts: { atk: -2 } },
-            'Tickle': { targetBoosts: { atk: -1, def: -1 } },
-            'Memento': { targetBoosts: { atk: -2, spa: -2 } },
-            'Captivate': { targetBoosts: { spa: -2 } },
-            'Confide': { targetBoosts: { spa: -1 } },
-            'Noble Roar': { targetBoosts: { atk: -1, spa: -1 } },
-            'Parting Shot': { targetBoosts: { atk: -1, spa: -1 } },
-            'King\'s Shield': { targetBoosts: { atk: -2 } },
-            'Baneful Bunker': { targetBoosts: {} }
-        };
-
-        // Hazard moves
-        var hazardMoves = {
-            'Stealth Rock': { hazard: 'stealthRock', side: 'defender' },
-            'Spikes': { hazard: 'spikes', side: 'defender' },
-            'Toxic Spikes': { hazard: 'toxicSpikes', side: 'defender' },
-            'Sticky Web': { hazard: 'stickyWeb', side: 'defender' }
-        };
-
-        // Screen moves
-        var screenMoves = {
-            'Reflect': { screen: 'reflect', turns: 5 },
-            'Light Screen': { screen: 'lightScreen', turns: 5 },
-            'Aurora Veil': { screen: 'auroraVeil', turns: 5 }
-        };
-
-        // Weather moves
-        var weatherMoves = {
-            'Rain Dance': { weather: 'Rain', turns: 5 },
-            'Sunny Day': { weather: 'Sun', turns: 5 },
-            'Sandstorm': { weather: 'Sand', turns: 5 },
-            'Hail': { weather: 'Hail', turns: 5 },
-            'Snowscape': { weather: 'Snow', turns: 5 }
-        };
-
-        // Healing moves
-        var healMoves = {
-            'Recover': { heal: 0.5 },
-            'Soft-Boiled': { heal: 0.5 },
-            'Milk Drink': { heal: 0.5 },
-            'Slack Off': { heal: 0.5 },
-            'Roost': { heal: 0.5 },
-            'Synthesis': { heal: 0.5 },
-            'Morning Sun': { heal: 0.5 },
-            'Moonlight': { heal: 0.5 },
-            'Rest': { heal: 1, targetStatus: 'slp' },
-            'Wish': { heal: 0.5, delayed: true },
-            'Shore Up': { heal: 0.5 },
-            'Strength Sap': { heal: 'target_atk' }
-        };
-
-        if (statusMoves[moveName]) {
-            effects.targetStatus = statusMoves[moveName].targetStatus;
+        if (fx.status) {
+            effects.targetStatus = fx.status;
         }
 
-        if (boostMoves[moveName]) {
-            effects.selfBoosts = boostMoves[moveName];
+        if (fx.selfBoosts) {
+            effects.selfBoosts = fx.selfBoosts;
         }
 
-        if (lowerMoves[moveName]) {
-            effects.targetBoosts = lowerMoves[moveName].targetBoosts;
+        if (fx.targetBoosts) {
+            effects.targetBoosts = fx.targetBoosts;
         }
 
-        if (hazardMoves[moveName]) {
-            effects.hazards = hazardMoves[moveName];
-        }
-
-        if (screenMoves[moveName]) {
-            effects.screens = screenMoves[moveName];
-        }
-
-        if (weatherMoves[moveName]) {
-            effects.weather = weatherMoves[moveName];
-        }
-
-        if (healMoves[moveName]) {
-            effects.heal = healMoves[moveName].heal;
-            if (healMoves[moveName].targetStatus) {
-                effects.selfStatus = healMoves[moveName].targetStatus;
+        if (fx.sideCondition) {
+            var sc = fx.sideCondition;
+            if (SIDE_CONDITION_HAZARDS[sc]) {
+                effects.hazards = SIDE_CONDITION_HAZARDS[sc];
             }
+            if (SIDE_CONDITION_SCREENS[sc]) {
+                effects.screens = SIDE_CONDITION_SCREENS[sc];
+            }
+        }
+
+        if (fx.weather) {
+            var weatherName = WEATHER_DISPLAY[fx.weather] || fx.weather;
+            effects.weather = { weather: weatherName, turns: 5 };
+        }
+
+        if (fx.terrain) {
+            effects.terrain = fx.terrain;
+        }
+
+        if (fx.heal) {
+            effects.heal = fx.heal.numerator / fx.heal.denominator;
+        }
+
+        // Rest: full heal + self-inflicted sleep (not in RBDex structured fields)
+        if (moveName === 'Rest') {
+            effects.heal = 1;
+            effects.selfStatus = 'slp';
+        }
+
+        if (fx.selfStatus) {
+            effects.selfStatus = fx.selfStatus;
+        }
+
+        if (fx.volatileStatus) {
+            effects.other = fx.volatileStatus;
         }
 
         return effects;
     }
 
     /**
-     * Get secondary effect chances from moves
+     * Get secondary effect chances from moves.
+     * Derives from MoveDB (RBDex data) instead of a hardcoded map.
+     *
+     * Returns an array of effect objects in the legacy shape:
+     *   { status?, flinch?, selfBoost?, targetBoost?, chance? }
+     *
+     * Self-boosts that are guaranteed (self.boosts, not secondary) are
+     * also included here with chance omitted so the planner can display
+     * them alongside secondary effects.
      */
     function getSecondaryEffects(moveData) {
         var effects = [];
-
         if (!moveData) return effects;
 
-        // Common secondary effects
-        var secondaryEffectMoves = {
-            'Thunderbolt': { status: 'par', chance: 0.1 },
-            'Thunder': { status: 'par', chance: 0.3 },
-            'Ice Beam': { status: 'frz', chance: 0.1 },
-            'Blizzard': { status: 'frz', chance: 0.1 },
-            'Flamethrower': { status: 'brn', chance: 0.1 },
-            'Fire Blast': { status: 'brn', chance: 0.1 },
-            'Scald': { status: 'brn', chance: 0.3 },
-            'Lava Plume': { status: 'brn', chance: 0.3 },
-            'Sludge Bomb': { status: 'psn', chance: 0.3 },
-            'Poison Jab': { status: 'psn', chance: 0.3 },
-            'Body Slam': { status: 'par', chance: 0.3 },
-            'Discharge': { status: 'par', chance: 0.3 },
-            'Iron Head': { flinch: true, chance: 0.3 },
-            'Rock Slide': { flinch: true, chance: 0.3 },
-            'Fake Out': { flinch: true, chance: 1 },
-            'Air Slash': { flinch: true, chance: 0.3 },
-            'Waterfall': { flinch: true, chance: 0.2 },
-            'Zen Headbutt': { flinch: true, chance: 0.2 },
-            'Close Combat': { selfBoost: { def: -1, spd: -1 } },
-            'Superpower': { selfBoost: { atk: -1, def: -1 } },
-            'Draco Meteor': { selfBoost: { spa: -2 } },
-            'Overheat': { selfBoost: { spa: -2 } },
-            'Leaf Storm': { selfBoost: { spa: -2 } },
-            'Psycho Boost': { selfBoost: { spa: -2 } },
-            'V-create': { selfBoost: { def: -1, spd: -1, spe: -1 } },
-            'Hammer Arm': { selfBoost: { spe: -1 } },
-            'Power-Up Punch': { selfBoost: { atk: 1 } },
-            'Flame Charge': { selfBoost: { spe: 1 } },
-            'Ancient Power': { selfBoost: { atk: 1, def: 1, spa: 1, spd: 1, spe: 1 }, chance: 0.1 },
-            'Shadow Ball': { targetBoost: { spd: -1 }, chance: 0.2 },
-            'Psychic': { targetBoost: { spd: -1 }, chance: 0.1 },
-            'Earth Power': { targetBoost: { spd: -1 }, chance: 0.1 },
-            'Energy Ball': { targetBoost: { spd: -1 }, chance: 0.1 },
-            'Flash Cannon': { targetBoost: { spd: -1 }, chance: 0.1 },
-            'Crunch': { targetBoost: { def: -1 }, chance: 0.2 }
-        };
+        var db = window.MoveDB;
+        if (!db) return effects;
 
         var moveName = moveData.name || '';
-        if (secondaryEffectMoves[moveName]) {
-            effects.push(secondaryEffectMoves[moveName]);
+        var entry = db.get(moveName);
+        if (!entry) return effects;
+
+        var fx = entry.effects;
+
+        // Guaranteed self-boosts on damaging moves (Close Combat, Overheat, etc.)
+        if (fx.selfBoosts && entry.category !== 'Status') {
+            effects.push({ selfBoost: fx.selfBoosts });
+        }
+
+        // Secondary effects from RBDex
+        for (var i = 0; i < fx.secondaries.length; i++) {
+            var sec = fx.secondaries[i];
+            var legacy = {};
+            if (sec.chance) legacy.chance = sec.chance / 100;
+
+            if (sec.status) legacy.status = sec.status;
+            if (sec.volatileStatus === 'flinch') legacy.flinch = true;
+            if (sec.volatileStatus && sec.volatileStatus !== 'flinch') legacy.volatileStatus = sec.volatileStatus;
+            if (sec.targetBoosts) legacy.targetBoost = sec.targetBoosts;
+            if (sec.selfBoosts) legacy.selfBoost = sec.selfBoosts;
+
+            effects.push(legacy);
         }
 
         return effects;
@@ -710,8 +648,10 @@
 
         var moveName = move.name || '';
 
-        var alwaysCrit = ['Storm Throw', 'Frost Breath', 'Zippy Zap', 'Surging Strikes', 'Wicked Blow'];
-        if (alwaysCrit.indexOf(moveName) !== -1) return 1;
+        var db = window.MoveDB;
+        var dbEntry = db ? db.get(moveName) : null;
+
+        if (dbEntry && dbEntry.willCrit) return 1;
 
         var defenderAbility = defender ? (defender.ability || '') : '';
         if (defenderAbility === 'Battle Armor' || defenderAbility === 'Shell Armor') {
@@ -720,13 +660,7 @@
 
         var critStage = 0;
 
-        var highCritMoves = [
-            'Slash', 'Karate Chop', 'Razor Leaf', 'Crabhammer', 'Shadow Claw',
-            'Stone Edge', 'Cross Chop', 'Aeroblast', 'Night Slash', 'Psycho Cut',
-            'Spacial Rend', 'Air Cutter', 'Attack Order', 'Blaze Kick', 'Cross Poison',
-            'Drill Run', 'Leaf Blade', 'Poison Tail', 'Sky Attack', 'Shadow Blast'
-        ];
-        if (highCritMoves.indexOf(moveName) !== -1) critStage++;
+        if (dbEntry && dbEntry.critRatio >= 2) critStage++;
 
         var attackerItem = attacker ? (attacker.item || '') : '';
         var attackerAbility = attacker ? (attacker.ability || '') : '';
