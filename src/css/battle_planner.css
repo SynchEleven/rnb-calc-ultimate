@@ -540,11 +540,21 @@ body.planner-active {
     font-size: 12px;
 }
 
+.tree-switch-needed {
+    font-size: 12px;
+    animation: pulse-switch 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-switch {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
 /* -- Branch group -- */
 .tree-branch-group {
     border-left: 2px solid var(--planner-warning);
-    margin-left: 8px;
-    padding-left: 8px;
+    margin-left: 0;
+    padding-left: 0;
     margin-top: 3px;
     margin-bottom: 3px;
 }

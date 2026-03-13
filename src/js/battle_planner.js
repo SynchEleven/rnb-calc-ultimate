@@ -547,6 +547,7 @@ function BattleAction(type, data) {
     this.targetSlot = data.targetSlot || 0;
     
     // For switches
+    this.targetName = data.targetName || '';
     this.switchTo = data.switchTo || null;
     this.switchToIndex = data.switchToIndex || 0;
     

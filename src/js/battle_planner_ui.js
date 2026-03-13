@@ -2058,6 +2058,7 @@
         var icons = '';
         if (p1KO) icons += '<span class="tree-ko-marker p1-ko">✗ ' + p1Name + '</span>';
         if (p2KO) icons += '<span class="tree-ko-marker p2-ko">✓ ' + p2Name + '</span>';
+        if (node.pendingKO) icons += '<span class="tree-switch-needed" title="Click to resolve KO switch-in">🔄</span>';
         if (node.outcome && node.outcome.varianceWarnings && node.outcome.varianceWarnings.length > 0) {
             icons += '<span class="tree-variance-icon" title="Variance detected">⚠</span>';
         }
@@ -4824,6 +4825,18 @@
     }
 
     /**
+     * After creating a branch node, check if a Pokemon is KO'd and mark
+     * the node so that navigating to it will trigger the switch flow.
+     */
+    function markBranchKOs(node, branchState) {
+        var p1KO = branchState.p1.active && branchState.p1.active.currentHP <= 0;
+        var p2KO = branchState.p2.active && branchState.p2.active.currentHP <= 0;
+        if (p1KO || p2KO) {
+            node.pendingKO = { p1: p1KO, p2: p2KO };
+        }
+    }
+
+    /**
      * Create branches for a single variance warning.
      * Handles roll variance, crits, secondary effects, and flinch.
      */
@@ -4834,7 +4847,6 @@
         var defSide = w.mover === 'p1' ? 'p2' : 'p1';
 
         if (d.minResult && d.maxResult) {
-            // Roll variance: min/max branches
             var minState = currentNode.state.clone();
             minState[defSide].active.currentHP = Math.max(0, d.minResult.hp);
             minState[defSide].active.percentHP = minState[defSide].active.maxHP > 0
@@ -4846,6 +4858,7 @@
                 new BattlePlanner.BattleOutcome('Min Roll (' + w.move + ')', 0.5, 0, { rollType: 'min' }));
             minN.isBestCase = defSide === 'p2';
             minN.isWorstCase = defSide === 'p1';
+            markBranchKOs(minN, minState);
 
             var maxState = currentNode.state.clone();
             maxState[defSide].active.currentHP = Math.max(0, d.maxResult.hp);
@@ -4858,9 +4871,9 @@
                 new BattlePlanner.BattleOutcome('Max Roll (' + w.move + ')', 0.5, 0, { rollType: 'max' }));
             maxN.isBestCase = defSide === 'p1';
             maxN.isWorstCase = defSide === 'p2';
+            markBranchKOs(maxN, maxState);
 
         } else if (d.isCrit) {
-            // Crit variance: normal vs crit branches
             var normState = currentNode.state.clone();
             var normOutcome = new BattlePlanner.BattleOutcome('No Crit (' + w.move + ')', 0.9375, 0, { rollType: 'noCrit' });
             uiState.tree.addBranch(parentNodeId, normState, currentNode.actions, normOutcome);
@@ -4878,9 +4891,9 @@
                 new BattlePlanner.BattleOutcome('Crit! (' + w.move + ')', 0.0625, 0, { rollType: 'crit' }));
             critN.isWorstCase = defSide === 'p1';
             critN.isBestCase = defSide === 'p2';
+            markBranchKOs(critN, critState);
 
         } else if (d.isSecondary && d.secondaryEffect) {
-            // Secondary effect: hit vs miss branches
             var sec = d.secondaryEffect;
             var chance = sec.chance / 100;
 
@@ -4903,12 +4916,10 @@
                 new BattlePlanner.BattleOutcome(effectDesc + ' (' + w.move + ' ' + sec.chance + '%)', chance, 0, { rollType: 'secondary' }));
 
         } else if (d.isFlinch) {
-            // Flinch variance: flinch vs no flinch
             var noFlinchState = currentNode.state.clone();
             uiState.tree.addBranch(parentNodeId, noFlinchState, currentNode.actions,
                 new BattlePlanner.BattleOutcome('No Flinch (' + w.move + ')', 1 - d.flinchChance, 0, { rollType: 'noFlinch' }));
 
-            // Flinch branch: second mover's damage is reversed (they didn't move)
             var flinchState = currentNode.state.clone();
             uiState.tree.addBranch(parentNodeId, flinchState, currentNode.actions,
                 new BattlePlanner.BattleOutcome('Flinch! (' + w.move + ' ' + Math.round(d.flinchChance * 100) + '%)', d.flinchChance, 0, { rollType: 'flinch' }));
@@ -5172,17 +5183,20 @@
                 var p1Name = state.p1.active.name;
                 var p2Name = state.p2.active.name;
 
-                function getActionDesc(actionObj, name) {
-                    if (!actionObj) return name + ' does nothing';
+                function getActionDesc(actionObj, name, moveRes) {
+                    if (!actionObj) return name + ': nothing';
                     if (actionObj.type === 'switch') {
-                        return name + ' switches to ' + actionObj.targetName;
-                    } else {
-                        return name + ' uses ' + actionObj.moveName;
+                        return name + ' → ' + actionObj.targetName;
                     }
+                    var desc = name + ': ' + actionObj.moveName;
+                    if (moveRes && moveRes.failed) desc += ' (FAILED)';
+                    return desc;
                 }
 
-                var p1Desc = getActionDesc(uiState.p1Action, p1Name);
-                var p2Desc = getActionDesc(uiState.p2Action, p2Name);
+                var p1MoveRes = firstMover === 'p1' ? firstMoveResult : secondMoveResult;
+                var p2MoveRes = firstMover === 'p2' ? firstMoveResult : secondMoveResult;
+                var p1Desc = getActionDesc(uiState.p1Action, p1Name, p1MoveRes);
+                var p2Desc = getActionDesc(uiState.p2Action, p2Name, p2MoveRes);
                 var actionDesc = firstMover === 'p1' ? p1Desc + ', ' + p2Desc : p2Desc + ', ' + p1Desc;
 
                 if (endOfTurnEffects.length > 0) {
@@ -5514,6 +5528,9 @@
     /**
      * Enhanced move application that uses action options (crit, hits, effects)
      */
+    // Moves that fail entirely unless it's the user's first turn on the field
+    var FIRST_TURN_ONLY_MOVES = { 'fakeout': true, 'firstimpression': true };
+
     function applyMoveToStateEnhanced(attacker, defender, action, gen, state) {
         var moveName = action.moveName;
         var isCrit = action.isCrit || false;
@@ -5521,6 +5538,15 @@
         var applyEffect = action.applyEffect || false;
         var customEffects = action.customEffects || {};
         var moveResult = { range: null, moveData: null };
+
+        // Check first-turn-only moves (Fake Out, First Impression)
+        var moveId = (moveName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (FIRST_TURN_ONLY_MOVES[moveId] && attacker.turnsOnField !== undefined && attacker.turnsOnField > 0) {
+            moveResult.failed = true;
+            moveResult.failReason = moveName + ' fails after the first turn';
+            moveResult.range = { min: 0, max: 0, avg: 0, rolls: [] };
+            return moveResult;
+        }
 
         try {
             var attackerPokemon = CalcIntegration.snapshotToPokemon(attacker, gen);
@@ -5945,6 +5971,56 @@
 
     function selectNode(nodeId) {
         uiState.tree.navigate(nodeId);
+
+        // Check if this branch has a pending KO that needs switch resolution
+        var node = uiState.tree.getNode(nodeId);
+        if (node && node.pendingKO) {
+            var ko = node.pendingKO;
+            delete node.pendingKO;
+
+            var handleSwitch = function (side, onDone) {
+                if (side === 'p2') {
+                    var prediction = tryPredictP2SwitchIn(node.state);
+                    if (prediction) {
+                        showAIPredictBanner(prediction, node.state, function (slot) {
+                            if (BattlePlannerLogic) BattlePlannerLogic.performSwitch(node.state, 'p2', slot);
+                            syncActiveToTeam(node.state);
+                            renderStage();
+                            renderTree();
+                            if (onDone) onDone();
+                        });
+                    } else {
+                        showKOReplacementModal('p2', node.state, function (slot) {
+                            if (slot !== null && slot !== undefined) {
+                                if (BattlePlannerLogic) BattlePlannerLogic.performSwitch(node.state, 'p2', slot);
+                                syncActiveToTeam(node.state);
+                            }
+                            renderStage();
+                            renderTree();
+                            if (onDone) onDone();
+                        });
+                    }
+                } else {
+                    showKOReplacementModal('p1', node.state, function (slot) {
+                        if (slot !== null && slot !== undefined) {
+                            if (BattlePlannerLogic) BattlePlannerLogic.performSwitch(node.state, 'p1', slot);
+                            syncActiveToTeam(node.state);
+                        }
+                        renderStage();
+                        renderTree();
+                        if (onDone) onDone();
+                    });
+                }
+            };
+
+            if (ko.p1 && ko.p2) {
+                handleSwitch('p1', function () { handleSwitch('p2', null); });
+            } else if (ko.p2) {
+                handleSwitch('p2', null);
+            } else if (ko.p1) {
+                handleSwitch('p1', null);
+            }
+        }
     }
 
     function toggleNodeExpand(nodeId) {
