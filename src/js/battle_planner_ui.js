@@ -2764,7 +2764,7 @@
         else if (boost < 0) multiplier = 2 / (2 - boost);
         var speed = Math.floor(baseSpe * multiplier);
         var status = (pokemon.status || '').toLowerCase();
-        if (status === 'paralyzed' || status === 'par') speed = Math.floor(speed * 0.5);
+        if (status === 'paralyzed' || status === 'par') speed = Math.floor(speed * 0.25); // RnB: 75% speed reduction
         if (pokemon.item === 'Choice Scarf') speed = Math.floor(speed * 1.5);
         if (field && field.tailwind) speed = speed * 2;
         return speed;

@@ -366,10 +366,10 @@ PokemonSnapshot.prototype.getEffectiveSpeed = function(field) {
     
     var speed = Math.floor(baseSpe * multiplier);
     
-    // Paralysis halves speed (handle both display and code forms)
+    // RnB: Paralysis reduces speed by 75% (25% remaining)
     var s = (this.status || '').toLowerCase();
     if (s === 'paralyzed' || s === 'par') {
-        speed = Math.floor(speed * 0.5);
+        speed = Math.floor(speed * 0.25);
     }
     
     // Choice Scarf

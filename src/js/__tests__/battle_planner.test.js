@@ -241,9 +241,9 @@ describe('getEffectiveSpeed', () => {
     expect(p.getEffectiveSpeed({})).toBe(100);
   });
 
-  test('paralysis halves speed (after boosts)', () => {
+  test('paralysis reduces speed by 75% (RnB)', () => {
     const p = makePokemon({ stats: { spe: 200 }, status: 'Paralyzed' });
-    expect(p.getEffectiveSpeed({})).toBe(100);
+    expect(p.getEffectiveSpeed({})).toBe(50); // 200 * 0.25 = 50
   });
 
   test('Choice Scarf gives 1.5x', () => {
@@ -258,14 +258,14 @@ describe('getEffectiveSpeed', () => {
 
   test('paralysis + Choice Scarf stacks correctly', () => {
     const p = makePokemon({ stats: { spe: 200 }, status: 'Paralyzed', item: 'Choice Scarf' });
-    // 200 base -> 100 (par) -> 150 (scarf)
-    expect(p.getEffectiveSpeed({})).toBe(150);
+    // 200 base -> 50 (par 75% reduction) -> 75 (scarf 1.5x)
+    expect(p.getEffectiveSpeed({})).toBe(75);
   });
 
   test('+1 boost + paralysis + Choice Scarf', () => {
     const p = makePokemon({ stats: { spe: 200 }, boosts: { spe: 1 }, status: 'Paralyzed', item: 'Choice Scarf' });
-    // 200 * 1.5 = 300 -> floor(300*0.5) = 150 -> floor(150*1.5) = 225
-    expect(p.getEffectiveSpeed({})).toBe(225);
+    // 200 * 1.5 = 300 -> floor(300*0.25) = 75 -> floor(75*1.5) = 112
+    expect(p.getEffectiveSpeed({})).toBe(112);
   });
 });
 
