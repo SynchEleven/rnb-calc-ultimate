@@ -93,15 +93,24 @@ describe('calc', () => {
           expect(result.desc()).toBe(
             '0 Atk burned Mew Explosion vs. 0 HP / 0 Def Vulpix on a critical hit: 729-858 (335.9 - 395.3%) -- guaranteed OHKO'
           );
-        } else if (gen === 5) {
-          expect(result.range()).toEqual([364, 429]);
+        } else if (gen === 5 || gen === 6) {
+          // Gen 5-6: Explosion no longer halves defense (standard Smogon)
+          if (gen === 5) {
+            expect(result.range()).toEqual([364, 429]);
+            expect(result.desc()).toBe(
+              '0 Atk burned Mew Explosion vs. 0 HP / 0 Def Vulpix on a critical hit: 364-429 (167.7 - 197.6%) -- guaranteed OHKO'
+            );
+          } else {
+            expect(result.range()).toEqual([273, 321]);
+            expect(result.desc()).toBe(
+              '0 Atk burned Mew Explosion vs. 0 HP / 0 Def Vulpix on a critical hit: 273-321 (125.8 - 147.9%) -- guaranteed OHKO'
+            );
+          }
+        } else if (gen >= 7) {
+          // RnB: Explosion halves target's defense on damage calculation (restored from pre-Gen 5)
+          expect(result.range()).toEqual([545, 642]);
           expect(result.desc()).toBe(
-            '0 Atk burned Mew Explosion vs. 0 HP / 0 Def Vulpix on a critical hit: 364-429 (167.7 - 197.6%) -- guaranteed OHKO'
-          );
-        } else if (gen >= 6) {
-          expect(result.range()).toEqual([273, 321]);
-          expect(result.desc()).toBe(
-            '0 Atk burned Mew Explosion vs. 0 HP / 0 Def Vulpix on a critical hit: 273-321 (125.8 - 147.9%) -- guaranteed OHKO'
+            '0 Atk burned Mew Explosion vs. 0 HP / 0 Def Vulpix on a critical hit: 545-642 (251.1 - 295.8%) -- guaranteed OHKO'
           );
         }
         explosion.isCrit = false;
@@ -112,8 +121,12 @@ describe('calc', () => {
           expect(result.range()).toEqual([149, 176]);
         } else if (gen > 2 && gen < 5) {
           expect(result.range()).toEqual([182, 215]);
-        } else {
+        } else if (gen === 5 || gen === 6) {
+          // Gen 5-6: no defense halving
           expect(result.range()).toEqual([91, 107]);
+        } else {
+          // RnB gen 7+: defense halving restored
+          expect(result.range()).toEqual([181, 214]);
         }
       });
     });
@@ -268,9 +281,10 @@ describe('calc', () => {
             '+2 252 SpA Mewtwo Psystrike vs. 248 HP / 184+ Def Marvel Scale Milotic in Psychic Terrain: 331-391 (84.2 - 99.4%) -- guaranteed 2HKO after burn damage'
           );
         } else {
-          expect(result.range()).toEqual([288, 339]);
+          // RnB: Terrain damage boost is 50% (1.5x) for all gens, same as pre-Gen 8
+          expect(result.range()).toEqual([331, 391]);
           expect(result.desc()).toBe(
-            '+2 252 SpA Mewtwo Psystrike vs. 248 HP / 184+ Def Marvel Scale Milotic in Psychic Terrain: 288-339 (73.2 - 86.2%) -- guaranteed 2HKO after burn damage'
+            '+2 252 SpA Mewtwo Psystrike vs. 248 HP / 184+ Def Marvel Scale Milotic in Psychic Terrain: 331-391 (84.2 - 99.4%) -- guaranteed 2HKO after burn damage'
           );
         }
         result = calculate(Mewtwo, Milotic, sPunch, field);

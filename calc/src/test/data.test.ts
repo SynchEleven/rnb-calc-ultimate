@@ -40,7 +40,10 @@ describe('Generations', () => {
     }
   });
 
-  test('moves', () => {
+  // TODO: RnB-specific test needed — RnB intentionally changes move types/BPs from @pkmn/dex
+  // (e.g., Super Fang Normal→Dark, Absorb BP 40→20, etc.)
+  // This test compares calc data against Smogon standard @pkmn/dex and will fail for RnB overrides.
+  test.skip('moves', () => {
     for (const gen of gens) {
       const p = Array.from(pkmn.Generations.get(gen).moves);
       const c = new Map<I.ID, I.Move>();
@@ -61,7 +64,10 @@ describe('Generations', () => {
     }
   });
 
-  test('species', () => {
+  // TODO: RnB-specific test needed — RnB intentionally changes species stats from @pkmn/dex
+  // (e.g., Azumarill Atk 65→50, Diggersby Atk 71→56, etc.)
+  // This test compares calc data against Smogon standard @pkmn/dex and will fail for RnB overrides.
+  test.skip('species', () => {
     for (const gen of gens) {
       const p = Array.from(pkmn.Generations.get(gen).species);
       const c = new Map<I.ID, I.Specie>();
