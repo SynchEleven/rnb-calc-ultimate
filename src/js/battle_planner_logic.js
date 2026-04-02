@@ -269,6 +269,33 @@
                 pokemon.item = '';
                 effects.push(pokemon.name + ' ate its Oran Berry and recovered 10 HP');
             }
+
+            // Pinch berries (Figy, Wiki, Mago, Aguav, Iapapa): heal 1/3 maxHP at ≤25% HP (gen 7+)
+            var pinchBerries = ['Figy Berry', 'Wiki Berry', 'Mago Berry', 'Aguav Berry', 'Iapapa Berry'];
+            if (pinchBerries.indexOf(item) !== -1 && hpPercent <= 0.25) {
+                var heal = Math.max(1, Math.floor(pokemon.maxHP / 3));
+                pokemon.currentHP = Math.min(pokemon.maxHP, pokemon.currentHP + heal);
+                pokemon.item = '';
+                effects.push(pokemon.name + ' ate its ' + item + ' and recovered ' + heal + ' HP');
+            }
+        });
+
+        // Flame Orb / Toxic Orb activation (end-of-turn, only if no existing status)
+        ['p1', 'p2'].forEach(function (side) {
+            var pokemon = state[side].active;
+            if (!pokemon || pokemon.currentHP <= 0) return;
+
+            var item = pokemon.item || '';
+            if (!pokemon.status) {
+                if (item === 'Flame Orb') {
+                    pokemon.status = 'brn';
+                    effects.push(pokemon.name + ' was burned by its Flame Orb!');
+                } else if (item === 'Toxic Orb') {
+                    pokemon.status = 'tox';
+                    pokemon.toxicCounter = 1;
+                    effects.push(pokemon.name + ' was badly poisoned by its Toxic Orb!');
+                }
+            }
         });
 
         // Volatile status effects (Leech Seed, Curse, Aqua Ring, Ingrain)
@@ -783,7 +810,7 @@
 
     /**
      * Simulate applying a specific damage value to a defender, including item
-     * effects (Focus Sash, berry triggers). Returns the resulting HP.
+     * effects (Focus Sash, Focus Band, berry triggers). Returns the resulting HP.
      *
      * This does NOT mutate the original -- it works on copies of HP/item.
      */
@@ -795,6 +822,10 @@
         if (item === 'Focus Sash' && hp === defenderMaxHP && damage >= hp) {
             hp = 1;
             itemConsumed = true;
+        // Focus Band: 10% chance to survive with 1 HP (we model it as always triggering for worst-case)
+        } else if (item === 'Focus Band' && damage >= hp) {
+            hp = 1;
+            itemConsumed = false; // Focus Band is not consumed
         } else {
             hp = Math.max(0, hp - damage);
         }
@@ -807,6 +838,13 @@
                 itemConsumed = true;
             } else if (item === 'Oran Berry' && pct <= 0.5) {
                 hp = Math.min(defenderMaxHP, hp + 10);
+                itemConsumed = true;
+            }
+
+            // Pinch berries: heal 1/3 maxHP at ≤25% HP (gen 7+)
+            var pinchBerries = ['Figy Berry', 'Wiki Berry', 'Mago Berry', 'Aguav Berry', 'Iapapa Berry'];
+            if (!itemConsumed && pinchBerries.indexOf(item) !== -1 && pct <= 0.25) {
+                hp = Math.min(defenderMaxHP, hp + Math.max(1, Math.floor(defenderMaxHP / 3)));
                 itemConsumed = true;
             }
         }

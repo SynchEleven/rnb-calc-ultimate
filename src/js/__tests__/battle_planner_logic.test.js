@@ -1894,3 +1894,203 @@ describe('applyEndOfTurnEffects - terrain turn decay', () => {
     expect(effects).toContainEqual(expect.stringContaining('terrain faded'));
   });
 });
+
+// ---------------------------------------------------------------------------
+// applyEndOfTurnEffects - Flame Orb / Toxic Orb activation
+// ---------------------------------------------------------------------------
+describe('applyEndOfTurnEffects - Flame Orb / Toxic Orb', () => {
+  test('Flame Orb burns a Pokemon with no status', () => {
+    const state = makeState(
+      { currentHP: 300, maxHP: 300, item: 'Flame Orb', status: '' },
+      null
+    );
+    const effects = Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.status).toBe('brn');
+    expect(effects).toContainEqual(expect.stringContaining('burned by its Flame Orb'));
+  });
+
+  test('Flame Orb does not burn if already statused', () => {
+    const state = makeState(
+      { currentHP: 300, maxHP: 300, item: 'Flame Orb', status: 'psn' },
+      null
+    );
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.status).toBe('psn');
+  });
+
+  test('Toxic Orb badly poisons a Pokemon with no status', () => {
+    const state = makeState(
+      { currentHP: 300, maxHP: 300, item: 'Toxic Orb', status: '' },
+      null
+    );
+    const effects = Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.status).toBe('tox');
+    expect(state.p1.active.toxicCounter).toBe(1);
+    expect(effects).toContainEqual(expect.stringContaining('badly poisoned by its Toxic Orb'));
+  });
+
+  test('Toxic Orb does not poison if already statused', () => {
+    const state = makeState(
+      { currentHP: 300, maxHP: 300, item: 'Toxic Orb', status: 'brn' },
+      null
+    );
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.status).toBe('brn');
+  });
+
+  test('Flame Orb does not activate on fainted Pokemon', () => {
+    const state = makeState(
+      { currentHP: 0, maxHP: 300, item: 'Flame Orb', status: '' },
+      null
+    );
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.status).toBe('');
+  });
+
+  test('p2 Toxic Orb activates correctly', () => {
+    const state = makeState(
+      null,
+      { currentHP: 340, maxHP: 340, item: 'Toxic Orb', status: '' }
+    );
+    const effects = Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p2.active.status).toBe('tox');
+    expect(effects).toContainEqual(expect.stringContaining('Toxic Orb'));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyEndOfTurnEffects - Pinch berry healing
+// ---------------------------------------------------------------------------
+describe('applyEndOfTurnEffects - Pinch berries', () => {
+  const pinchBerries = ['Figy Berry', 'Wiki Berry', 'Mago Berry', 'Aguav Berry', 'Iapapa Berry'];
+
+  pinchBerries.forEach(berry => {
+    test(`${berry} heals at ≤25% HP`, () => {
+      // 300 maxHP, 25% = 75, set currentHP to 74 (below threshold)
+      const state = makeState(
+        { currentHP: 74, maxHP: 300, item: berry },
+        null
+      );
+      const effects = Logic.applyEndOfTurnEffects(state, 3);
+      const expectedHeal = Math.floor(300 / 3); // 100
+      expect(state.p1.active.currentHP).toBe(74 + expectedHeal);
+      expect(state.p1.active.item).toBe('');
+      expect(effects).toContainEqual(expect.stringContaining(berry));
+    });
+  });
+
+  test('Figy Berry does NOT heal above 25% HP', () => {
+    // 25% of 300 = 75, set to 76 (above threshold)
+    const state = makeState(
+      { currentHP: 76, maxHP: 300, item: 'Figy Berry' },
+      null
+    );
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(76);
+    expect(state.p1.active.item).toBe('Figy Berry');
+  });
+
+  test('Figy Berry heals exactly at 25% HP', () => {
+    // 25% of 300 = 75
+    const state = makeState(
+      { currentHP: 75, maxHP: 300, item: 'Figy Berry' },
+      null
+    );
+    const effects = Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(75 + Math.floor(300 / 3));
+    expect(state.p1.active.item).toBe('');
+    expect(effects).toContainEqual(expect.stringContaining('Figy Berry'));
+  });
+
+  test('Pinch berry does not overheal past maxHP', () => {
+    // maxHP 120, 25% = 30, heal = floor(120/3) = 40
+    // currentHP 30, should cap at min(120, 30+40) = 70
+    const state = makeState(
+      { currentHP: 30, maxHP: 120, item: 'Aguav Berry' },
+      null
+    );
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(70);
+  });
+
+  test('Pinch berry consumed on fainted Pokemon does not trigger', () => {
+    const state = makeState(
+      { currentHP: 0, maxHP: 300, item: 'Figy Berry' },
+      null
+    );
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.item).toBe('Figy Berry');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// simulateHPAfterDamage - Focus Band
+// ---------------------------------------------------------------------------
+describe('simulateHPAfterDamage - Focus Band', () => {
+  test('Focus Band survives lethal damage with 1 HP', () => {
+    const result = Logic.simulateHPAfterDamage(100, 100, 200, 'Focus Band');
+    expect(result.hp).toBe(1);
+    expect(result.fainted).toBe(false);
+    expect(result.itemConsumed).toBe(false); // Focus Band is not consumed
+  });
+
+  test('Focus Band survives exact lethal damage', () => {
+    const result = Logic.simulateHPAfterDamage(50, 100, 50, 'Focus Band');
+    expect(result.hp).toBe(1);
+    expect(result.fainted).toBe(false);
+  });
+
+  test('Focus Band does not trigger on non-lethal damage', () => {
+    const result = Logic.simulateHPAfterDamage(100, 100, 30, 'Focus Band');
+    expect(result.hp).toBe(70);
+    expect(result.fainted).toBe(false);
+  });
+
+  test('Focus Band works when not at full HP', () => {
+    const result = Logic.simulateHPAfterDamage(50, 100, 80, 'Focus Band');
+    expect(result.hp).toBe(1);
+    expect(result.fainted).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// simulateHPAfterDamage - Pinch berries
+// ---------------------------------------------------------------------------
+describe('simulateHPAfterDamage - Pinch berries', () => {
+  test('Figy Berry triggers at ≤25% HP after damage', () => {
+    // 400 maxHP, take 350 damage: 50 HP left = 12.5%, trigger berry
+    // heal = floor(400/3) = 133
+    const result = Logic.simulateHPAfterDamage(400, 400, 350, 'Figy Berry');
+    expect(result.hp).toBe(50 + 133);
+    expect(result.itemConsumed).toBe(true);
+  });
+
+  test('Wiki Berry does not trigger above 25% HP', () => {
+    // 400 maxHP, take 200 damage: 200 HP left = 50%, no trigger
+    const result = Logic.simulateHPAfterDamage(400, 400, 200, 'Wiki Berry');
+    expect(result.hp).toBe(200);
+    expect(result.itemConsumed).toBe(false);
+  });
+
+  test('Mago Berry triggers at exactly 25% HP', () => {
+    // 400 maxHP, take 300 damage: 100 HP left = 25%, trigger
+    const result = Logic.simulateHPAfterDamage(400, 400, 300, 'Mago Berry');
+    expect(result.hp).toBe(100 + Math.floor(400 / 3));
+    expect(result.itemConsumed).toBe(true);
+  });
+
+  test('Pinch berry does not trigger if KOd', () => {
+    const result = Logic.simulateHPAfterDamage(100, 400, 100, 'Iapapa Berry');
+    expect(result.hp).toBe(0);
+    expect(result.fainted).toBe(true);
+    expect(result.itemConsumed).toBe(false);
+  });
+
+  test('Aguav Berry does not overheal', () => {
+    // 120 maxHP, currently at 120, take 100: 20 HP = 16.7%, trigger
+    // heal = floor(120/3) = 40, result = min(120, 20+40) = 60
+    const result = Logic.simulateHPAfterDamage(120, 120, 100, 'Aguav Berry');
+    expect(result.hp).toBe(60);
+    expect(result.itemConsumed).toBe(true);
+  });
+});
