@@ -396,6 +396,9 @@
                                 </div>
                             </div>
                             
+                            <!-- Probability Cloud / Turn Preview -->
+                            <div id="cloud-outcomes" class="cloud-outcomes"></div>
+                            
                             <!-- Status/Effect Editor Modal -->
                             <div id="effect-editor-modal" class="planner-modal" style="display: none;">
                                 <div class="modal-overlay"></div>

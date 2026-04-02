@@ -237,7 +237,10 @@ export function calculateSMSSSV(
 
   move.type = type;
 
-  // FIXME: this is incorrect, should be move.flags.heal, not move.drain
+  // NOTE: Triage boosts all healing moves, but in the damage calc context only draining moves
+  // (which deal damage and heal) go through this formula. Non-damaging heals (Recover, etc.)
+  // don't produce damage results. Using move.drain is correct here for damage calculation.
+  // If move.flags.heal is added to MoveFlags in the future, update this check.
   if ((attacker.hasAbility('Triage') && move.drain) ||
       (attacker.hasAbility('Gale Wings') &&
        move.hasType('Flying') &&
@@ -901,7 +904,7 @@ export function calculateBPModsSMSSSV(
     const type2Effectiveness = defender.types[1] ? getMoveEffectiveness(
       gen,
       move,
-      defender.types[0],
+      defender.types[1],
       isGhostRevealed,
       field.isGravity,
       isRingTarget

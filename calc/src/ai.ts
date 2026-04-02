@@ -60,7 +60,12 @@ const powderMoves: string[] = [
     "Cotton Spore", "Magic Powder", "Poison Powder", "Powder", "Rage Powder", "Sleep Powder", "Spore", "Stun Spore"
 ];
 const statusApplyingMoves: string[] = [
-    "Grass Whistle", ""
+    "Grass Whistle", "Dark Void", "Hypnosis", "Lovely Kiss", "Sing",
+    "Sleep Powder", "Spore", "Yawn",
+    "Glare", "Nuzzle", "Stun Spore", "Thunder Wave", "Zap Cannon",
+    "Poison Gas", "Poison Powder", "Toxic",
+    "Will-O-Wisp",
+    "Toxic Thread"
 ]
 
 // move functions
