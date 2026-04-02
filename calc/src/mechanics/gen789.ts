@@ -358,7 +358,7 @@ export function calculateSMSSSV(
     return result;
   }
 
-  desc.HPEVs = `${defender.ivs.hp} HP`;
+  desc.HPEVs = `${defender.evs.hp} HP`;
 
   const fixedDamage = handleFixedDamageMoves(attacker, move);
   if (fixedDamage) {
