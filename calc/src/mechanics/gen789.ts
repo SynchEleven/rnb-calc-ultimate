@@ -243,8 +243,7 @@ export function calculateSMSSSV(
   // If move.flags.heal is added to MoveFlags in the future, update this check.
   if ((attacker.hasAbility('Triage') && move.drain) ||
       (attacker.hasAbility('Gale Wings') &&
-       move.hasType('Flying') &&
-       attacker.curHP() === attacker.maxHP())) {
+       move.hasType('Flying'))) { // RnB: Gale Wings always boosts, regardless of HP
     move.priority = 1;
     desc.attackerAbility = attacker.ability;
   }
