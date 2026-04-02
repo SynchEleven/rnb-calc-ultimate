@@ -83,29 +83,45 @@
                 var statusDamage = 0;
                 var statusName = '';
                 var statusLower = pokemon.status.toLowerCase();
+                var ability = (pokemon.ability || '').replace(/\s/g, '').toLowerCase();
 
-                if (statusLower === 'psn' || statusLower === 'poison' || statusLower === 'poisoned') {
-                    statusDamage = Math.max(1, Math.floor(pokemon.maxHP / 8));
-                    statusName = 'Poison';
-                } else if (statusLower === 'tox' || statusLower === 'toxic' || statusLower === 'badly poisoned') {
-                    var toxicCounter = pokemon.toxicCounter || 1;
-                    statusDamage = Math.max(1, Math.floor(pokemon.maxHP * toxicCounter / 16));
-                    pokemon.toxicCounter = Math.min(15, toxicCounter + 1);
-                    statusName = 'Toxic';
-                } else if (statusLower === 'brn' || statusLower === 'burn' || statusLower === 'burned') {
-                    statusDamage = gen >= 7
-                        ? Math.max(1, Math.floor(pokemon.maxHP / 16))
-                        : Math.max(1, Math.floor(pokemon.maxHP / 8));
-                    statusName = 'Burn';
-                }
+                var isPoisoned = statusLower === 'psn' || statusLower === 'poison' || statusLower === 'poisoned';
+                var isToxic = statusLower === 'tox' || statusLower === 'toxic' || statusLower === 'badly poisoned';
 
-                if (statusDamage > 0) {
-                    if (pokemon.ability && pokemon.ability === 'Magic Guard') {
-                        // Magic Guard blocks indirect damage
-                    } else {
-                        pokemon.currentHP = Math.max(0, pokemon.currentHP - statusDamage);
-                        pokemon.hasFainted = pokemon.currentHP <= 0;
-                        effects.push(pokemon.name + ' takes ' + statusDamage + ' damage from ' + statusName);
+                // Poison Heal: heal 1/8 max HP instead of taking poison/toxic damage
+                if ((isPoisoned || isToxic) && ability === 'poisonheal') {
+                    var heal = Math.max(1, Math.floor(pokemon.maxHP / 8));
+                    if (pokemon.currentHP < pokemon.maxHP) {
+                        pokemon.currentHP = Math.min(pokemon.maxHP, pokemon.currentHP + heal);
+                        effects.push(pokemon.name + ' recovers ' + heal + ' HP from Poison Heal');
+                    }
+                    if (isToxic) {
+                        pokemon.toxicCounter = Math.min(15, (pokemon.toxicCounter || 1) + 1);
+                    }
+                } else {
+                    if (isPoisoned) {
+                        statusDamage = Math.max(1, Math.floor(pokemon.maxHP / 8));
+                        statusName = 'Poison';
+                    } else if (isToxic) {
+                        var toxicCounter = pokemon.toxicCounter || 1;
+                        statusDamage = Math.max(1, Math.floor(pokemon.maxHP * toxicCounter / 16));
+                        pokemon.toxicCounter = Math.min(15, toxicCounter + 1);
+                        statusName = 'Toxic';
+                    } else if (statusLower === 'brn' || statusLower === 'burn' || statusLower === 'burned') {
+                        statusDamage = gen >= 7
+                            ? Math.max(1, Math.floor(pokemon.maxHP / 16))
+                            : Math.max(1, Math.floor(pokemon.maxHP / 8));
+                        statusName = 'Burn';
+                    }
+
+                    if (statusDamage > 0) {
+                        if (ability === 'magicguard') {
+                            // Magic Guard blocks indirect damage
+                        } else {
+                            pokemon.currentHP = Math.max(0, pokemon.currentHP - statusDamage);
+                            pokemon.hasFainted = pokemon.currentHP <= 0;
+                            effects.push(pokemon.name + ' takes ' + statusDamage + ' damage from ' + statusName);
+                        }
                     }
                 }
             }
@@ -161,6 +177,49 @@
             });
         }
 
+        // Ability-based weather interactions (Rain Dish, Dry Skin, Ice Body, Solar Power)
+        if (state.field && state.field.weather && state.field.weather !== 'None') {
+            var weather = state.field.weather.toLowerCase();
+
+            ['p1', 'p2'].forEach(function (side) {
+                var pokemon = state[side].active;
+                if (!pokemon || pokemon.currentHP <= 0) return;
+
+                var ability = (pokemon.ability || '').replace(/\s/g, '').toLowerCase();
+
+                if ((weather === 'rain' || weather === 'raindance' || weather === 'heavyrain') && ability === 'raindish') {
+                    var heal = Math.max(1, Math.floor(pokemon.maxHP / 16));
+                    if (pokemon.currentHP < pokemon.maxHP) {
+                        pokemon.currentHP = Math.min(pokemon.maxHP, pokemon.currentHP + heal);
+                        effects.push(pokemon.name + ' recovers ' + heal + ' HP from Rain Dish');
+                    }
+                }
+
+                if (ability === 'dryskin') {
+                    if (weather === 'rain' || weather === 'raindance' || weather === 'heavyrain') {
+                        var heal = Math.max(1, Math.floor(pokemon.maxHP / 8));
+                        if (pokemon.currentHP < pokemon.maxHP) {
+                            pokemon.currentHP = Math.min(pokemon.maxHP, pokemon.currentHP + heal);
+                            effects.push(pokemon.name + ' recovers ' + heal + ' HP from Dry Skin');
+                        }
+                    } else if (weather === 'sun' || weather === 'sunnyday' || weather === 'harshsunshine') {
+                        var damage = Math.max(1, Math.floor(pokemon.maxHP / 8));
+                        pokemon.currentHP = Math.max(0, pokemon.currentHP - damage);
+                        pokemon.hasFainted = pokemon.currentHP <= 0;
+                        effects.push(pokemon.name + ' takes ' + damage + ' damage from Dry Skin');
+                    }
+                }
+
+                if ((weather === 'hail' || weather === 'snow') && ability === 'icebody') {
+                    var heal = Math.max(1, Math.floor(pokemon.maxHP / 16));
+                    if (pokemon.currentHP < pokemon.maxHP) {
+                        pokemon.currentHP = Math.min(pokemon.maxHP, pokemon.currentHP + heal);
+                        effects.push(pokemon.name + ' recovers ' + heal + ' HP from Ice Body');
+                    }
+                }
+            });
+        }
+
         // Leftovers / Black Sludge
         ['p1', 'p2'].forEach(function (side) {
             var pokemon = state[side].active;
@@ -212,6 +271,78 @@
             }
         });
 
+        // Volatile status effects (Leech Seed, Curse, Aqua Ring, Ingrain)
+        ['p1', 'p2'].forEach(function (side) {
+            var pokemon = state[side].active;
+            if (!pokemon || pokemon.currentHP <= 0) return;
+            if (!pokemon.volatiles) return;
+
+            var ability = (pokemon.ability || '').replace(/\s/g, '').toLowerCase();
+
+            // Leech Seed: drain 1/8 maxHP, heal the other side
+            if (pokemon.volatiles.leechseed) {
+                var otherSide = side === 'p1' ? 'p2' : 'p1';
+                var otherPokemon = state[otherSide].active;
+                if (ability !== 'magicguard') {
+                    var drain = Math.max(1, Math.floor(pokemon.maxHP / 8));
+                    pokemon.currentHP = Math.max(0, pokemon.currentHP - drain);
+                    pokemon.hasFainted = pokemon.currentHP <= 0;
+                    effects.push(pokemon.name + ' lost ' + drain + ' HP from Leech Seed');
+                    if (otherPokemon && otherPokemon.currentHP > 0 && otherPokemon.currentHP < otherPokemon.maxHP) {
+                        otherPokemon.currentHP = Math.min(otherPokemon.maxHP, otherPokemon.currentHP + drain);
+                        effects.push(otherPokemon.name + ' recovered ' + drain + ' HP from Leech Seed');
+                    }
+                }
+            }
+
+            // Curse (Ghost): 1/4 maxHP damage
+            if (pokemon.volatiles.curse) {
+                if (ability !== 'magicguard') {
+                    var curseDamage = Math.max(1, Math.floor(pokemon.maxHP / 4));
+                    pokemon.currentHP = Math.max(0, pokemon.currentHP - curseDamage);
+                    pokemon.hasFainted = pokemon.currentHP <= 0;
+                    effects.push(pokemon.name + ' lost ' + curseDamage + ' HP from Curse');
+                }
+            }
+
+            // Aqua Ring: heal 1/16 maxHP
+            if (pokemon.volatiles.aquaring) {
+                var heal = Math.max(1, Math.floor(pokemon.maxHP / 16));
+                if (pokemon.currentHP < pokemon.maxHP) {
+                    pokemon.currentHP = Math.min(pokemon.maxHP, pokemon.currentHP + heal);
+                    effects.push(pokemon.name + ' recovers ' + heal + ' HP from Aqua Ring');
+                }
+            }
+
+            // Ingrain: heal 1/16 maxHP
+            if (pokemon.volatiles.ingrain) {
+                var heal = Math.max(1, Math.floor(pokemon.maxHP / 16));
+                if (pokemon.currentHP < pokemon.maxHP) {
+                    pokemon.currentHP = Math.min(pokemon.maxHP, pokemon.currentHP + heal);
+                    effects.push(pokemon.name + ' recovers ' + heal + ' HP from Ingrain');
+                }
+            }
+        });
+
+        // Grassy Terrain healing (1/16 maxHP for grounded Pokemon)
+        if (state.field && state.field.terrain &&
+            (state.field.terrain.toLowerCase() === 'grassy' || state.field.terrain.toLowerCase() === 'grassyterrain')) {
+            ['p1', 'p2'].forEach(function (side) {
+                var pokemon = state[side].active;
+                if (!pokemon || pokemon.currentHP <= 0) return;
+
+                var ability = (pokemon.ability || '').replace(/\s/g, '').toLowerCase();
+                var types = pokemon.types || [];
+                // Grounded check: not Flying-type and not Levitate (simplified)
+                var isGrounded = types.indexOf('Flying') === -1 && ability !== 'levitate';
+                if (isGrounded && pokemon.currentHP < pokemon.maxHP) {
+                    var heal = Math.max(1, Math.floor(pokemon.maxHP / 16));
+                    pokemon.currentHP = Math.min(pokemon.maxHP, pokemon.currentHP + heal);
+                    effects.push(pokemon.name + ' recovers ' + heal + ' HP from Grassy Terrain');
+                }
+            });
+        }
+
         // Decrement weather turns
         if (state.field && state.field.weatherTurns > 0) {
             state.field.weatherTurns--;
@@ -249,6 +380,16 @@
             if (state.field.trickRoomTurns <= 0) {
                 state.field.trickRoom = false;
                 effects.push('Trick Room ended.');
+            }
+        }
+
+        // Decrement terrain turns
+        if (state.field && state.field.terrainTurns > 0) {
+            state.field.terrainTurns--;
+            if (state.field.terrainTurns <= 0) {
+                effects.push('The ' + state.field.terrain + ' terrain faded.');
+                state.field.terrain = 'None';
+                state.field.terrainTurns = 0;
             }
         }
 

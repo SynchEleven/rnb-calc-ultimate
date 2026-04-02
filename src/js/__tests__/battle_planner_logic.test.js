@@ -1599,3 +1599,298 @@ describe('Fake Out multi-turn enforcement', () => {
     expect(result.flinches).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// applyEndOfTurnEffects - Poison Heal
+// ---------------------------------------------------------------------------
+describe('applyEndOfTurnEffects - Poison Heal', () => {
+  test('Poison Heal recovers 1/8 HP when poisoned', () => {
+    const state = makeState({ currentHP: 200, maxHP: 320, status: 'Poisoned', ability: 'Poison Heal' });
+    const effects = Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(200 + Math.max(1, Math.floor(320 / 8)));
+    expect(effects).toContainEqual(expect.stringContaining('Poison Heal'));
+  });
+
+  test('Poison Heal recovers 1/8 HP when badly poisoned', () => {
+    const state = makeState({ currentHP: 200, maxHP: 320, status: 'Badly Poisoned', ability: 'Poison Heal', toxicCounter: 1 });
+    const effects = Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(200 + Math.max(1, Math.floor(320 / 8)));
+    expect(effects).toContainEqual(expect.stringContaining('Poison Heal'));
+  });
+
+  test('Poison Heal does not over-heal', () => {
+    const state = makeState({ currentHP: 320, maxHP: 320, status: 'Poisoned', ability: 'Poison Heal' });
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(320);
+  });
+
+  test('Poison Heal still increments toxic counter', () => {
+    const state = makeState({ currentHP: 200, maxHP: 320, status: 'Badly Poisoned', ability: 'Poison Heal', toxicCounter: 3 });
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.toxicCounter).toBe(4);
+  });
+
+  test('burn still damages with Poison Heal (only affects poison)', () => {
+    const state = makeState({ currentHP: 320, maxHP: 320, status: 'Burned', ability: 'Poison Heal' });
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBeLessThan(320);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyEndOfTurnEffects - Weather ability healing
+// ---------------------------------------------------------------------------
+describe('applyEndOfTurnEffects - weather ability healing', () => {
+  test('Rain Dish heals 1/16 in Rain', () => {
+    const state = makeState(
+      { currentHP: 200, maxHP: 320, ability: 'Rain Dish' },
+      null,
+      { weather: 'Rain' }
+    );
+    const effects = Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(200 + Math.max(1, Math.floor(320 / 16)));
+    expect(effects).toContainEqual(expect.stringContaining('Rain Dish'));
+  });
+
+  test('Rain Dish does not heal in Sun', () => {
+    const state = makeState(
+      { currentHP: 200, maxHP: 320, ability: 'Rain Dish' },
+      null,
+      { weather: 'Sun' }
+    );
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(200);
+  });
+
+  test('Dry Skin heals 1/8 in Rain', () => {
+    const state = makeState(
+      { currentHP: 200, maxHP: 320, ability: 'Dry Skin' },
+      null,
+      { weather: 'Rain' }
+    );
+    const effects = Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(200 + Math.max(1, Math.floor(320 / 8)));
+    expect(effects).toContainEqual(expect.stringContaining('Dry Skin'));
+  });
+
+  test('Dry Skin takes 1/8 damage in Sun', () => {
+    const state = makeState(
+      { currentHP: 200, maxHP: 320, ability: 'Dry Skin' },
+      null,
+      { weather: 'Sun' }
+    );
+    const effects = Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(200 - Math.max(1, Math.floor(320 / 8)));
+    expect(effects).toContainEqual(expect.stringContaining('Dry Skin'));
+  });
+
+  test('Dry Skin sun damage can faint', () => {
+    const state = makeState(
+      { currentHP: 1, maxHP: 320, ability: 'Dry Skin' },
+      null,
+      { weather: 'Sun' }
+    );
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(0);
+    expect(state.p1.active.hasFainted).toBe(true);
+  });
+
+  test('Ice Body heals 1/16 in Hail', () => {
+    const state = makeState(
+      { currentHP: 200, maxHP: 320, ability: 'Ice Body', types: ['Ice'] },
+      null,
+      { weather: 'Hail' }
+    );
+    const effects = Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(200 + Math.max(1, Math.floor(320 / 16)));
+    expect(effects).toContainEqual(expect.stringContaining('Ice Body'));
+  });
+
+  test('Ice Body does not heal in other weather', () => {
+    const state = makeState(
+      { currentHP: 200, maxHP: 320, ability: 'Ice Body', types: ['Ice'] },
+      null,
+      { weather: 'Rain' }
+    );
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(200);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyEndOfTurnEffects - Volatile status effects
+// ---------------------------------------------------------------------------
+describe('applyEndOfTurnEffects - volatile status effects', () => {
+  test('Leech Seed drains 1/8 from target and heals user', () => {
+    const state = makeState(
+      { currentHP: 200, maxHP: 320, volatiles: { leechseed: true } },
+      { currentHP: 200, maxHP: 340 }
+    );
+    const drain = Math.max(1, Math.floor(320 / 8));
+    const effects = Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(200 - drain);
+    expect(state.p2.active.currentHP).toBe(200 + drain);
+    expect(effects).toContainEqual(expect.stringContaining('Leech Seed'));
+  });
+
+  test('Leech Seed does not over-heal the draining side', () => {
+    const state = makeState(
+      { currentHP: 200, maxHP: 320, volatiles: { leechseed: true } },
+      { currentHP: 340, maxHP: 340 }
+    );
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p2.active.currentHP).toBe(340); // already full
+  });
+
+  test('Magic Guard blocks Leech Seed damage', () => {
+    const state = makeState(
+      { currentHP: 200, maxHP: 320, volatiles: { leechseed: true }, ability: 'Magic Guard' },
+      { currentHP: 200, maxHP: 340 }
+    );
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(200);
+  });
+
+  test('Curse deals 1/4 maxHP damage', () => {
+    const state = makeState(
+      { currentHP: 200, maxHP: 320, volatiles: { curse: true } }
+    );
+    const curseDamage = Math.max(1, Math.floor(320 / 4));
+    const effects = Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(200 - curseDamage);
+    expect(effects).toContainEqual(expect.stringContaining('Curse'));
+  });
+
+  test('Curse can faint a Pokemon', () => {
+    const state = makeState(
+      { currentHP: 10, maxHP: 320, volatiles: { curse: true } }
+    );
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(0);
+    expect(state.p1.active.hasFainted).toBe(true);
+  });
+
+  test('Magic Guard blocks Curse damage', () => {
+    const state = makeState(
+      { currentHP: 200, maxHP: 320, volatiles: { curse: true }, ability: 'Magic Guard' }
+    );
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(200);
+  });
+
+  test('Aqua Ring heals 1/16 maxHP', () => {
+    const state = makeState(
+      { currentHP: 200, maxHP: 320, volatiles: { aquaring: true } }
+    );
+    const heal = Math.max(1, Math.floor(320 / 16));
+    const effects = Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(200 + heal);
+    expect(effects).toContainEqual(expect.stringContaining('Aqua Ring'));
+  });
+
+  test('Ingrain heals 1/16 maxHP', () => {
+    const state = makeState(
+      { currentHP: 200, maxHP: 320, volatiles: { ingrain: true } }
+    );
+    const heal = Math.max(1, Math.floor(320 / 16));
+    const effects = Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(200 + heal);
+    expect(effects).toContainEqual(expect.stringContaining('Ingrain'));
+  });
+
+  test('Aqua Ring and Ingrain do not over-heal', () => {
+    const state = makeState(
+      { currentHP: 320, maxHP: 320, volatiles: { aquaring: true, ingrain: true } }
+    );
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(320);
+  });
+
+  test('no volatile effects when volatiles is empty', () => {
+    const state = makeState({ currentHP: 200, maxHP: 320, volatiles: {} });
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(200);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyEndOfTurnEffects - Grassy Terrain healing
+// ---------------------------------------------------------------------------
+describe('applyEndOfTurnEffects - Grassy Terrain healing', () => {
+  test('grounded Pokemon heals 1/16 from Grassy Terrain', () => {
+    const state = makeState(
+      { currentHP: 200, maxHP: 320 },
+      null,
+      { terrain: 'Grassy' }
+    );
+    const heal = Math.max(1, Math.floor(320 / 16));
+    const effects = Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(200 + heal);
+    expect(effects).toContainEqual(expect.stringContaining('Grassy Terrain'));
+  });
+
+  test('Flying types do not get Grassy Terrain healing', () => {
+    const state = makeState(
+      { currentHP: 200, maxHP: 320, types: ['Flying'] },
+      null,
+      { terrain: 'Grassy' }
+    );
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(200);
+  });
+
+  test('Levitate users do not get Grassy Terrain healing', () => {
+    const state = makeState(
+      { currentHP: 200, maxHP: 320, ability: 'Levitate' },
+      null,
+      { terrain: 'Grassy' }
+    );
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(200);
+  });
+
+  test('does not heal at full HP', () => {
+    const state = makeState(
+      { currentHP: 320, maxHP: 320 },
+      null,
+      { terrain: 'Grassy' }
+    );
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(320);
+  });
+
+  test('no healing when terrain is not Grassy', () => {
+    const state = makeState(
+      { currentHP: 200, maxHP: 320 },
+      null,
+      { terrain: 'Electric' }
+    );
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.p1.active.currentHP).toBe(200);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyEndOfTurnEffects - Terrain turn decay
+// ---------------------------------------------------------------------------
+describe('applyEndOfTurnEffects - terrain turn decay', () => {
+  test('terrain turns decrement and expire', () => {
+    const state = makeState(null, null, { terrain: 'Grassy', terrainTurns: 1 });
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.field.terrain).toBe('None');
+    expect(state.field.terrainTurns).toBe(0);
+  });
+
+  test('terrain persists when turns remain', () => {
+    const state = makeState(null, null, { terrain: 'Electric', terrainTurns: 3 });
+    Logic.applyEndOfTurnEffects(state, 3);
+    expect(state.field.terrain).toBe('Electric');
+    expect(state.field.terrainTurns).toBe(2);
+  });
+
+  test('terrain fading generates effect message', () => {
+    const state = makeState(null, null, { terrain: 'Psychic', terrainTurns: 1 });
+    const effects = Logic.applyEndOfTurnEffects(state, 3);
+    expect(effects).toContainEqual(expect.stringContaining('terrain faded'));
+  });
+});
