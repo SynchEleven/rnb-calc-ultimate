@@ -1,7 +1,7 @@
 {
   "private": true,
-  "homepage": "https://calc.pokemonshowdown.com/",
-  "repository": "github:smogon/damage-calc",
+  "homepage": "https://github.com/SynchEleven/rnb-calc-ultimate",
+  "repository": "github:SynchEleven/rnb-calc-ultimate",
   "license": "MIT",
   "dependencies": {
     "@smogon/calc": "file:calc"

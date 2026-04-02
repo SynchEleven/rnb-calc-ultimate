@@ -5,7 +5,7 @@
   "types": "dist/index.d.ts",
   "unpkg": "dist/production.min.js",
   "description": "Pokémon battle calculator",
-  "repository": "github:smogon/damage-calc",
+  "repository": "github:SynchEleven/rnb-calc-ultimate",
   "contributors": [
     "Austin Couturier <austincouturier@icloud.com>"
   ],
