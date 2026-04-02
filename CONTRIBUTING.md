@@ -10,20 +10,20 @@ Thank you for your interest in the calculator! If you aren't familiar with progr
 
 ## Github Issues
 
-If you have feature requests, bug reports, or anything else you think could make this project better, please leave a github issue. You can find the button near the top of the page on github, or at [this link](https://github.com/SylmarDev/syl-rnb-calc/issues), as well as on the calculator under "Report an Issue". To create an issue, choose the "New Issue" button.
+If you have feature requests, bug reports, or anything else you think could make this project better, please leave a github issue. You can find the button near the top of the page on github, or at [this link](https://github.com/SynchEleven/rnb-calc-ultimate/issues), as well as on the calculator under "Report an Issue". To create an issue, choose the "New Issue" button.
 
 From there you can give it a title and label it, and write up a description. Be descriptive! You can even add images to this to help me better understand what the issue/request is.
 
 ## Documentation
 
-I have various markdown files I need to get to and parse through in this repo with ideas and speculation on where to go from here with the calculator. This very file needs updated with better descriptions.
+We have various markdown files that need review and updates. This very file could use better descriptions.
 
 ## Development
 
-To build locally, run ``node build`` in the root directory. You will need to do this to have changes apply when working. Then you can navigate to the dist/ folder instance of ``index.template.html``. 
+To build locally, run ``node build`` in the root directory. You will need to do this to have changes apply when working. Then you can navigate to the dist/ folder instance of ``index.template.html``.
 
-Feel free to make a branch and target your pull requests to ``dev``. I can't promise I'll accept changes, but as this project is [MIT Licensed](LICENSE.md) you are free to make your own modifications. I value configurability, and ease of use to make this project usable for all players regardless of how many features they want to use.
+Feel free to make a branch and target your pull requests to ``main``. We value configurability and ease of use to make this project usable for all players regardless of how many features they want to use. This project is [MIT Licensed](LICENSE.md).
 
 ## Contact
 
-You can reach me on discord or twitch at ``princess`` + ``my github username minus the "dev"`` if you'd like to talk more about contributing, the calculator, or have any questions.
+You can reach the maintainers via the project's GitHub issues or discussions.
