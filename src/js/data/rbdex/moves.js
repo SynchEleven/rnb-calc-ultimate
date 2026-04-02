@@ -10967,6 +10967,30 @@ exports.BattleMovedex = {
         desc: "The user recovers 1/2 the HP lost by the target, rounded half up. If Big Root is held by the user, the HP recovered is 1.3x normal, rounded half down.",
         shortDesc: "User recovers 50% of the damage dealt."
     },
+    paleowave: {
+        num: 10001,
+        accuracy: 100,
+        basePower: 85,
+        category: "Special",
+        isNonstandard: "CAP",
+        name: "Paleo Wave",
+        pp: 15,
+        priority: 0,
+        flags: {
+            protect: 1,
+            mirror: 1
+        },
+        secondary: {
+            chance: 20,
+            boosts: {
+                spa: -1
+            }
+        },
+        target: "normal",
+        type: "Rock",
+        desc: "Has a 20% chance to lower the target's Special Attack by 1 stage.",
+        shortDesc: "20% chance to lower the target's Sp. Atk by 1."
+    },
     partingshot: {
         num: 575,
         accuracy: 100,
@@ -13764,6 +13788,31 @@ exports.BattleMovedex = {
         contestType: "Clever",
         desc: "No additional effect.",
         shortDesc: "Usually goes first."
+    },
+    shadowstrike: {
+        num: 10002,
+        accuracy: 100,
+        basePower: 80,
+        category: "Physical",
+        isNonstandard: "CAP",
+        name: "Shadow Strike",
+        pp: 10,
+        priority: 0,
+        flags: {
+            contact: 1,
+            protect: 1,
+            mirror: 1
+        },
+        secondary: {
+            chance: 50,
+            boosts: {
+                def: -1
+            }
+        },
+        target: "normal",
+        type: "Ghost",
+        desc: "Has a 50% chance to lower the target's Defense by 1 stage.",
+        shortDesc: "50% chance to lower the target's Defense by 1."
     },
     sharpen: {
         num: 159,
