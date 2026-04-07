@@ -601,16 +601,19 @@
             var index = $(this).data('index');
             var hits = parseInt($(this).val());
 
+            // Update hits in the action state, even if the move isn't selected yet
             if (side === 'p1' && uiState.p1Action && uiState.p1Action.index === index) {
                 uiState.p1Action.hits = hits;
             } else if (side === 'p2' && uiState.p2Action && uiState.p2Action.index === index) {
                 uiState.p2Action.hits = hits;
             }
 
-            // Recalculate damage display - re-render the cards
+            // Recalculate damage display - re-render both cards and detail panel
             var currentNode = uiState.tree ? uiState.tree.getCurrentNode() : null;
             if (currentNode && currentNode.state) {
                 renderMoves(side, side === 'p1' ? currentNode.state.p1.active : currentNode.state.p2.active);
+                renderMoveDetailsPanel();
+                updateTurnActionsPanel();
             }
         });
 
@@ -2292,8 +2295,9 @@
                     ? normalDamage.multiHitRange[0] + '-' + normalDamage.multiHitRange[1] + ' hits'
                     : normalDamage.hitCount + ' hits';
                 if (normalDamage.perHitMin !== null) {
-                    movesHtml += '<div class="move-cell-damage-row"><span class="multihit-badge">' + hitsLabel +
-                        ' (' + normalDamage.perHitMin + '-' + normalDamage.perHitMax + ' each)</span></div>';
+                    movesHtml += '<div class="move-cell-damage-row"><span class="multihit-badge">' +
+                        normalDamage.perHitMin + '-' + normalDamage.perHitMax + ' each × ' + normalDamage.hitCount +
+                        ' = ' + normalDamage.rawMin + '-' + normalDamage.rawMax + ' total</span></div>';
                 } else {
                     movesHtml += '<div class="move-cell-damage-row"><span class="multihit-badge">' + hitsLabel + '</span></div>';
                 }
@@ -2464,15 +2468,21 @@
     function renderMoveListForSide(side, attacker, defender, gen) {
         var moves = attacker.moves || [];
         var html = '';
+        var currentAction = side === 'p1' ? uiState.p1Action : uiState.p2Action;
 
         moves.forEach(function (moveName, i) {
             if (!moveName || moveName === '(No Move)') return;
 
             var moveData = getMoveData(moveName, gen);
-            var damageInfo = calculateMoveDamage(attacker, defender, moveName, gen);
-            var critDamageInfo = calculateMoveDamage(attacker, defender, moveName, gen, true);
 
-            var isMultiHit = moveData && Array.isArray(moveData.multihit);
+            // Determine current hit count for this move from action state
+            var actionHits = (currentAction && currentAction.index === i) ? currentAction.hits : null;
+
+            var damageInfo = calculateMoveDamage(attacker, defender, moveName, gen, false, actionHits);
+            var critDamageInfo = calculateMoveDamage(attacker, defender, moveName, gen, true, actionHits);
+
+            var isMultiHit = moveData && (Array.isArray(moveData.multihit) || (typeof moveData.multihit === 'number' && moveData.multihit > 1));
+            var isVariableHit = moveData && Array.isArray(moveData.multihit);
             var isStatus = moveData && moveData.category === 'Status';
             var hasSecondary = moveData && (moveData.secondary || moveData.boosts || moveData.status ||
                 moveData.drain || moveData.recoil || moveData.self);
@@ -2488,7 +2498,7 @@
             html += moveName;
             html += '</button>';
 
-            // Damage range
+            // Damage range (total damage)
             if (!isStatus && damageInfo) {
                 html += '<span class="move-damage-range">' + damageInfo.minPercent + ' - ' + damageInfo.maxPercent + '%</span>';
             } else if (isStatus) {
@@ -2503,13 +2513,15 @@
             html += '<span class="move-crit-btn">Crit</span>';
             html += '</label>';
 
-            // Multi-hit selector
-            if (isMultiHit) {
+            // Multi-hit selector (only for variable-hit moves like [2,5])
+            if (isVariableHit) {
+                var minHit = moveData.multihit[0];
+                var maxHit = moveData.multihit[1];
+                var selectedHits = actionHits || maxHit;
                 html += '<select class="move-hits-select" data-side="' + side + '" data-index="' + i + '">';
-                html += '<option value="2">2 hits</option>';
-                html += '<option value="3" selected>3 hits</option>';
-                html += '<option value="4">4 hits</option>';
-                html += '<option value="5">5 hits</option>';
+                for (var h = minHit; h <= maxHit; h++) {
+                    html += '<option value="' + h + '"' + (h === selectedHits ? ' selected' : '') + '>' + h + ' hits</option>';
+                }
                 html += '</select>';
             }
 
@@ -2526,11 +2538,24 @@
 
             html += '</div>'; // move-row-main
 
+            // Multi-hit breakdown row (per-hit × count = total)
+            if (!isStatus && damageInfo && damageInfo.hitCount > 1 && damageInfo.perHitMin !== null) {
+                html += '<div class="move-multihit-row">';
+                html += '<span class="multihit-detail">' +
+                    damageInfo.perHitMin + '-' + damageInfo.perHitMax + ' per hit × ' + damageInfo.hitCount +
+                    ' = ' + damageInfo.min + '-' + damageInfo.max + ' total</span>';
+                html += '</div>';
+            }
+
             // Crit damage row (shown when crit is checked)
             if (critDamageInfo && !isStatus) {
                 html += '<div class="move-crit-row" style="display:none;">';
                 html += '<span class="crit-label">Crit:</span>';
                 html += '<span class="move-damage-range crit">' + critDamageInfo.minPercent + ' - ' + critDamageInfo.maxPercent + '%</span>';
+                if (critDamageInfo.hitCount > 1 && critDamageInfo.perHitMin !== null) {
+                    html += '<span class="multihit-detail crit"> (' +
+                        critDamageInfo.perHitMin + '-' + critDamageInfo.perHitMax + ' per hit × ' + critDamageInfo.hitCount + ')</span>';
+                }
                 html += '</div>';
             }
 
@@ -2565,8 +2590,14 @@
 
     /**
      * Calculate move damage
+     * @param {object} attacker - Attacker snapshot
+     * @param {object} defender - Defender snapshot
+     * @param {string} moveName - Move name
+     * @param {number|object} gen - Generation number or object
+     * @param {boolean} isCrit - Whether this is a critical hit
+     * @param {number} [hits] - Override hit count for multi-hit moves
      */
-    function calculateMoveDamage(attacker, defender, moveName, gen, isCrit) {
+    function calculateMoveDamage(attacker, defender, moveName, gen, isCrit, hits) {
         if (!attacker || !defender || !moveName) {
             return null;
         }
@@ -2593,7 +2624,33 @@
                 return null;
             }
 
-            var move = new window.calc.Move(genNum, moveName, { isCrit: !!isCrit });
+            var moveOptions = { isCrit: !!isCrit };
+
+            // Handle multi-hit moves - pass hits to the calc engine
+            var rbdexMd = window.RBDex ? window.RBDex.getMove(moveName) : null;
+            var hitCount = 1;
+            var multiHitRange = null;
+            if (rbdexMd && rbdexMd.multihit) {
+                if (Array.isArray(rbdexMd.multihit)) {
+                    multiHitRange = rbdexMd.multihit;
+                    // Use explicit hits param, or default to max hits
+                    hitCount = (hits && hits > 0) ? hits : rbdexMd.multihit[1];
+                } else {
+                    hitCount = rbdexMd.multihit;
+                }
+                moveOptions.hits = hitCount;
+            } else if (moveData.multihit) {
+                // Fallback to calc move data
+                if (Array.isArray(moveData.multihit)) {
+                    multiHitRange = moveData.multihit;
+                    hitCount = (hits && hits > 0) ? hits : moveData.multihit[1];
+                } else {
+                    hitCount = moveData.multihit;
+                }
+                moveOptions.hits = hitCount;
+            }
+
+            var move = new window.calc.Move(genNum, moveName, moveOptions);
             var field = window.createField ? window.createField() : null;
             var result = window.calc.calculate(genNum, attackerPokemon, defenderPokemon, move, field);
 
@@ -2608,7 +2665,11 @@
                 min: range.min,
                 max: range.max,
                 minPercent: Math.round((range.min / defenderMaxHP) * 1000) / 10,
-                maxPercent: Math.round((range.max / defenderMaxHP) * 1000) / 10
+                maxPercent: Math.round((range.max / defenderMaxHP) * 1000) / 10,
+                hitCount: hitCount,
+                multiHitRange: multiHitRange,
+                perHitMin: hitCount > 1 ? Math.floor(range.min / hitCount) : null,
+                perHitMax: hitCount > 1 ? Math.floor(range.max / hitCount) : null
             };
         } catch (e) {
             console.error('calculateMoveDamage error for', moveName + ':', e);
@@ -3487,7 +3548,19 @@
             if (!attackerPokemon || !defenderPokemon) return '';
 
             var gen = getGenNum();
-            var move = new window.calc.Move(gen, action.moveName);
+            var moveOptions = { isCrit: !!action.isCrit };
+
+            // Pass hits for multi-hit moves
+            var moveData = getMoveData(action.moveName, gen);
+            if (moveData && moveData.multihit) {
+                if (Array.isArray(moveData.multihit)) {
+                    moveOptions.hits = (action.hits && action.hits > 0) ? action.hits : moveData.multihit[1];
+                } else {
+                    moveOptions.hits = moveData.multihit;
+                }
+            }
+
+            var move = new window.calc.Move(gen, action.moveName, moveOptions);
             var result = window.calc.calculate(gen, attackerPokemon, defenderPokemon, move, window.createField ? window.createField() : null);
             var range = CalcIntegration.getDamageRange(result);
 
@@ -3543,13 +3616,36 @@
         var existingAction = side === 'p1' ? uiState.p1Action : uiState.p2Action;
         var preservedCrit = (existingAction && existingAction.index === index) ? existingAction.isCrit : false;
         var preservedEffect = (existingAction && existingAction.index === index) ? existingAction.applyEffect : false;
+        var preservedHits = (existingAction && existingAction.index === index) ? existingAction.hits : null;
+
+        // Determine default hit count for multi-hit moves (use max to match card view preview)
+        var defaultHits = null;
+        var gen = getGenNum();
+        var moveData = getMoveData(moveName, gen);
+        if (moveData && moveData.multihit) {
+            if (Array.isArray(moveData.multihit)) {
+                defaultHits = moveData.multihit[1]; // max hits
+            } else {
+                defaultHits = moveData.multihit; // fixed hits
+            }
+        } else {
+            // Fallback to RBDex data
+            var rbdexMd = window.RBDex ? window.RBDex.getMove(moveName) : null;
+            if (rbdexMd && rbdexMd.multihit) {
+                if (Array.isArray(rbdexMd.multihit)) {
+                    defaultHits = rbdexMd.multihit[1];
+                } else {
+                    defaultHits = rbdexMd.multihit;
+                }
+            }
+        }
 
         var action = {
             type: 'move',
             index: index,
             moveName: moveName,
             isCrit: preservedCrit,
-            hits: 3, // Default for multi-hit moves
+            hits: preservedHits || defaultHits || 1,
             applyEffect: preservedEffect,
             effectType: null
         };

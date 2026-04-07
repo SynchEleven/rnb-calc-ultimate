@@ -2612,6 +2612,24 @@ body.planner-active {
     gap: 10px;
 }
 
+.move-multihit-row {
+    margin-top: 4px;
+    padding: 2px 0;
+    display: flex;
+    align-items: center;
+}
+
+.multihit-detail {
+    font-size: 11px;
+    color: var(--planner-text-muted, #999);
+    font-style: italic;
+}
+
+.multihit-detail.crit {
+    color: var(--planner-danger);
+    font-size: 10px;
+}
+
 .crit-label {
     font-size: 11px;
     color: var(--planner-danger);
