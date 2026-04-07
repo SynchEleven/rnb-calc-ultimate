@@ -969,35 +969,34 @@
             }
 
             // Set up P2 - opponent always has their full team (no box)
+            // Build the team in the proper trainer data order (index-sorted)
             initialState.p2.team = [];
             uiState.p2Box = []; // No box for opponent
 
-            // First add the currently selected P2 Pokemon
-            if (p2Pokemon) {
-                initialState.p2.active = new BattlePlanner.PokemonSnapshot(p2Pokemon);
-                initialState.p2.team.push(initialState.p2.active.clone());
-            }
-
-            // Add ALL opponent trainer Pokemon to P2's team (they always have full team)
             if (opponentTeam.length > 0) {
+                // Add ALL opponent trainer Pokemon to P2's team in their proper order
                 for (var j = 0; j < opponentTeam.length; j++) {
                     var oppSnap = createSnapshotFromTrainerPokemon(opponentTeam[j]);
                     if (oppSnap) {
-                        // Only add if not already the active Pokemon
                         var alreadyInTeam = initialState.p2.team.some(function (p) {
                             return p.name === oppSnap.name;
                         });
-
                         if (!alreadyInTeam) {
                             initialState.p2.team.push(oppSnap);
                         }
-
-                        // Set first one as active if we don't have one yet
-                        if (!initialState.p2.active || initialState.p2.active.name === '---') {
-                            initialState.p2.active = oppSnap.clone();
-                        }
                     }
                 }
+                // The lead is the first Pokemon in the trainer's ordered team
+                if (initialState.p2.team.length > 0) {
+                    initialState.p2.active = initialState.p2.team[0].clone();
+                    initialState.p2.teamSlot = 0;
+                }
+            }
+
+            // If we have a P2 Pokemon from the calculator but no trainer team, use it
+            if (initialState.p2.team.length === 0 && p2Pokemon) {
+                initialState.p2.active = new BattlePlanner.PokemonSnapshot(p2Pokemon);
+                initialState.p2.team.push(initialState.p2.active.clone());
             }
 
             // Set up field
@@ -1032,20 +1031,31 @@
     }
 
     /**
-     * Get opponent trainer Pokemon from the DOM
+     * Get opponent trainer Pokemon in the proper team order (from trainer data index).
+     * Uses CURRENT_TRAINER_POKS (sorted by [index] from SETDEX_SS) if available,
+     * falling back to DOM iteration order.
      */
     function getOpponentTrainerPokemon() {
         var trainerPokemon = [];
 
-        // Look for opponent trainer Pokemon in the opposing list
-        $('.trainer-pok-list-opposing .trainer-pok, .trainer-pok.right-side').each(function () {
-            var dataId = $(this).data('id');
-            if (dataId) {
-                // Clean up the data-id (remove bracket prefix if present)
-                var cleanId = dataId.replace(/^\[\d+\]/, '');
+        // Prefer the global CURRENT_TRAINER_POKS which is already sorted by trainer data index
+        if (typeof CURRENT_TRAINER_POKS !== 'undefined' && CURRENT_TRAINER_POKS && CURRENT_TRAINER_POKS.length > 0) {
+            for (var i = 0; i < CURRENT_TRAINER_POKS.length; i++) {
+                var entry = CURRENT_TRAINER_POKS[i];
+                // Format is "[index]PokemonName (TrainerName)" — strip the bracket prefix
+                var cleanId = entry.replace(/^\[\d+\]/, '');
                 trainerPokemon.push(cleanId);
             }
-        });
+        } else {
+            // Fallback: read from DOM in document order
+            $('.trainer-pok-list-opposing .trainer-pok, .trainer-pok.right-side').each(function () {
+                var dataId = $(this).data('id');
+                if (dataId) {
+                    var cleanId = dataId.replace(/^\[\d+\]/, '');
+                    trainerPokemon.push(cleanId);
+                }
+            });
+        }
 
         // Also check if there's a P2 Pokemon currently selected that's not in the list
         var p2Select = $('input.set-selector.opposing').val();
@@ -2200,6 +2210,7 @@
             if (priority > 0) cellClasses.push('priority-move');
             if (priority < 0) cellClasses.push('negative-priority');
             if (moveData && moveData.category === 'Status') cellClasses.push('status-move');
+            if (normalDamage && normalDamage.effectiveness === 'immune') cellClasses.push('immune-move');
 
             // Damage-based Highlighting (Inherit colors from matchup scheme)
             var defenderHP = defender ? (defender.currentHP !== undefined ? defender.currentHP : defender.maxHP) : 100;
@@ -2239,6 +2250,9 @@
             movesHtml += '</div>';
 
             // Damage or status info
+            var isActualStatusMove = moveData && moveData.category === 'Status';
+            var isImmune = normalDamage && normalDamage.effectiveness === 'immune';
+
             movesHtml += '<div class="move-cell-damage">';
             if (normalDamage && normalDamage.rawMin !== undefined && normalDamage.rawMax > 0) {
                 var defHP = defender ? defender.maxHP : 100;
@@ -2275,7 +2289,14 @@
                     movesHtml += '<span class="crit-range">Crit: ' + critDamage.rawMin + '-' + critDamage.rawMax + ' (' + critMinPct + '-' + critMaxPct + '%)</span>';
                     movesHtml += '</div>';
                 }
-            } else {
+            } else if (isImmune) {
+                // Damaging move that deals 0 due to type immunity — NOT a status move
+                movesHtml += '<div class="move-cell-damage-row">';
+                movesHtml += '<span class="immune-label">Immune 🚫</span>';
+                movesHtml += '<span class="dmg-range immune">0</span>';
+                movesHtml += '</div>';
+            } else if (isActualStatusMove) {
+                // Real status-category move
                 movesHtml += '<div class="move-cell-damage-row">';
                 movesHtml += '<span class="status-label">Status</span>';
                 if (moveData && moveData.status) {
@@ -2286,6 +2307,14 @@
                         return e[0] + (e[1] > 0 ? '+' : '') + e[1];
                     }).join(' ');
                     movesHtml += '<span class="boost-effect">' + boostStr + '</span>';
+                }
+                movesHtml += '</div>';
+            } else {
+                // Non-status move with 0 or unknown damage (e.g. basePower = 0, weather-dependent, etc.)
+                movesHtml += '<div class="move-cell-damage-row">';
+                movesHtml += '<span class="dmg-range zero-dmg">0</span>';
+                if (normalDamage && normalDamage.effectivenessIcon) {
+                    movesHtml += '<span class="eff-icon">' + normalDamage.effectivenessIcon + '</span>';
                 }
                 movesHtml += '</div>';
             }
@@ -4783,28 +4812,65 @@
     // =========================================================================
 
     /**
-     * Sort variance warnings by resolution priority:
-     * 1. Faster mover's damage rolls (KO variance) - highest
-     * 2. Faster mover's crit variance
-     * 3. Slower mover's damage rolls
-     * 4. Slower mover's crit variance
-     * 5. Secondary effects
-     * 6. Flinch
+     * Sort variance warnings by resolution priority.
+     * Generic pipeline — the order of branches MUST always be:
+     *
+     *   0. Speed ties (both sides can go first — determines everything)
+     *   1. Accuracy miss (faster mover) — move may miss entirely
+     *   2. Faster mover's damage rolls (KO variance)
+     *   3. Faster mover's crit variance
+     *   4. Faster mover's secondary effects
+     *   5. Faster mover's flinch (only matters if faster)
+     *   6. Accuracy miss (slower mover)
+     *   7. Slower mover's damage rolls (KO variance)
+     *   8. Slower mover's crit variance
+     *   9. Slower mover's secondary effects
+     *  10. Accumulated / other variance
+     *
+     * Within the same priority, preserve the original detection order.
      */
     function sortVarianceByPriority(warnings, firstMover) {
-        return warnings.slice().sort(function (a, b) {
-            function getPriority(w) {
-                var d = w.detail || {};
-                if (d.minResult && d.maxResult && w.mover === firstMover) return 0;
-                if (d.isCrit && w.mover === firstMover) return 1;
-                if (d.minResult && d.maxResult && w.mover !== firstMover) return 2;
-                if (d.isCrit && w.mover !== firstMover) return 3;
-                if (d.isSecondary) return 4;
-                if (d.isFlinch) return 5;
-                return 6;
-            }
-            return getPriority(a) - getPriority(b);
+        // Assign a stable index for tie-breaking
+        var indexed = warnings.map(function (w, i) { return { w: w, origIdx: i }; });
+
+        indexed.sort(function (a, b) {
+            var pa = getVariancePriority(a.w, firstMover);
+            var pb = getVariancePriority(b.w, firstMover);
+            if (pa !== pb) return pa - pb;
+            return a.origIdx - b.origIdx;  // stable tie-break
         });
+
+        return indexed.map(function (item) { return item.w; });
+    }
+
+    /**
+     * Return a numeric priority for a single variance warning.
+     * Lower number = resolve first (higher branching priority).
+     */
+    function getVariancePriority(w, firstMover) {
+        var d = w.detail || {};
+        var isFirstMover = w.mover === firstMover;
+
+        // Speed tie (special: top-level branch)
+        if (d.isSpeedTie) return 0;
+
+        // Accuracy miss
+        if (d.isAccuracy || d.isMiss) return isFirstMover ? 1 : 6;
+
+        // Damage roll variance (KO / survive)
+        if (d.minResult && d.maxResult) return isFirstMover ? 2 : 7;
+
+        // Crit variance
+        if (d.isCrit) return isFirstMover ? 3 : 8;
+
+        // Secondary effects
+        if (d.isSecondary) return isFirstMover ? 4 : 9;
+
+        // Flinch (only meaningful for the faster mover)
+        if (d.isFlinch) return 5;
+
+        // Accumulated / unclassified
+        return 10;
     }
 
     /**
@@ -4822,14 +4888,15 @@
         var branchable = [];
         sorted.forEach(function (w, idx) {
             var d = w.detail || {};
-            var canBranch = !!(d.minResult && d.maxResult) || d.isCrit || d.isSecondary || d.isFlinch;
+            var canBranch = !!(d.minResult && d.maxResult) || d.isCrit || d.isSecondary || d.isFlinch || d.isSpeedTie;
             if (canBranch) branchable.push({ warning: w, idx: idx });
         });
 
         var lines = sorted.map(function (w, idx) {
             var moverLabel = w.mover === 'p1' ? 'Player' : 'Opponent';
             var icon = '';
-            if (w.detail.isCrit) icon = '💥 ';
+            if (w.detail.isSpeedTie) icon = '⚡ ';
+            else if (w.detail.isCrit) icon = '💥 ';
             else if (w.detail.isSecondary) icon = '🎲 ';
             else if (w.detail.isFlinch) icon = '💫 ';
             else if (w.detail.reason && w.detail.reason.indexOf('KO') !== -1) icon = '☠ ';
@@ -4909,6 +4976,7 @@
     /**
      * Create hierarchical branches: process the first warning to create branches,
      * then recursively attach remaining warnings as sub-branches under surviving outcomes.
+     * Normalizes sibling probabilities at each level to ensure they always sum to 1.0.
      */
     function createHierarchicalBranches(sortedWarnings, parentNodeId, currentNodeId) {
         if (sortedWarnings.length === 0) return;
@@ -4917,6 +4985,9 @@
         var remaining = sortedWarnings.slice(1);
 
         var branches = createVarianceBranchNodes(firstWarning, parentNodeId, currentNodeId);
+
+        // Normalize the newly-created sibling branches at this level
+        normalizeSiblingProbabilities(parentNodeId);
 
         if (remaining.length > 0 && branches.length > 0) {
             branches.forEach(function (branch) {
@@ -4951,7 +5022,19 @@
         var defSide = w.mover === 'p1' ? 'p2' : 'p1';
         var results = [];
 
-        if (d.minResult && d.maxResult) {
+        if (d.isSpeedTie) {
+            // Speed tie: create two branches — P1 moves first vs P2 moves first
+            var p1FirstState = currentNode.state.clone();
+            var p1FirstN = uiState.tree.addBranch(parentNodeId, p1FirstState, currentNode.actions,
+                new BattlePlanner.BattleOutcome('P1 moves first (50%)', 0.5, 0, { rollType: 'speedTie', firstMover: 'p1' }));
+            results.push({ node: p1FirstN, isKO: false });
+
+            var p2FirstState = currentNode.state.clone();
+            var p2FirstN = uiState.tree.addBranch(parentNodeId, p2FirstState, currentNode.actions,
+                new BattlePlanner.BattleOutcome('P2 moves first (50%)', 0.5, 0, { rollType: 'speedTie', firstMover: 'p2' }));
+            results.push({ node: p2FirstN, isKO: false });
+
+        } else if (d.minResult && d.maxResult) {
             var minState = currentNode.state.clone();
             minState[defSide].active.currentHP = Math.max(0, d.minResult.hp);
             minState[defSide].active.percentHP = minState[defSide].active.maxHP > 0
@@ -5266,8 +5349,9 @@
                     (p1Speed < p2Speed ? 'p1' : 'p2') :
                     (p1Speed > p2Speed ? 'p1' : 'p2');
             } else {
-                // Speed tie - randomly pick
+                // Speed tie - randomly pick, but flag for branching
                 firstMover = Math.random() < 0.5 ? 'p1' : 'p2';
+                uiState._speedTieDetected = true;
             }
             secondMover = firstMover === 'p1' ? 'p2' : 'p1';
 
@@ -5574,6 +5658,21 @@
                         });
                     }
                 }
+
+                // Speed tie variance: if both Pokemon have equal speed and priority, the order matters
+                if (uiState._speedTieDetected && !p1IsSwitch && !p2IsSwitch) {
+                    varianceWarnings.unshift({
+                        move: 'Speed Tie',
+                        mover: firstMover,
+                        detail: {
+                            reason: state.p1.active.name + ' and ' + state.p2.active.name + ' have equal speed (' + p1Speed + ') — move order is random (50/50)',
+                            isSpeedTie: true,
+                            p1Speed: p1Speed,
+                            p2Speed: p2Speed
+                        }
+                    });
+                }
+                uiState._speedTieDetected = false;
 
                 // Check if we need KO replacements
                 var needsP1Replacement = p1FaintedAfterEOT || (firstMover === 'p2' && firstKO) || (firstMover === 'p1' && secondKO);
@@ -6060,6 +6159,15 @@
     function applyGuaranteedMoveEffects(attacker, defender, moveData, state, moveResult) {
         if (!moveData) return;
 
+        // Check type effectiveness — if the move is immune (0x), skip all effects on the target
+        var isImmune = false;
+        if (moveData.type && defender.types && moveData.category !== 'Status') {
+            var eff = CalcIntegration.getTypeEffectiveness(moveData.type, defender.types);
+            if (eff === 0) {
+                isImmune = true;
+            }
+        }
+
         var selfTargets = { self: 1, allySide: 1, allyTeam: 1, allies: 1, adjacentAllyOrSelf: 1, adjacentAlly: 1 };
         var isSelfTarget = !!(selfTargets[moveData.target]);
         // Also treat non-damaging moves that only have boosts as self-targeting
@@ -6073,7 +6181,7 @@
             }
         }
 
-        if (moveData.status && !isSelfTarget && (!defender.status || defender.status === 'Healthy')) {
+        if (moveData.status && !isSelfTarget && (!defender.status || defender.status === 'Healthy') && !isImmune) {
             defender.status = normalizeStatus(moveData.status);
         }
 
@@ -6081,7 +6189,7 @@
         if (moveData.boosts) {
             if (isSelfTarget) {
                 applyBoosts(attacker, moveData.boosts);
-            } else {
+            } else if (!isImmune) {
                 applyBoosts(defender, moveData.boosts);
             }
         }
@@ -6098,6 +6206,9 @@
         if (moveData.secondaries) secondaries = secondaries.concat(moveData.secondaries);
 
         if (!moveResult.secondaryEffects) moveResult.secondaryEffects = [];
+
+        // Skip secondary effects entirely if move is immune (0x effectiveness)
+        if (isImmune) return;
 
         secondaries.forEach(function (sec) {
             if (!sec) return;

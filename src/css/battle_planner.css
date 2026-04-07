@@ -388,6 +388,7 @@ body.planner-active {
 .tree-node-current .tree-node-card {
     border-color: var(--planner-accent);
     background: rgba(29, 155, 240, 0.1);
+    box-shadow: 0 0 0 1px rgba(29, 155, 240, 0.2);
 }
 
 
@@ -565,16 +566,33 @@ body.planner-active {
 .tree-ko-marker {
     font-size: 11px;
     font-weight: 700;
-    padding: 1px 4px;
+    padding: 2px 6px;
     border-radius: 3px;
 }
 
 .tree-ko-marker.p1-ko {
-    color: var(--planner-danger);
+    color: #fff;
+    background: rgba(244, 33, 46, 0.25);
+    border: 1px solid rgba(244, 33, 46, 0.4);
 }
 
 .tree-ko-marker.p2-ko {
-    color: var(--planner-success);
+    color: #fff;
+    background: rgba(0, 186, 124, 0.25);
+    border: 1px solid rgba(0, 186, 124, 0.4);
+}
+
+/* KO node highlighting: subtle left border on the card */
+.tree-node-p1ko .tree-node-card {
+    border-left: 3px solid var(--planner-danger);
+}
+
+.tree-node-p2ko .tree-node-card {
+    border-left: 3px solid var(--planner-success);
+}
+
+.tree-node-p1ko.tree-node-p2ko .tree-node-card {
+    border-left: 3px solid var(--planner-warning);
 }
 
 /* -- Status icons -- */
@@ -625,13 +643,13 @@ body.planner-active {
 
 /* -- Branch group -- */
 .tree-branch-group {
-    border-left: none;
-    margin-left: 0;
-    padding-left: 0;
+    border-left: 2px solid rgba(255, 152, 0, 0.25);
+    margin-left: 6px;
+    padding-left: 8px;
     margin-top: 3px;
     margin-bottom: 3px;
     background: rgba(255, 152, 0, 0.03);
-    border-radius: 4px;
+    border-radius: 0 4px 4px 0;
 }
 
 .tree-branch-label {
@@ -2810,6 +2828,39 @@ body.planner-active {
     border-left: 3px solid #9c27b0;
 }
 
+/* Immune move — type immunity, 0x effectiveness */
+.move-cell.immune-move {
+    border-left: 3px solid #616161;
+    opacity: 0.65;
+}
+
+/* Damage-based move highlighting:
+   match-dmg-1 = P1 guaranteed KO (min roll KOs) — very favorable
+   match-dmg-2 = P1 possible KO (max roll KOs)   — favorable
+   match-dmg-3 = P2 possible KO (max roll KOs)   — dangerous
+   match-dmg-4 = P2 guaranteed KO (min roll KOs)  — very dangerous */
+.move-cell.match-dmg-1 {
+    border-color: var(--planner-success);
+    background: rgba(0, 186, 124, 0.15);
+    box-shadow: inset 0 0 0 1px rgba(0, 186, 124, 0.3);
+}
+
+.move-cell.match-dmg-2 {
+    border-color: #66bb6a;
+    background: rgba(102, 187, 106, 0.10);
+}
+
+.move-cell.match-dmg-3 {
+    border-color: var(--planner-warning);
+    background: rgba(255, 173, 31, 0.10);
+}
+
+.move-cell.match-dmg-4 {
+    border-color: var(--planner-danger);
+    background: rgba(244, 33, 46, 0.12);
+    box-shadow: inset 0 0 0 1px rgba(244, 33, 46, 0.25);
+}
+
 .move-cell-header {
     display: flex;
     align-items: center;
@@ -2867,7 +2918,16 @@ body.planner-active {
 .dmg-range {
     font-weight: 700;
     font-size: 15px;
-    color: var(--planner-warning);
+    color: #e0e0e0;
+}
+
+/* Contextual damage colors: P1 damage is favorable (teal), P2 damage is threatening (pink) */
+.pokemon-card-p1 .dmg-range {
+    color: var(--planner-p1);
+}
+
+.pokemon-card-p2 .dmg-range {
+    color: var(--planner-p2);
 }
 
 .dmg-percent {
@@ -2877,11 +2937,25 @@ body.planner-active {
 
 .crit-range {
     font-size: 13px;
-    color: #ff6b6b;
+    color: #ef5350;
+    font-weight: 600;
 }
 
 .status-label {
     color: #9c27b0;
+    font-weight: 600;
+    font-size: 14px;
+}
+
+.immune-label {
+    color: #757575;
+    font-weight: 600;
+    font-size: 14px;
+}
+
+.dmg-range.immune,
+.dmg-range.zero-dmg {
+    color: #616161;
     font-weight: 600;
     font-size: 14px;
 }
@@ -2921,11 +2995,20 @@ body.planner-active {
     font-weight: 700;
 }
 
+/* P2 damage KO rolls are dangerous (red) */
+.pokemon-card-p2 .dmg-roll.roll-ko {
+    color: #ef5350;
+}
+
 .rolls-ko-info {
     font-size: 9px;
     color: #81c784;
     margin-left: 4px;
     font-weight: 600;
+}
+
+.pokemon-card-p2 .rolls-ko-info {
+    color: #ef5350;
 }
 
 .move-cell-desc {
@@ -4281,18 +4364,22 @@ body.planner-active {
 
 /* Variance Detection Banner */
 .variance-banner {
-    padding: 10px 14px;
-    background: rgba(255, 152, 0, 0.12);
-    border: 1px solid rgba(255, 152, 0, 0.4);
+    padding: 12px 16px;
+    background: rgba(255, 152, 0, 0.08);
+    border: 1px solid rgba(255, 152, 0, 0.3);
     border-radius: 8px;
     margin-bottom: 8px;
+    backdrop-filter: blur(4px);
 }
 
 .variance-header {
     font-weight: 700;
     font-size: 13px;
     color: #ffb74d;
-    margin-bottom: 6px;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
 }
 
 .variance-body {
@@ -4300,19 +4387,25 @@ body.planner-active {
     color: var(--planner-text);
     display: flex;
     flex-direction: column;
-    gap: 3px;
+    gap: 4px;
 }
 
 .variance-line {
-    padding: 3px 0;
+    padding: 4px 6px;
     display: flex;
     align-items: center;
     gap: 6px;
     flex-wrap: wrap;
+    border-radius: 4px;
+    transition: background 0.15s;
+}
+
+.variance-line:hover {
+    background: rgba(255, 255, 255, 0.04);
 }
 
 .variance-line.variance-branched {
-    opacity: 0.5;
+    opacity: 0.4;
     text-decoration: line-through;
 }
 
@@ -4321,10 +4414,12 @@ body.planner-active {
     font-weight: 700;
     background: #f59e0b;
     color: #000;
-    padding: 1px 5px;
+    padding: 1px 6px;
     border-radius: 3px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
+    min-width: 24px;
+    text-align: center;
 }
 
 .variance-actions {
