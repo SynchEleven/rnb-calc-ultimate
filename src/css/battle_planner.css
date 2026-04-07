@@ -391,6 +391,18 @@ body.planner-active {
     box-shadow: 0 0 0 1px rgba(29, 155, 240, 0.2);
 }
 
+/* Nodes NOT on the active path: greyed-out / desaturated */
+.tree-node-inactive .tree-node-card {
+    opacity: 0.5;
+    filter: grayscale(40%);
+    transition: opacity 0.2s, filter 0.2s;
+}
+
+.tree-node-inactive:hover .tree-node-card {
+    opacity: 0.85;
+    filter: grayscale(10%);
+}
+
 
 
 /* -- Header -- */
@@ -644,12 +656,20 @@ body.planner-active {
 /* -- Branch group -- */
 .tree-branch-group {
     border-left: 2px solid rgba(255, 152, 0, 0.25);
-    margin-left: 6px;
-    padding-left: 8px;
+    margin-left: 0;
+    padding-left: 4px;
     margin-top: 3px;
     margin-bottom: 3px;
     background: rgba(255, 152, 0, 0.03);
     border-radius: 0 4px 4px 0;
+}
+
+/* Nested branch groups: no extra indentation, just a lighter border */
+.tree-branch-group .tree-branch-group {
+    margin-left: 0;
+    padding-left: 4px;
+    border-left-color: rgba(255, 152, 0, 0.15);
+    background: transparent;
 }
 
 .tree-branch-label {
@@ -661,6 +681,9 @@ body.planner-active {
     cursor: pointer;
     user-select: none;
     border-radius: 3px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
 }
 
 .tree-branch-label:hover {
@@ -3089,6 +3112,50 @@ body.planner-active {
 
 .ai-score-neg {
     color: var(--planner-danger);
+}
+
+.multihit-info {
+    margin-top: 2px;
+    font-size: 9px;
+    line-height: 1.5;
+}
+
+.multihit-per-hit {
+    color: var(--planner-text-muted);
+    font-weight: 600;
+    margin-bottom: 1px;
+}
+
+.multihit-total {
+    color: orange;
+    font-weight: 600;
+}
+
+.multihit-breakdown {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 6px;
+}
+
+.multihit-hit-count {
+    background: rgba(255, 165, 0, 0.1);
+    color: var(--planner-text);
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-family: var(--font-mono, monospace);
+    white-space: nowrap;
+}
+
+.multihit-hit-count.multihit-ko {
+    background: rgba(244, 33, 46, 0.2);
+    color: #ef5350;
+    font-weight: 700;
+}
+
+.multihit-hit-count.multihit-range-ko {
+    background: rgba(255, 165, 0, 0.2);
+    color: orange;
+    font-weight: 600;
 }
 
 .multihit-badge {

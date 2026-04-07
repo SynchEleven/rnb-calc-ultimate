@@ -1656,6 +1656,35 @@
         return maxDepth;
     }
 
+    /**
+     * Generate a descriptive heading for a branch group based on what kind
+     * of variance caused the split. Inspects the first child's outcome rollType.
+     */
+    function getBranchGroupHeading(parentNode) {
+        if (!parentNode || parentNode.children.length === 0) return '⑂ Branches';
+        var firstChild = uiState.tree.getNode(parentNode.children[0]);
+        if (!firstChild || !firstChild.outcome || !firstChild.outcome.effects) {
+            return '⑂ ' + parentNode.children.length + ' Branches';
+        }
+        var rt = firstChild.outcome.effects.rollType;
+        var count = parentNode.children.length;
+        if (rt === 'speedTie') return '⚡ Speed Tie — ' + count + ' outcomes';
+        if (rt === 'min' || rt === 'max') return '🎯 Damage Roll — KO vs Survive';
+        if (rt === 'noCrit' || rt === 'crit') return '💥 Critical Hit — ' + count + ' outcomes';
+        if (rt === 'noSecondary' || rt === 'secondary') return '🎲 Secondary Effect — ' + count + ' outcomes';
+        if (rt === 'noFlinch' || rt === 'flinch') return '💫 Flinch — ' + count + ' outcomes';
+        // AI tie branches don't have a rollType — detect from multiple different P2 moves
+        var p2Moves = {};
+        parentNode.children.forEach(function (cid) {
+            var c = uiState.tree.getNode(cid);
+            if (c && c.actions && c.actions.p2 && c.actions.p2.moveName) {
+                p2Moves[c.actions.p2.moveName] = true;
+            }
+        });
+        if (Object.keys(p2Moves).length > 1) return '🤖 AI Move Prediction — ' + count + ' branches';
+        return '⑂ ' + count + ' Branches';
+    }
+
     // =========================================================================
     // TREE RENDERING
     // =========================================================================
@@ -1671,6 +1700,15 @@
             return;
         }
 
+        // Build the set of node IDs on the path from root to the current node
+        var currentPath = {};
+        if (uiState.tree.currentNodeId) {
+            var pathArr = uiState.tree.getPathToNode(uiState.tree.currentNodeId);
+            for (var pi = 0; pi < pathArr.length; pi++) {
+                currentPath[pathArr[pi]] = true;
+            }
+        }
+
         // Get all roots (supports multiple starting points)
         var allRoots = uiState.tree.getAllRoots ? uiState.tree.getAllRoots() : [];
         if (allRoots.length === 0 && uiState.tree.rootId) {
@@ -1684,7 +1722,7 @@
                 var isCurrentRoot = rootNode.id === uiState.tree.rootId;
                 html += '<div class="tree-root' + (isCurrentRoot ? ' tree-root-current' : '') + '" data-root-id="' + rootNode.id + '">';
                 html += '<div class="tree-root-header" title="' + rootLabel + '">' + rootLabel + '</div>';
-                html += renderTreeNode(rootNode.id, 0);
+                html += renderTreeNode(rootNode.id, 0, currentPath);
                 html += '</div>';
             }
         });
@@ -1692,10 +1730,11 @@
         $treeContent.html(html);
     }
 
-    function renderTreeNode(nodeId, depth) {
+    function renderTreeNode(nodeId, depth, currentPath) {
         var node = uiState.tree.getNode(nodeId);
         if (!node) return '';
 
+        var isOnCurrentPath = !!(currentPath && currentPath[nodeId]);
         var isExpanded = uiState.expandedNodes[nodeId] !== false;
         var isCurrentNode = nodeId === uiState.tree.currentNodeId;
         var hasChildren = node.children.length > 0;
@@ -1703,6 +1742,7 @@
 
         var nodeClasses = ['tree-node'];
         if (isCurrentNode) nodeClasses.push('tree-node-current');
+        if (!isOnCurrentPath && !isCurrentNode) nodeClasses.push('tree-node-inactive');
 
         var p1Active = node.state.p1.active;
         var p2Active = node.state.p2.active;
@@ -1883,25 +1923,27 @@
 
         html += '</div></div>';
 
-        // Children: flat list, NO indentation. Branch groups get a label.
+        // Children: flat list, NO indentation. Branch groups get a descriptive header.
         if (hasChildren && isExpanded) {
             var isBranching = node.children.length > 1;
             if (isBranching) {
                 var branchGroupId = 'branch-' + nodeId;
                 var branchCollapsed = uiState.collapsedBranches && uiState.collapsedBranches[nodeId];
+                // Determine branch type from children for a better heading
+                var branchHeading = getBranchGroupHeading(node);
                 html += '<div class="tree-branch-group" id="' + branchGroupId + '">';
                 html += '<div class="tree-branch-label" data-branch-parent="' + nodeId + '">';
                 html += '<span class="tree-branch-toggle">' + (branchCollapsed ? '▶' : '▼') + '</span>';
-                html += ' ⑂ ' + node.children.length + ' Branches</div>';
+                html += ' ' + branchHeading + '</div>';
                 if (!branchCollapsed) {
                     node.children.forEach(function (childId) {
-                        html += renderTreeNode(childId, depth + 1);
+                        html += renderTreeNode(childId, depth + 1, currentPath);
                     });
                 }
                 html += '</div>';
             } else {
                 node.children.forEach(function (childId) {
-                    html += renderTreeNode(childId, depth + 1);
+                    html += renderTreeNode(childId, depth + 1, currentPath);
                 });
             }
         }
@@ -2320,19 +2362,47 @@
             }
 
             if (normalDamage && normalDamage.hitCount && normalDamage.hitCount > 1) {
-                var hitsLabel = normalDamage.multiHitRange
-                    ? normalDamage.multiHitRange[0] + '-' + normalDamage.multiHitRange[1] + ' hits'
-                    : normalDamage.hitCount + ' hits';
-                if (normalDamage.perHitMin !== null) {
-                    movesHtml += '<div class="move-cell-damage-row"><span class="multihit-badge">' +
-                        normalDamage.perHitMin + '-' + normalDamage.perHitMax + ' each × ' + normalDamage.hitCount +
-                        ' = ' + normalDamage.rawMin + '-' + normalDamage.rawMax + ' total</span></div>';
+                var perHitMin = normalDamage.perHitMin;
+                var perHitMax = normalDamage.perHitMax;
+                var isVariable = normalDamage.multiHitRange && normalDamage.multiHitRange[0] !== normalDamage.multiHitRange[1];
+
+                movesHtml += '<div class="multihit-info">';
+                if (perHitMin !== null && perHitMin !== undefined) {
+                    movesHtml += '<div class="multihit-per-hit">Per hit: ' + perHitMin + '–' + perHitMax + '</div>';
+
+                    // Show damage at each possible hit count for variable-hit moves
+                    if (isVariable) {
+                        var minHits = normalDamage.multiHitRange[0];
+                        var maxHits = normalDamage.multiHitRange[1];
+                        movesHtml += '<div class="multihit-breakdown">';
+                        for (var h = minHits; h <= maxHits; h++) {
+                            var totalMin = perHitMin * h;
+                            var totalMax = perHitMax * h;
+                            var hitsKO = totalMin >= defenderHP;
+                            var hitsMayKO = !hitsKO && totalMax >= defenderHP;
+                            var cls = hitsKO ? 'multihit-ko' : (hitsMayKO ? 'multihit-range-ko' : '');
+                            movesHtml += '<span class="multihit-hit-count ' + cls + '">';
+                            movesHtml += h + '× = ' + totalMin + '–' + totalMax;
+                            if (hitsKO) movesHtml += ' ☠';
+                            else if (hitsMayKO) movesHtml += ' ⚠';
+                            movesHtml += '</span>';
+                        }
+                        movesHtml += '</div>';
+                    } else {
+                        // Fixed hit count
+                        movesHtml += '<div class="multihit-total">' + normalDamage.hitCount + ' hits = ' +
+                            normalDamage.rawMin + '–' + normalDamage.rawMax + ' total</div>';
+                    }
                 } else {
-                    movesHtml += '<div class="move-cell-damage-row"><span class="multihit-badge">' + hitsLabel + '</span></div>';
+                    var hitsLabel = isVariable
+                        ? normalDamage.multiHitRange[0] + '–' + normalDamage.multiHitRange[1] + ' hits'
+                        : normalDamage.hitCount + ' hits';
+                    movesHtml += '<div class="multihit-badge">' + hitsLabel + '</div>';
                 }
+                movesHtml += '</div>';
             } else if (moveData && moveData.multihit) {
-                var hitStr = Array.isArray(moveData.multihit) ? moveData.multihit[0] + '-' + moveData.multihit[1] : moveData.multihit;
-                movesHtml += '<div class="move-cell-damage-row"><span class="multihit-badge">' + hitStr + ' hits</span></div>';
+                var hitStr = Array.isArray(moveData.multihit) ? moveData.multihit[0] + '–' + moveData.multihit[1] : moveData.multihit;
+                movesHtml += '<div class="multihit-info"><div class="multihit-badge">' + hitStr + ' hits</div></div>';
             }
 
             if (moveData && moveData.recoil) {
@@ -4875,8 +4945,8 @@
 
     /**
      * Variance notification with priority-sorted warnings.
-     * "Branch All" creates hierarchical branches: faster mover resolves first,
-     * remaining variance becomes sub-branches under surviving outcomes.
+     * "Branch All" creates hierarchical branches: variance outcomes become
+     * CHILDREN of the current node, preserving the tree hierarchy.
      */
     function showVarianceNotification(warnings, parentNodeId, currentNodeId) {
         var currentNode = uiState.tree.getNode(currentNodeId);
@@ -4937,36 +5007,29 @@
             $('#variance-banner').remove();
         });
 
-        // Hierarchical "Branch All": resolves faster mover first, nests remaining
+        // Hierarchical "Branch All": variance outcomes become children of the current node.
+        // The first warning creates branches under currentNode, remaining warnings
+        // become sub-branches under each surviving outcome.
         $('#variance-branch-all').on('click', function () {
             var sortedWarnings = branchable.map(function (b) { return b.warning; });
-            createHierarchicalBranches(sortedWarnings, parentNodeId, currentNodeId);
-            var parentNode = uiState.tree.getNode(parentNodeId);
-            if (parentNode) {
-                var idx = parentNode.children.indexOf(currentNodeId);
-                if (idx !== -1) parentNode.children.splice(idx, 1);
-                normalizeSiblingProbabilities(parentNodeId);
-            }
-            uiState.tree.navigate(parentNodeId);
+            createHierarchicalBranches(sortedWarnings, currentNodeId, currentNodeId);
+            normalizeSiblingProbabilities(currentNodeId);
+            uiState.tree.navigate(currentNodeId);
             $('#variance-banner').remove();
             renderTree();
             renderStage();
         });
 
+        // Single branch: create branches for just one warning under the current node
         $('.variance-branch-single').on('click', function () {
             var vidx = parseInt($(this).data('vidx'));
             var match = branchable.find(function (b) { return b.idx === vidx; });
             if (match) {
-                createSingleVarianceBranch(match.warning, parentNodeId, currentNodeId);
-                var parentNode = uiState.tree.getNode(parentNodeId);
-                if (parentNode) {
-                    var idx = parentNode.children.indexOf(currentNodeId);
-                    if (idx !== -1) parentNode.children.splice(idx, 1);
-                    normalizeSiblingProbabilities(parentNodeId);
-                }
+                createVarianceBranchNodes(match.warning, currentNodeId, currentNodeId);
+                normalizeSiblingProbabilities(currentNodeId);
                 $(this).closest('.variance-line').addClass('variance-branched');
                 $(this).prop('disabled', true).text('Done');
-                uiState.tree.navigate(parentNodeId);
+                uiState.tree.navigate(currentNodeId);
                 renderTree();
                 renderStage();
             }
@@ -4974,8 +5037,9 @@
     }
 
     /**
-     * Create hierarchical branches: process the first warning to create branches,
-     * then recursively attach remaining warnings as sub-branches under surviving outcomes.
+     * Create hierarchical branches: process the first warning to create branches
+     * as CHILDREN of parentNodeId (which is the currentNode), then recursively
+     * attach remaining warnings as sub-branches under surviving outcomes.
      * Normalizes sibling probabilities at each level to ensure they always sum to 1.0.
      */
     function createHierarchicalBranches(sortedWarnings, parentNodeId, currentNodeId) {
@@ -4984,6 +5048,7 @@
         var firstWarning = sortedWarnings[0];
         var remaining = sortedWarnings.slice(1);
 
+        // Create branch nodes as children of parentNodeId
         var branches = createVarianceBranchNodes(firstWarning, parentNodeId, currentNodeId);
 
         // Normalize the newly-created sibling branches at this level
@@ -5004,6 +5069,7 @@
                             branch.node.state[wDefSide].active.currentHP > 0;
                     });
                     if (applicable.length > 0) {
+                        // Sub-branches become children of this branch node
                         createHierarchicalBranches(applicable, branch.node.id, branch.node.id);
                     }
                 }
@@ -5014,27 +5080,41 @@
     /**
      * Create branch nodes for a single variance warning.
      * Returns array of { node, isKO } objects for hierarchical branching.
+     *
+     * IMPORTANT: Branch states are built from the PARENT node's pre-turn state,
+     * NOT from the current (post-damage) node. This prevents double-damage bugs.
+     * For each branch we recalculate the correct HP from the parent's state
+     * using the variance detail's simulated HP values.
      */
     function createVarianceBranchNodes(w, parentNodeId, currentNodeId) {
         var currentNode = uiState.tree.getNode(currentNodeId);
         if (!currentNode) return [];
         var d = w.detail;
         var defSide = w.mover === 'p1' ? 'p2' : 'p1';
+        var atkSide = w.mover;
         var results = [];
 
         if (d.isSpeedTie) {
             // Speed tie: create two branches — P1 moves first vs P2 moves first
             var p1FirstState = currentNode.state.clone();
             var p1FirstN = uiState.tree.addBranch(parentNodeId, p1FirstState, currentNode.actions,
-                new BattlePlanner.BattleOutcome('P1 moves first (50%)', 0.5, 0, { rollType: 'speedTie', firstMover: 'p1' }));
+                new BattlePlanner.BattleOutcome('⚡ P1 Moves First', 0.5, 0, { rollType: 'speedTie', firstMover: 'p1' }));
             results.push({ node: p1FirstN, isKO: false });
 
             var p2FirstState = currentNode.state.clone();
             var p2FirstN = uiState.tree.addBranch(parentNodeId, p2FirstState, currentNode.actions,
-                new BattlePlanner.BattleOutcome('P2 moves first (50%)', 0.5, 0, { rollType: 'speedTie', firstMover: 'p2' }));
+                new BattlePlanner.BattleOutcome('⚡ P2 Moves First', 0.5, 0, { rollType: 'speedTie', firstMover: 'p2' }));
             results.push({ node: p2FirstN, isKO: false });
 
         } else if (d.minResult && d.maxResult) {
+            // Damage roll variance: "Survives" vs "KO" (or berry trigger)
+            // d.minResult / d.maxResult contain the simulated HP values
+            var survProb = d.surviveChance || 0.5;
+            var koProb = d.koChance || 0.5;
+            var survPct = CalcIntegration.formatProbability(survProb);
+            var koPct = CalcIntegration.formatProbability(koProb);
+
+            // --- Survives branch: use minResult HP ---
             var minState = currentNode.state.clone();
             minState[defSide].active.currentHP = Math.max(0, d.minResult.hp);
             minState[defSide].active.percentHP = minState[defSide].active.maxHP > 0
@@ -5042,15 +5122,14 @@
             minState[defSide].active.hasFainted = minState[defSide].active.currentHP <= 0;
             if (d.minResult.itemConsumed) minState[defSide].active.item = '';
             syncActiveToTeam(minState);
-            var survProb = d.surviveChance || 0.5;
-            var koProb = d.koChance || 0.5;
-            var survPct = CalcIntegration.formatProbability(survProb);
-            var koPct = CalcIntegration.formatProbability(koProb);
+            var defName = currentNode.state[defSide].active.name;
+            var survDesc = defName + ' survives ' + w.move + ' (' + survPct + ')';
             var minN = uiState.tree.addBranch(parentNodeId, minState, currentNode.actions,
-                new BattlePlanner.BattleOutcome('Survives (' + w.move + ', ' + survPct + ')', survProb, 0, { rollType: 'min' }));
+                new BattlePlanner.BattleOutcome(survDesc, survProb, 0, { rollType: 'min' }));
             markBranchKOs(minN, minState);
             results.push({ node: minN, isKO: false });
 
+            // --- KO branch: use maxResult HP ---
             var maxState = currentNode.state.clone();
             maxState[defSide].active.currentHP = Math.max(0, d.maxResult.hp);
             maxState[defSide].active.percentHP = maxState[defSide].active.maxHP > 0
@@ -5058,62 +5137,85 @@
             maxState[defSide].active.hasFainted = maxState[defSide].active.currentHP <= 0;
             if (d.maxResult.itemConsumed) maxState[defSide].active.item = '';
             syncActiveToTeam(maxState);
+            var koDesc = d.maxResult.fainted
+                ? (defName + ' KO\'d by ' + w.move + ' (' + koPct + ')')
+                : (defName + ' takes max roll ' + w.move + ' (' + koPct + ')');
             var maxN = uiState.tree.addBranch(parentNodeId, maxState, currentNode.actions,
-                new BattlePlanner.BattleOutcome('KO (' + w.move + ', ' + koPct + ')', koProb, 0, { rollType: 'max' }));
+                new BattlePlanner.BattleOutcome(koDesc, koProb, 0, { rollType: 'max' }));
             markBranchKOs(maxN, maxState);
-            results.push({ node: maxN, isKO: true });
+            results.push({ node: maxN, isKO: d.maxResult.fainted });
 
         } else if (d.isCrit) {
+            // Crit variance: recalculate absolute HP from the pre-damage defender HP.
+            // The currentNode already has avg (normal) damage applied.
+            // We need to: (a) restore the no-crit branch to the current state as-is,
+            //             (b) calculate the crit branch from scratch using pre-damage HP.
+            var critMoveName = w.move.replace(' (crit)', '');
+
+            // No-crit branch: the current state IS the no-crit outcome already
             var normState = currentNode.state.clone();
             var normN = uiState.tree.addBranch(parentNodeId, normState, currentNode.actions,
-                new BattlePlanner.BattleOutcome('No Crit (' + w.move + ')', 0.9375, 0, { rollType: 'noCrit' }));
+                new BattlePlanner.BattleOutcome('No Crit (' + critMoveName + ')', 0.9375, 0, { rollType: 'noCrit' }));
             results.push({ node: normN, isKO: false });
+
+            // Crit branch: compute the crit damage and apply to the pre-damage HP.
+            // d.defenderHP is the HP BEFORE this move hit. d.critMin/critMax are the crit damage rolls.
+            var critAvgDmg = Math.floor((d.critMin + d.critMax) / 2);
+            var preDamageHP = d.defenderHP; // HP before the move that could crit
+            var critHP = Math.max(0, preDamageHP - critAvgDmg);
 
             var critState = currentNode.state.clone();
             var critDef = critState[defSide].active;
-            var critDmg = Math.floor((d.critMin + d.critMax) / 2);
-            var normalDmg = Math.floor((d.normalMin + d.normalMax) / 2);
-            var dmgDiff = critDmg - normalDmg;
-            critDef.currentHP = Math.max(0, critDef.currentHP - dmgDiff);
+            critDef.currentHP = critHP;
             critDef.percentHP = critDef.maxHP > 0 ? Math.round((critDef.currentHP / critDef.maxHP) * 100) : 0;
             critDef.hasFainted = critDef.currentHP <= 0;
             syncActiveToTeam(critState);
+            var critKO = critDef.currentHP <= 0;
+            var critDesc = critKO
+                ? ('💥 Crit KO! (' + critMoveName + ')')
+                : ('💥 Crit (' + critMoveName + ', ' + critHP + ' HP left)');
             var critN = uiState.tree.addBranch(parentNodeId, critState, currentNode.actions,
-                new BattlePlanner.BattleOutcome('Crit! (' + w.move + ')', 0.0625, 0, { rollType: 'crit' }));
+                new BattlePlanner.BattleOutcome(critDesc, 0.0625, 0, { rollType: 'crit' }));
             markBranchKOs(critN, critState);
-            results.push({ node: critN, isKO: critDef.currentHP <= 0 });
+            results.push({ node: critN, isKO: critKO });
 
         } else if (d.isSecondary && d.secondaryEffect) {
             var sec = d.secondaryEffect;
             var chance = sec.chance / 100;
+            var effectDesc = sec.status
+                ? normalizeStatus(sec.status)
+                : (sec.boosts ? 'stat change' : sec.volatileStatus || 'effect');
+
+            // No-effect branch: state stays as-is
             var missState = currentNode.state.clone();
             var missN = uiState.tree.addBranch(parentNodeId, missState, currentNode.actions,
                 new BattlePlanner.BattleOutcome('No Effect (' + w.move + ' ' + sec.chance + '%)', 1 - chance, 0, { rollType: 'noSecondary' }));
             results.push({ node: missN, isKO: false });
 
+            // Effect-triggers branch: apply secondary to cloned state
             var hitState = currentNode.state.clone();
             var effTarget = hitState[defSide].active;
-            var effUser = hitState[w.mover].active;
+            var effUser = hitState[atkSide].active;
             if (sec.status && (!effTarget.status || effTarget.status === 'Healthy')) {
                 effTarget.status = normalizeStatus(sec.status);
             }
             if (sec.boosts) applyBoosts(effTarget, sec.boosts);
             if (sec.selfBoosts) applyBoosts(effUser, sec.selfBoosts);
             syncActiveToTeam(hitState);
-            var effectDesc = sec.status || (sec.boosts ? 'stat change' : sec.volatileStatus || 'effect');
             var hitN = uiState.tree.addBranch(parentNodeId, hitState, currentNode.actions,
                 new BattlePlanner.BattleOutcome(effectDesc + ' (' + w.move + ' ' + sec.chance + '%)', chance, 0, { rollType: 'secondary' }));
             results.push({ node: hitN, isKO: false });
 
         } else if (d.isFlinch) {
             var noFlinchState = currentNode.state.clone();
+            var flinchPct = Math.round(d.flinchChance * 100);
             var noFlinchN = uiState.tree.addBranch(parentNodeId, noFlinchState, currentNode.actions,
                 new BattlePlanner.BattleOutcome('No Flinch (' + w.move + ')', 1 - d.flinchChance, 0, { rollType: 'noFlinch' }));
             results.push({ node: noFlinchN, isKO: false });
 
             var flinchState = currentNode.state.clone();
             var flinchN = uiState.tree.addBranch(parentNodeId, flinchState, currentNode.actions,
-                new BattlePlanner.BattleOutcome('Flinch! (' + w.move + ' ' + Math.round(d.flinchChance * 100) + '%)', d.flinchChance, 0, { rollType: 'flinch' }));
+                new BattlePlanner.BattleOutcome('💫 Flinch! (' + w.move + ' ' + flinchPct + '%)', d.flinchChance, 0, { rollType: 'flinch' }));
             results.push({ node: flinchN, isKO: false });
         }
 
@@ -5936,17 +6038,22 @@
             }
 
             // Apply item effects that trigger on damage (Focus Sash, berries)
+            // NOTE: type-boosting items (Charcoal, Choice Band, etc.) are already
+            // factored into the @smogon/calc damage calculation via snapshotToPokemon.
+            // This only handles HP-threshold triggered items.
             var itemFx = CalcIntegration.applyItemEffects(defender, avgDamage);
 
             // Apply damage
             defender.currentHP = Math.max(0, defender.currentHP - avgDamage);
 
-            // Apply item healing (Focus Sash survival, berry triggers)
-            if (itemFx.healed > 0) {
-                defender.currentHP = Math.min(defender.maxHP, defender.currentHP + itemFx.healed);
-            }
-            if (itemFx.itemConsumed) {
-                defender.item = '';
+            // Apply item healing ONLY if defender survived (dead Pokemon can't eat berries)
+            if (defender.currentHP > 0 || itemFx.itemConsumed) {
+                if (itemFx.healed > 0) {
+                    defender.currentHP = Math.min(defender.maxHP, defender.currentHP + itemFx.healed);
+                }
+                if (itemFx.itemConsumed) {
+                    defender.item = '';
+                }
             }
 
             // Set invulnerable state for 2-turn moves
