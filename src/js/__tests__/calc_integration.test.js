@@ -198,8 +198,19 @@ describe('getCritChance', () => {
     expect(CI.getCritChance({ name: 'Tackle' }, {}, {}, {}, { num: 3 })).toBeCloseTo(1 / 16);
   });
 
-  test('gen 7+ base crit rate is 1/24', () => {
-    expect(CI.getCritChance({ name: 'Tackle' }, {}, {}, {}, { num: 7 })).toBeCloseTo(1 / 24);
+  test('RnB base crit rate is 1/16, not the Gen 7+ 1/24', () => {
+    // The official docs state "Critical hit chance: 1/16", overriding the Gen 7+
+    // change. Every crit percentage and crit branch weight depends on this.
+    expect(CI.getCritChance({ name: 'Tackle' }, {}, {}, {}, { num: 7 })).toBeCloseTo(1 / 16);
+    expect(CI.getCritChance({ name: 'Tackle' }, {}, {}, {}, { num: 8 })).toBeCloseTo(1 / 16);
+  });
+
+  test('the RnB crit ladder climbs 1/16 -> 1/8 -> 1/2 -> guaranteed', () => {
+    var g = { num: 8 };
+    expect(CI.getCritChance({ name: 'Slash' }, {}, {}, {}, g)).toBeCloseTo(1 / 8);
+    expect(CI.getCritChance({ name: 'Slash' }, { item: 'Scope Lens' }, {}, {}, g)).toBeCloseTo(1 / 2);
+    expect(CI.getCritChance({ name: 'Slash' },
+      { item: 'Scope Lens', ability: 'Super Luck' }, {}, {}, g)).toBe(1);
   });
 
   test('returns 0 for null move', () => {

@@ -154,3 +154,9 @@ export {SPECIES} from './data/species';
 export {NATURES} from './data/natures';
 export {TYPE_CHART} from './data/types';
 export {STATS, Stats} from './stats';
+
+// The RnB AI move-prediction engine. src/js/index_randoms_controls.js already
+// calls `calc.generateMoveDist(...)` and the Battle Planner's forward
+// projection needs it too, but it was never actually exported from here — so
+// both were relying on a binding that did not exist on the bundle.
+export {generateMoveDist} from './ai';

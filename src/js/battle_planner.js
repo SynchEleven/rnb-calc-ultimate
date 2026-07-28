@@ -199,6 +199,81 @@ function hasStatusCondition(status) {
     return normalizeStatusCode(status) !== '';
 }
 
+/**
+ * Carry battle damage from one fight into the next.
+ *
+ * Back-to-back trainers (the Museum Aqua Grunts, for instance) give no chance
+ * to heal or reorder between fights, so the second battle has to start with
+ * the first battle's damage. This copies HP, status and consumed items from a
+ * carried team onto a freshly created battle state, matched by name. Boosts
+ * and volatiles do NOT carry — they reset when a battle ends.
+ */
+function applyCarriedTeam(state, carriedTeam) {
+    if (!state || !state.p1 || !carriedTeam || !carriedTeam.length) return state;
+
+    var byName = {};
+    carriedTeam.forEach(function (mon) {
+        if (mon && mon.name) byName[mon.name] = mon;
+    });
+
+    (state.p1.team || []).forEach(function (member, index) {
+        var carried = member && byName[member.name];
+        if (!carried) return;
+
+        member.currentHP = Math.max(0, Math.min(member.maxHP, carried.currentHP));
+        member.percentHP = member.maxHP > 0
+            ? Math.round((member.currentHP / member.maxHP) * 100) : 0;
+        member.hasFainted = member.currentHP <= 0;
+        member.status = normalizeStatusName(carried.status);
+        member.toxicCounter = carried.toxicCounter || 0;
+        // An item consumed in the last fight is NOT restored between battles
+        // (RnB: "Items that get consumed ... will not be restored")
+        member.item = carried.item || '';
+        if (carried.pp && carried.pp.length) member.pp = carried.pp.slice();
+        // Fresh battle: no boosts, no volatiles, sleep counter reset
+        member.boosts = { atk: 0, def: 0, spa: 0, spd: 0, spe: 0, accuracy: 0, evasion: 0 };
+        member.volatiles = {};
+        member.sleepCounter = 0;
+
+        if (index === state.p1.teamSlot && state.p1.active &&
+                state.p1.active.name === member.name) {
+            state.p1.active = member.clone();
+        }
+    });
+
+    return state;
+}
+
+/**
+ * Fill empty team slots (up to 6) from the box.
+ *
+ * At turn 0 the team is still yours to decide, so the projection is allowed
+ * to RECRUIT: "the best answer for enemy #1, the next answer whenever one is
+ * needed" only works if the candidates are actually on the team. Returns the
+ * names it added so the UI can say "recruited from your box" and offer to
+ * adopt the team for real.
+ */
+function recruitFromBox(state, box) {
+    var recruits = [];
+    if (!state || !state.p1 || !box || !box.length) {
+        return {state: state, recruits: recruits};
+    }
+    if (!state.p1.team) state.p1.team = [];
+    var team = state.p1.team;
+    var have = {};
+    team.forEach(function (member) {
+        if (member) have[member.name] = true;
+    });
+    box.forEach(function (snap) {
+        if (team.length >= 6 || !snap || !snap.name || have[snap.name]) return;
+        if (snap.currentHP !== undefined && snap.currentHP <= 0) return;
+        team.push(snap.clone ? snap.clone() : snap);
+        have[snap.name] = true;
+        recruits.push(snap.name);
+    });
+    return {state: state, recruits: recruits};
+}
+
 /** Base PP for a move, from RBDex when available. */
 function getMoveBasePP(moveName) {
     if (!moveName) return 0;
@@ -417,6 +492,148 @@ PokemonSnapshot.prototype.setStatus = function(status, toxicCounter) {
     return this;
 };
 
+/**
+ * Status-curing berries, consumed the instant the status lands.
+ *
+ * Lum Berry alone is held by 204 of the 1,626 trainer sets — the most common
+ * item in the game — so leaving these unimplemented meant every status the
+ * planner inflicted on those sets stuck when in game it would be cured
+ * immediately.
+ */
+var STATUS_CURE_BERRIES = {
+    'Cheri Berry': ['par'],
+    'Chesto Berry': ['slp'],
+    'Pecha Berry': ['psn', 'tox'],
+    'Rawst Berry': ['brn'],
+    'Aspear Berry': ['frz'],
+    'Persim Berry': [],                                  // confusion only
+    'Lum Berry': ['par', 'slp', 'psn', 'tox', 'brn', 'frz']
+};
+var CONFUSION_CURE_BERRIES = ['Persim Berry', 'Lum Berry'];
+
+/** Items whose effect is suppressed, so the berry cannot be eaten. */
+function canUseItem(pokemon) {
+    var ability = (pokemon.ability || '').replace(/\s/g, '').toLowerCase();
+    return ability !== 'klutz' && !pokemon.isEmbargoed;
+}
+
+/**
+ * Type and ability immunities to non-volatile status.
+ *
+ * A Steel-type simply cannot be poisoned, and no amount of accuracy changes
+ * that — so a planner that shows a poison branch against one is lying about the
+ * position. Abilities that override the rule in either direction are honoured:
+ * Corrosion poisons anything, Limber/Insomnia/Water Veil/Magma Armor grant
+ * immunity, Misty Terrain protects anything grounded.
+ */
+var STATUS_TYPE_IMMUNITY = {
+    psn: ['Steel', 'Poison'],
+    tox: ['Steel', 'Poison'],
+    par: ['Electric'],
+    brn: ['Fire'],
+    frz: ['Ice'],
+    slp: []
+};
+
+var STATUS_ABILITY_IMMUNITY = {
+    psn: ['immunity', 'pastelveil', 'purifyingsalt', 'comatose'],
+    tox: ['immunity', 'pastelveil', 'purifyingsalt', 'comatose'],
+    par: ['limber', 'purifyingsalt', 'comatose'],
+    brn: ['waterveil', 'waterbubble', 'purifyingsalt', 'comatose'],
+    frz: ['magmaarmor', 'purifyingsalt', 'comatose'],
+    slp: ['insomnia', 'vitalspirit', 'sweetveil', 'purifyingsalt', 'comatose']
+};
+
+/**
+ * Can this status land at all?
+ *
+ * `opts` may carry { attackerAbility, field, sideState, ignoreAbilities } so
+ * Corrosion, Mold Breaker, terrain and Safeguard can be taken into account.
+ */
+PokemonSnapshot.prototype.canBeStatused = function(status, opts) {
+    opts = opts || {};
+    var code = normalizeStatusCode(status);
+    if (code === '') return false;
+    if (this.hasStatus()) return false;                  // one status at a time
+
+    var attackerAbility = String(opts.attackerAbility || '').replace(/\s|-/g, '').toLowerCase();
+    var myAbility = String(this.ability || '').replace(/\s|-/g, '').toLowerCase();
+    var types = this.types || [];
+
+    // Corrosion poisons Steel and Poison types regardless
+    var corrosion = attackerAbility === 'corrosion' && (code === 'psn' || code === 'tox');
+
+    var immuneTypes = STATUS_TYPE_IMMUNITY[code] || [];
+    if (!corrosion && immuneTypes.some(function (t) { return types.indexOf(t) !== -1; })) {
+        return false;
+    }
+
+    // Mold Breaker and friends ignore the target's ability, not its typing
+    var moldBreaker = ['moldbreaker', 'turboblaze', 'teravolt'].indexOf(attackerAbility) !== -1;
+    if (!moldBreaker && !opts.ignoreAbilities) {
+        var immuneAbilities = STATUS_ABILITY_IMMUNITY[code] || [];
+        if (immuneAbilities.indexOf(myAbility) !== -1) return false;
+        // Leaf Guard blocks everything in harsh sun
+        var weather = String((opts.field && opts.field.weather) || '').toLowerCase();
+        if (myAbility === 'leafguard' && (weather === 'sun' || weather === 'harsh sunshine')) {
+            return false;
+        }
+        if (myAbility === 'flowerveil' && types.indexOf('Grass') !== -1) return false;
+    }
+
+    // Grounded Pokemon are shielded by Misty Terrain; Electric Terrain blocks sleep
+    var grounded = types.indexOf('Flying') === -1 && myAbility !== 'levitate' &&
+        this.item !== 'Air Balloon';
+    var terrain = String((opts.field && opts.field.terrain) || '').toLowerCase();
+    if (grounded) {
+        if (terrain === 'misty') return false;
+        if (terrain === 'electric' && code === 'slp') return false;
+    }
+
+    // Safeguard on the target's own side
+    if (opts.sideState && opts.sideState.safeguard && !moldBreaker) return false;
+
+    return true;
+};
+
+/**
+ * Inflict a non-volatile status, honouring type and ability immunities, the
+ * existing-status rule, and any curing berry. Returns true if it stuck.
+ */
+PokemonSnapshot.prototype.inflictStatus = function(status, toxicCounter, opts) {
+    var code = normalizeStatusCode(status);
+    if (code === '') return false;
+    if (!this.canBeStatused(code, opts)) return false;
+
+    this.setStatus(code, toxicCounter);
+
+    var cures = STATUS_CURE_BERRIES[this.item];
+    if (cures && cures.indexOf(code) !== -1 && canUseItem(this)) {
+        this.setStatus('Healthy');
+        this.item = '';
+        this.lastConsumedItem = 'status berry';
+        return false;
+    }
+    return true;
+};
+
+/**
+ * Inflict a volatile condition, honouring Persim/Lum for confusion.
+ * Returns true if it stuck.
+ */
+PokemonSnapshot.prototype.inflictVolatile = function(name, value) {
+    if (!name) return false;
+    this.setVolatile(name, value === undefined ? true : value);
+
+    if (name === 'confusion' && CONFUSION_CURE_BERRIES.indexOf(this.item) !== -1 && canUseItem(this)) {
+        this.setVolatile('confusion', false);
+        this.item = '';
+        this.lastConsumedItem = 'status berry';
+        return false;
+    }
+    return true;
+};
+
 PokemonSnapshot.prototype.setVolatile = function(name, value) {
     if (!name) return this;
     if (!this.volatiles) this.volatiles = {};
@@ -430,6 +647,22 @@ PokemonSnapshot.prototype.setVolatile = function(name, value) {
 
 PokemonSnapshot.prototype.hasVolatile = function(name) {
     return !!(this.volatiles && this.volatiles[name]);
+};
+
+/**
+ * (Re)fill the PP array from the current move list.
+ *
+ * Several call sites build a blank snapshot and assign `moves` afterwards, so
+ * the constructor cannot be the only place PP is derived — those snapshots
+ * would keep a placeholder PP array that does not match their moves.
+ */
+PokemonSnapshot.prototype.refreshPP = function() {
+    var pp = [];
+    for (var i = 0; i < Math.max(4, this.moves.length); i++) {
+        pp.push(this.moves[i] ? getMoveBasePP(this.moves[i]) : 0);
+    }
+    this.pp = pp;
+    return this;
 };
 
 PokemonSnapshot.prototype.usePP = function(moveIndex) {
@@ -580,6 +813,10 @@ BattleStateSnapshot.prototype.clone = function() {
     clone.p2.team = this.p2.team.map(function(p) { return p.clone(); });
     clone.p2.teamSlot = this.p2.teamSlot;
     
+    // Per-turn event log (full paralysis, confusion self-hit, ...) — part of
+    // state identity, so it has to survive cloning
+    clone.turnEvents = (this.turnEvents || []).slice();
+
     // Clone field
     clone.field = Object.assign({}, this.field);
     
@@ -1130,6 +1367,10 @@ window.BattlePlanner = {
     normalizeStatusCode: normalizeStatusCode,
     hasStatusCondition: hasStatusCondition,
     getMoveBasePP: getMoveBasePP,
+    applyCarriedTeam: applyCarriedTeam,
+    recruitFromBox: recruitFromBox,
+    STATUS_TYPE_IMMUNITY: STATUS_TYPE_IMMUNITY,
+    STATUS_ABILITY_IMMUNITY: STATUS_ABILITY_IMMUNITY,
     STATUS_CODE_TO_NAME: STATUS_CODE_TO_NAME,
     STATUS_NAME_TO_CODE: STATUS_NAME_TO_CODE
 };

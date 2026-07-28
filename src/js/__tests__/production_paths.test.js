@@ -290,7 +290,8 @@ describe('end-of-turn effects on production snapshots', () => {
   });
 
   test('Flame Orb fires on a healthy production snapshot', () => {
-    const p = realSnapshot('Blaziken', { item: 'Flame Orb' });
+    // Fire types are immune to burn, so a Flame Orb test needs a non-Fire holder
+    const p = realSnapshot('Blaziken', { item: 'Flame Orb', types: ['Normal'] });
     expect(p.status).toBe('Healthy');
 
     Logic.applyEndOfTurnEffects(stateOf(p, realSnapshot('Swampert')), 8);

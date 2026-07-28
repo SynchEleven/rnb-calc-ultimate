@@ -244,18 +244,21 @@ body.planner-active {
     display: none;
 }
 
-.view-tree .planner-tree-panel {
-    flex: 1;
-}
+/* The three view modes, retargeted after the layout change. The old rules
+   pointed at .planner-tree-panel, which no longer exists — Tree and Stage view
+   had quietly become no-ops. */
 
-.view-stage .planner-tree-panel,
-.view-stage .planner-inspector-panel {
-    display: none;
-}
+/* Tree: give the all-lines drawer the room, keep the fight visible below it */
+.view-tree .lines-drawer { display: flex !important; max-height: 65%; }
+.view-tree .planner-stage-panel { flex: 0 0 auto; }
 
-.view-stage .planner-stage-panel {
-    flex: 1;
-}
+/* Stage: just the fight — ribbon stays, read-out and drawer step aside */
+.view-stage .planner-inspector-panel { display: none; }
+.view-stage .lines-drawer { display: none !important; }
+.view-stage .planner-stage-panel { flex: 1; }
+
+/* Split (default): ribbon, fight, and the read-out rail together */
+.view-split .planner-stage-panel { flex: 1; }
 
 /* ============================================
    PANEL HEADERS
@@ -5198,4 +5201,509 @@ body.planner-active {
     pointer-events: none;
     white-space: normal;
     word-wrap: break-word;
+}
+/* ============================================================================
+   REDESIGN: mainline ribbon + move rows + read-out rail
+   ============================================================================
+   The planner used to spend a whole column on an indented tree and lay moves
+   out as 2x2 grids of mostly-empty cards. Time now runs horizontally along a
+   ribbon (so depth costs no width), moves are dense rows that expand for the
+   full detail, and the right rail answers three questions in the order players
+   actually ask them.
+   ========================================================================== */
+
+.planner-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    gap: 1px;
+    background: var(--planner-border);
+}
+.planner-main > .planner-stage-panel { flex: 1; min-height: 0; }
+
+/* ---------- mainline ribbon ---------- */
+.mainline {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+    background: var(--planner-panel-bg);
+    border-bottom: 1px solid var(--planner-border);
+    padding: 7px 10px;
+    flex: none;
+}
+.mainline-scroll {
+    display: flex;
+    align-items: center;
+    overflow-x: auto;
+    overflow-y: hidden;
+    flex: 1;
+    min-width: 0;
+    scrollbar-width: thin;
+    padding-bottom: 2px;
+}
+.mainline-scroll::-webkit-scrollbar { height: 6px; }
+.mainline-scroll::-webkit-scrollbar-thumb { background: var(--planner-border); border-radius: 3px; }
+
+.ml-stop { display: flex; align-items: center; flex: none; }
+
+.ml-card {
+    background: var(--planner-card-bg);
+    border: 1px solid var(--planner-border);
+    border-radius: 6px;
+    padding: 4px 9px 5px;
+    min-width: 92px;
+    cursor: pointer;
+    text-align: left;
+    transition: border-color .12s, background .12s;
+}
+.ml-card:hover { border-color: var(--planner-text-muted); }
+.ml-card.current {
+    border-color: var(--planner-accent);
+    background: #16283a;
+    box-shadow: inset 0 0 0 1px var(--planner-accent);
+}
+.ml-card.impossible { opacity: .4; }
+.ml-card.impossible .ml-prob { text-decoration: line-through; }
+
+.ml-turn {
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-size: 9.5px;
+    letter-spacing: .05em;
+    color: var(--planner-text-muted);
+    display: flex; align-items: center; gap: 4px;
+}
+.ml-moves { font-size: 11.5px; font-weight: 600; white-space: nowrap; color: var(--planner-text); }
+.ml-prob {
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-size: 9.5px; color: var(--planner-text-muted);
+}
+
+/* The connector between stops. A fork puts a count badge on it, which is how
+   branching reads without ever indenting. */
+.ml-link { width: 22px; height: 2px; background: var(--planner-border); flex: none; position: relative; }
+.ml-link.forked { background: var(--planner-warning); }
+.ml-fork-badge {
+    position: absolute; top: -9px; left: 50%; transform: translateX(-50%);
+    min-width: 16px; height: 16px; padding: 0 3px;
+    border-radius: 8px; border: 1px solid var(--planner-warning);
+    background: var(--planner-bg); color: var(--planner-warning);
+    font-size: 9px; font-weight: 700; line-height: 14px; text-align: center;
+    cursor: pointer; z-index: 2;
+}
+.ml-fork-badge:hover { background: var(--planner-warning); color: #0f1419; }
+
+.mainline-tools { display: flex; gap: 5px; align-items: center; flex: none; }
+.mainline-btn {
+    background: transparent; color: var(--planner-text-muted);
+    border: 1px solid var(--planner-border); border-radius: 5px;
+    padding: 4px 9px; font-size: 11px; cursor: pointer; white-space: nowrap;
+}
+.mainline-btn:hover { color: var(--planner-text); border-color: var(--planner-text-muted); }
+.mainline-btn.active { color: var(--planner-accent); border-color: var(--planner-accent); }
+
+/* Branch cause colours: one vocabulary, used in the ribbon, the rail and the tree */
+.cause-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.cause-ko     { background: #f4212e; } .cause-txt-ko     { color: #f4212e; }
+.cause-crit   { background: #ffad1f; } .cause-txt-crit   { color: #ffad1f; }
+.cause-status { background: #a970ff; } .cause-txt-status { color: #a970ff; }
+.cause-roll   { background: #4aa8ff; } .cause-txt-roll   { color: #4aa8ff; }
+.cause-ai     { background: #00ba7c; } .cause-txt-ai     { color: #00ba7c; }
+.cause-speed  { background: #7de3ff; } .cause-txt-speed  { color: #7de3ff; }
+.cause-item   { background: #ff8fc4; } .cause-txt-item   { color: #ff8fc4; }
+
+.cause-pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 9.5px; font-weight: 700; letter-spacing: .04em;
+    text-transform: uppercase; padding: 1px 6px; border-radius: 10px;
+    background: rgba(255,255,255,.05);
+}
+
+/* ---------- all-lines drawer (the full tree, kept available) ---------- */
+.lines-drawer {
+    flex: none; max-height: 42%;
+    display: flex; flex-direction: column;
+    background: var(--planner-panel-bg);
+    border-bottom: 1px solid var(--planner-border);
+    overflow: hidden;
+}
+.lines-drawer-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 6px 10px; border-bottom: 1px solid var(--planner-border); flex: none;
+}
+.lines-drawer .panel-content { overflow-y: auto; }
+
+/* ---------- move rows ---------- */
+.move-rows { display: flex; flex-direction: column; gap: 4px; }
+
+.mv-row {
+    background: var(--planner-card-bg);
+    border: 1px solid var(--planner-border);
+    border-left: 3px solid var(--planner-border);
+    border-radius: 5px;
+    cursor: pointer;
+    transition: border-color .12s, background .12s;
+}
+.mv-row:hover { border-color: var(--planner-text-muted); }
+.mv-row.selected {
+    border-color: var(--planner-accent);
+    border-left-color: var(--planner-accent);
+    background: #16283a;
+}
+.mv-row.ai-likely { border-left-color: #00ba7c; }
+.mv-row.mv-status-move { border-left-color: #a970ff; }
+.mv-row.mv-immune { opacity: .5; }
+
+.mv-line {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 8px;
+    align-items: center;
+    padding: 5px 8px 6px;
+}
+.mv-id { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.mv-nm { font-size: 12.5px; font-weight: 620; color: var(--planner-text); }
+.mv-badges { display: flex; gap: 4px; align-items: center; }
+.mv-tag {
+    font-size: 9px; font-weight: 700; letter-spacing: .04em;
+    padding: 1px 4px; border-radius: 3px; color: #0f1419;
+}
+.mv-tag.ai { background: rgba(0,186,124,.16); color: #00ba7c; border: 1px solid rgba(0,186,124,.4); }
+.mv-tag.tie { background: rgba(255,173,31,.15); color: #ffad1f; border: 1px solid rgba(255,173,31,.45); }
+.mv-tag.pp { background: transparent; color: var(--planner-text-muted); border: 1px solid var(--planner-border); }
+
+/* Damage bar drawn against the target CURRENT hp, with a lethal marker: the
+   bar reaching the red tick means this move can kill, read without numbers. */
+.mv-bar {
+    position: relative; height: 6px; border-radius: 3px;
+    background: #101922; border: 1px solid #202b36; margin-top: 5px;
+}
+.mv-bar-min { position: absolute; left: 0; top: 0; bottom: 0;
+    border-radius: 3px 0 0 3px; background: #2c78c4; }
+.mv-bar-span { position: absolute; top: 0; bottom: 0; background: rgba(143,208,255,.45); }
+.mv-bar-ko { position: absolute; top: -3px; bottom: -3px; width: 2px;
+    background: #f4212e; border-radius: 1px; }
+.mv-bar-crit { position: absolute; top: -3px; bottom: -3px; width: 1px;
+    background: rgba(255,173,31,.85); }
+
+.mv-figures { text-align: right; flex: none; min-width: 74px; }
+.mv-pct {
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: 12.5px; font-weight: 650; color: var(--planner-text);
+}
+.mv-verdict { font-size: 9.5px; letter-spacing: .04em; text-transform: uppercase; color: var(--planner-text-muted); }
+.mv-verdict.kills { color: #f4212e; font-weight: 700; }
+.mv-verdict.maybe { color: #ffad1f; font-weight: 700; }
+
+/* Expandable detail keeps the full roll list and description one click away
+   rather than always on screen. */
+.mv-detail {
+    border-top: 1px solid var(--planner-border);
+    padding: 6px 8px 7px;
+    display: none;
+    font-size: 11px;
+    color: var(--planner-text-muted);
+}
+.mv-row.expanded .mv-detail { display: block; }
+.mv-rolls {
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: 10px; color: var(--planner-text-muted); line-height: 1.5;
+}
+.mv-rolls b { color: var(--planner-text); font-weight: 600; }
+.mv-desc { margin-top: 4px; color: var(--planner-text-muted); line-height: 1.45; }
+.mv-crit-line { margin-top: 3px; color: #ffad1f;
+    font-family: ui-monospace, Consolas, monospace; font-size: 10px; }
+.mv-meta { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; font-size: 10px; }
+.mv-meta span { color: var(--planner-text-muted); }
+.mv-expand { background: none; border: 0; color: var(--planner-text-muted);
+    cursor: pointer; font-size: 10px; padding: 0 2px; }
+.mv-expand:hover { color: var(--planner-accent); }
+
+/* ---------- stats strip, with live stage changes ---------- */
+.stat-strip { display: flex; gap: 3px; margin: 6px 0 2px; }
+.stat-cell {
+    flex: 1; text-align: center; background: #101922;
+    border: 1px solid var(--planner-border); border-radius: 4px;
+    padding: 3px 2px 4px; position: relative; min-width: 0;
+}
+.stat-cell.boosted { border-color: #00ba7c; background: rgba(0,186,124,.09); }
+.stat-cell.dropped { border-color: #f4212e; background: rgba(244,33,46,.09); }
+.stat-cell.is-speed-win { box-shadow: inset 0 0 0 1px #7de3ff; }
+.stat-lbl { font-size: 8.5px; letter-spacing: .07em; text-transform: uppercase;
+    color: var(--planner-text-muted); display: block; }
+.stat-val {
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: 12px; font-weight: 620; color: var(--planner-text);
+}
+.stat-delta { font-size: 8.5px; font-weight: 700; display: block; line-height: 1.1; }
+.stat-delta.up { color: #00ba7c; } .stat-delta.down { color: #f4212e; }
+
+/* ---------- read-out rail ---------- */
+.planner-inspector-panel { flex: 0 0 320px; min-width: 240px; }
+.readout-scroll { overflow-y: auto; flex: 1; padding: 0 0 14px; }
+.planner-inspector-panel.collapsed .readout-scroll { display: none; }
+
+.ro-block { padding: 10px 12px 12px; border-bottom: 1px solid var(--planner-border); }
+.ro-head {
+    font-size: 9.5px; letter-spacing: .13em; text-transform: uppercase;
+    color: var(--planner-text-muted); margin: 0 0 8px; font-weight: 650;
+    display: flex; align-items: center; justify-content: space-between;
+}
+.ro-mini-btn {
+    background: transparent; border: 1px solid var(--planner-border);
+    color: var(--planner-text-muted); border-radius: 4px;
+    font-size: 9px; padding: 1px 6px; cursor: pointer; letter-spacing: .04em;
+}
+.ro-mini-btn:hover { color: var(--planner-accent); border-color: var(--planner-accent); }
+
+.ro-sentence { font-size: 12.5px; line-height: 1.5; color: var(--planner-text); margin: 0 0 8px; }
+.ro-sentence b { color: #fff; }
+.ro-sentence .n { font-family: ui-monospace, Consolas, monospace; font-variant-numeric: tabular-nums; }
+.ro-em-ko { color: #f4212e; font-weight: 650; }
+.ro-em-safe { color: #00ba7c; font-weight: 650; }
+.ro-em-risk { color: #ffad1f; font-weight: 650; }
+
+/* Stacked meter: the at-a-glance "risk right now" visual */
+.ro-meter { display: flex; height: 22px; border-radius: 4px; overflow: hidden;
+    border: 1px solid var(--planner-border); margin: 4px 0 6px; }
+.ro-meter span {
+    display: grid; place-items: center; font-size: 10px; font-weight: 700;
+    color: #06111b; overflow: hidden; white-space: nowrap; min-width: 0;
+}
+.ro-meter .seg-safe { background: #00ba7c; }
+.ro-meter .seg-risk { background: #ffad1f; }
+.ro-meter .seg-ko   { background: #f4212e; color: #fff; }
+.ro-meter .seg-none { background: #26313d; color: var(--planner-text-muted); }
+
+.ro-legend { display: flex; flex-wrap: wrap; gap: 8px; font-size: 10px; color: var(--planner-text-muted); }
+.ro-legend i { display: inline-block; width: 7px; height: 7px; border-radius: 2px; margin-right: 3px; }
+
+.ro-kv { display: flex; justify-content: space-between; align-items: baseline;
+    font-size: 11.5px; padding: 2px 0; }
+.ro-kv span:first-child { color: var(--planner-text-muted); }
+.ro-kv span:last-child {
+    font-family: ui-monospace, Consolas, monospace; font-variant-numeric: tabular-nums;
+    color: var(--planner-text); font-weight: 600;
+}
+.ro-kv.big span:last-child { font-size: 15px; }
+
+/* Losses per outcome: the run currency, kept separate from win chance */
+.ro-loss-row { display: grid; grid-template-columns: 54px 1fr 44px; gap: 6px;
+    align-items: center; font-size: 10.5px; margin-bottom: 3px; }
+.ro-loss-bar { height: 9px; background: #101922; border-radius: 3px;
+    border: 1px solid #202b36; overflow: hidden; }
+.ro-loss-bar i { display: block; height: 100%; }
+.ro-loss-0 i { background: #00ba7c; }
+.ro-loss-1 i { background: #ffad1f; }
+.ro-loss-n i { background: #f4212e; }
+.ro-loss-row span:last-child {
+    text-align: right; font-family: ui-monospace, Consolas, monospace;
+    font-variant-numeric: tabular-nums; color: var(--planner-text-muted);
+}
+
+.ro-branch-row { display: flex; align-items: center; gap: 6px; font-size: 11.5px; padding: 3px 0; }
+.ro-branch-row .pct {
+    margin-left: auto; font-family: ui-monospace, Consolas, monospace;
+    font-variant-numeric: tabular-nums; color: var(--planner-text-muted); font-size: 10.5px;
+}
+.ro-note { font-size: 10.5px; color: var(--planner-text-muted); line-height: 1.45; margin: 6px 0 0; }
+.ro-warn { color: var(--planner-warning); }
+
+.ro-details { border-top: 1px solid var(--planner-border); }
+.ro-details summary {
+    padding: 8px 12px; font-size: 10px; letter-spacing: .11em; text-transform: uppercase;
+    color: var(--planner-text-muted); cursor: pointer; font-weight: 650;
+}
+.ro-details summary:hover { color: var(--planner-text); }
+
+.ro-empty { font-size: 11.5px; color: var(--planner-text-muted); font-style: italic; }
+
+.ro-spinner {
+    display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+    border: 2px solid var(--planner-border); border-top-color: var(--planner-accent);
+    animation: ro-spin .7s linear infinite; vertical-align: -1px; margin-right: 5px;
+}
+@keyframes ro-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .ro-spinner { animation: none; } }
+
+@media (max-width: 1100px) {
+    .planner-inspector-panel { flex: 0 0 270px; }
+    .mv-figures { min-width: 62px; }
+}
+
+/* ---------- fork picker popover ---------- */
+.planner-popover {
+    position: fixed; z-index: 10050;
+    background: var(--planner-card-bg);
+    border: 1px solid var(--planner-accent);
+    border-radius: 7px;
+    box-shadow: 0 10px 34px rgba(0,0,0,.5);
+    padding: 5px; min-width: 210px; max-width: 320px;
+}
+.fork-picker { display: flex; flex-direction: column; gap: 3px; }
+.fork-option {
+    display: flex; align-items: center; gap: 7px;
+    background: transparent; border: 1px solid transparent; border-radius: 5px;
+    padding: 6px 8px; cursor: pointer; text-align: left; width: 100%;
+    color: var(--planner-text); font-size: 11.5px;
+}
+.fork-option:hover { background: #16283a; border-color: var(--planner-border); }
+.fork-option.on-path { border-color: var(--planner-accent); background: #16283a; }
+.fork-option-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fork-option-pct {
+    font-family: ui-monospace, Consolas, monospace; font-variant-numeric: tabular-nums;
+    font-size: 10.5px; color: var(--planner-text-muted); flex: none;
+}
+.move-crit-label, .move-effect-label {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 10px; color: var(--planner-text-muted); cursor: pointer;
+}
+.move-additional-effects-btn {
+    background: transparent; border: 1px solid var(--planner-border);
+    color: var(--planner-text-muted); border-radius: 4px;
+    font-size: 9.5px; padding: 1px 6px; cursor: pointer;
+}
+.move-additional-effects-btn:hover { color: var(--planner-accent); border-color: var(--planner-accent); }
+
+/* Inline roll spread and description: the row has the width, so use it. */
+.mv-inline {
+    display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap;
+    padding: 0 8px 4px 8px;
+}
+.mv-inline .mv-rolls { flex: 1; min-width: 0; }
+.mv-inline-crit {
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: 10px; color: #ffad1f; white-space: nowrap; flex: none;
+}
+.mv-inline-desc {
+    padding: 0 8px 6px 8px; font-size: 10.5px; line-height: 1.4;
+    color: var(--planner-text-muted);
+}
+
+/* Types on the team slots — you cannot judge a switch without them. */
+.team-slot-types { display: flex; gap: 3px; margin-top: 3px; }
+.team-slot-types .move-type-badge { font-size: 8px; padding: 0 3px; }
+
+/* The mainline deserves more room: two lines of stops, not one cramped strip. */
+.mainline { padding: 10px 12px; min-height: 76px; }
+.mainline-scroll { align-items: stretch; }
+.ml-card { min-width: 118px; padding: 6px 11px 7px; }
+.ml-turn { font-size: 10px; margin-bottom: 1px; }
+.ml-moves { font-size: 12.5px; }
+.ml-prob { font-size: 10px; }
+.ml-link { width: 26px; }
+
+/* The projection showing its working */
+.ro-trace { margin-top: 8px; }
+.ro-trace summary {
+    font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--planner-text-muted); cursor: pointer; padding: 3px 0;
+}
+.ro-trace summary:hover { color: var(--planner-accent); }
+.ro-trace-turn {
+    display: grid; grid-template-columns: 26px 1fr; gap: 6px;
+    font-size: 10.5px; padding: 4px 0; border-bottom: 1px solid var(--planner-border);
+    line-height: 1.45;
+}
+.ro-trace-t {
+    font-family: ui-monospace, Consolas, monospace; font-size: 9.5px;
+    color: var(--planner-text-muted);
+}
+.ro-trace-body { color: var(--planner-text-muted); min-width: 0; }
+.ro-trace-body b { color: var(--planner-text); font-weight: 600; }
+.ro-trace-body .n {
+    font-family: ui-monospace, Consolas, monospace; font-variant-numeric: tabular-nums;
+}
+.ro-trace-alt { color: #00ba7c; font-size: 9.5px; }
+
+/* Lead comparison at turn 0 */
+.ro-lead-cmp { margin: 10px 0 4px; }
+.ro-sub-head {
+    font-size: 9.5px; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--planner-text-muted); margin: 0 0 5px; font-weight: 650;
+}
+.ro-lead-row {
+    display: grid; grid-template-columns: 1fr auto auto; gap: 8px;
+    font-size: 11px; padding: 3px 6px; border-radius: 4px;
+    color: var(--planner-text-muted);
+}
+.ro-lead-row.best { color: var(--planner-text); background: rgba(0,186,124,.08); }
+.ro-lead-row.current { box-shadow: inset 2px 0 0 var(--planner-accent); }
+.ro-lead-win, .ro-lead-loss {
+    font-family: ui-monospace, Consolas, monospace; font-variant-numeric: tabular-nums;
+}
+.ro-lead-win { color: #00ba7c; }
+.ro-lead-loss { color: var(--planner-text-muted); }
+
+/* Trace: what actually happened */
+.ro-trace-t em {
+    display: block; font-style: normal; font-size: 8.5px;
+    color: var(--planner-text-muted);
+}
+.ro-trace-actor { display: block; }
+.ro-trace-actor.you b { color: #2dd4a8; }
+.ro-trace-actor.them b { color: #ff5f8a; }
+.ro-trace-chg { color: #ffad1f; font-size: 9.5px; }
+.ro-trace-faint { display: block; color: #f4212e; font-size: 10px; padding: 1px 0; }
+.ro-trace-ev { display: block; color: #7de3ff; font-size: 9.5px; }
+.ro-trace-branch {
+    display: block; font-size: 10px; color: var(--planner-text-muted);
+    padding-left: 8px; border-left: 2px solid var(--planner-border);
+    margin-top: 1px;
+}
+
+.ro-trace-switch { display: block; color: #7de3ff; font-size: 10px; padding: 1px 0; }
+
+/* Live simulation progress popup */
+.sim-progress-backdrop {
+    position: fixed; inset: 0; z-index: 4000;
+    background: rgba(4, 8, 14, 0.72);
+    display: flex; align-items: center; justify-content: center;
+}
+.sim-progress {
+    background: #10161f; border: 1px solid #2b3a4d; border-radius: 10px;
+    width: min(440px, 92vw); padding: 16px 18px;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+    color: #dbe6f2; font-size: 12px;
+}
+.sim-progress h3 { margin: 0 0 8px; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+.sim-progress h5 { margin: 10px 0 4px; font-size: 10px; text-transform: uppercase;
+    letter-spacing: 0.06em; color: #7a8ea3; }
+.sim-phase { color: #9fb3c8; margin-bottom: 10px; }
+.sim-stats { display: flex; flex-wrap: wrap; gap: 6px; }
+.sim-stat { background: #182230; border-radius: 6px; padding: 5px 9px;
+    display: flex; flex-direction: column; gap: 1px; min-width: 64px; }
+.sim-stat span { font-size: 9px; text-transform: uppercase; letter-spacing: 0.05em; color: #7a8ea3; }
+.sim-stat b { font-size: 12px; color: #e8f0f8; }
+.sim-line-row { padding: 2px 0; color: #b9c9da; font-size: 11px; }
+.sim-actions { margin-top: 12px; text-align: right; }
+
+.ro-apply-wrap { margin: 6px 0; }
+.ro-apply-line { font-size: 10px; padding: 3px 8px; }
+.ro-lead-use {
+    font-size: 9px; padding: 1px 7px; margin-left: 6px; cursor: pointer;
+    background: #1d2a3a; color: #9fd1ff; border: 1px solid #33507a; border-radius: 4px;
+}
+.ro-lead-use:hover { background: #26405f; }
+
+.ro-team-plan { margin-top: 10px; }
+.ro-plan-row { font-size: 11px; color: #b9c9da; padding: 2px 0; }
+.ro-plan-idx { color: #7a8ea3; }
+.ro-plan-turns { color: #7a8ea3; font-size: 10px; }
+.ro-plan-exit { color: #9fb3c8; }
+
+.ro-plan-box { color: #7de3ff; font-size: 9px; }
+.ro-adopt-team {
+    font-size: 10px; padding: 2px 8px; margin-left: 4px; cursor: pointer;
+    background: #1d3a2a; color: #9fffc4; border: 1px solid #337a50; border-radius: 4px;
+}
+.ro-adopt-team:hover { background: #265f40; }
+
+.ro-trace-splice {
+    font-size: 9px; color: #c9a35b; padding: 2px 6px; margin: 2px 0;
+    border-left: 2px solid #c9a35b; opacity: 0.85;
 }

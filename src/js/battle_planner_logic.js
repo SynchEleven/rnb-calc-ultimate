@@ -342,10 +342,11 @@
                 effects.push(pokemon.name + ' ate its Oran Berry and recovered 10 HP');
             }
 
-            // Pinch berries (Figy, Wiki, Mago, Aguav, Iapapa): heal 1/3 maxHP at ≤25% HP (gen 7+)
+            // RnB: "Confuse inducing berries: Restore half HP, triggering at 1/4 HP."
+            // Standard gen 7+ heals a third; this hack heals a half.
             var pinchBerries = ['Figy Berry', 'Wiki Berry', 'Mago Berry', 'Aguav Berry', 'Iapapa Berry'];
             if (pinchBerries.indexOf(item) !== -1 && hpPercent <= 0.25) {
-                var heal = Math.max(1, Math.floor(pokemon.maxHP / 3));
+                var heal = Math.max(1, Math.floor(pokemon.maxHP / 2));
                 pokemon.currentHP = Math.min(pokemon.maxHP, pokemon.currentHP + heal);
                 pokemon.item = '';
                 effects.push(pokemon.name + ' ate its ' + item + ' and recovered ' + heal + ' HP');
@@ -382,6 +383,12 @@
 
     /** Write a status through the snapshot API when present, else normalise by hand. */
     function setSnapshotStatus(pokemon, status) {
+        if (typeof pokemon.inflictStatus === 'function') {
+            // Honours curing berries: a Lum Berry holder with a Flame Orb burns
+            // and immediately eats the berry.
+            pokemon.inflictStatus(status);
+            return;
+        }
         if (typeof pokemon.setStatus === 'function') {
             pokemon.setStatus(status);
             return;
@@ -488,10 +495,37 @@
 
     }
 
+    /**
+     * Abilities that set weather or terrain do so PERMANENTLY in Run and Bun
+     * ("Weather abilities: Will set Weather permanently", likewise Terrain), so
+     * a field set by one of these must not be ticked down.
+     */
+    var PERMANENT_WEATHER_ABILITIES = [
+        'drought', 'drizzle', 'sandstream', 'snowwarning', 'desolateland',
+        'primordialsea', 'deltastream', 'orichalcumpulse'
+    ];
+    var PERMANENT_TERRAIN_ABILITIES = [
+        'electricsurge', 'grassysurge', 'mistysurge', 'psychicsurge', 'hadronengine'
+    ];
+
+    function fieldIsPermanent(state, abilities) {
+        return ['p1', 'p2'].some(function (side) {
+            var mon = state[side] && state[side].active;
+            if (!mon || mon.currentHP <= 0) return false;
+            var ability = (mon.ability || '').replace(/\s|-/g, '').toLowerCase();
+            return abilities.indexOf(ability) !== -1;
+        });
+    }
+
     /** Stage 11: weather / screen / room duration decrements. */
     function applyDurationDecrements(state, effects) {
+        var weatherPermanent = state.field &&
+            (state.field.weatherPermanent || fieldIsPermanent(state, PERMANENT_WEATHER_ABILITIES));
+        var terrainPermanent = state.field &&
+            (state.field.terrainPermanent || fieldIsPermanent(state, PERMANENT_TERRAIN_ABILITIES));
+
         // Decrement weather turns
-        if (state.field && state.field.weatherTurns > 0) {
+        if (!weatherPermanent && state.field && state.field.weatherTurns > 0) {
             state.field.weatherTurns--;
             if (state.field.weatherTurns <= 0) {
                 effects.push('The ' + state.field.weather + ' subsided.');
@@ -531,7 +565,7 @@
         }
 
         // Decrement terrain turns
-        if (state.field && state.field.terrainTurns > 0) {
+        if (!terrainPermanent && state.field && state.field.terrainTurns > 0) {
             state.field.terrainTurns--;
             if (state.field.terrainTurns <= 0) {
                 effects.push('The ' + state.field.terrain + ' terrain faded.');
@@ -764,6 +798,9 @@
      * Returns an array of hazard effect descriptions.
      */
     function performSwitch(state, side, targetSlot) {
+        // RnB: a Pokemon that enters the battle asleep has its sleep counter
+        // reset, so switching out and back in does not carry progress.
+
         var sideData = state[side];
         if (!sideData || !sideData.team || !sideData.team[targetSlot]) return [];
 
@@ -779,6 +816,11 @@
         sideData.active = sideData.team[targetSlot].clone();
         sideData.active.boosts = { atk: 0, def: 0, spa: 0, spd: 0, spe: 0, accuracy: 0, evasion: 0 };
         sideData.active.turnsOnField = -1;
+        // Entering the battle asleep resets the sleep counter, so a Pokemon
+        // cannot bank sleep turns by switching out and back in.
+        sideData.active.sleepCounter = 0;
+        // Volatiles do not follow a Pokemon out of battle
+        sideData.active.volatiles = {};
 
         // Apply entry hazards
         var hazardEffects = applyEntryHazards(sideData.active, state.sides[side]);
@@ -948,10 +990,11 @@
                 itemConsumed = true;
             }
 
-            // Pinch berries: heal 1/3 maxHP at ≤25% HP (gen 7+)
+            // RnB: "Confuse inducing berries: Restore half HP, triggering at 1/4 HP."
+            // Standard gen 7+ heals a third; this hack heals a half.
             var pinchBerries = ['Figy Berry', 'Wiki Berry', 'Mago Berry', 'Aguav Berry', 'Iapapa Berry'];
             if (!itemConsumed && pinchBerries.indexOf(item) !== -1 && pct <= 0.25) {
-                hp = Math.min(defenderMaxHP, hp + Math.max(1, Math.floor(defenderMaxHP / 3)));
+                hp = Math.min(defenderMaxHP, hp + Math.max(1, Math.floor(defenderMaxHP / 2)));
                 itemConsumed = true;
             }
         }

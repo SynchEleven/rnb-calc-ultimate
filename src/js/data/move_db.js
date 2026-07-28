@@ -31,11 +31,16 @@
             multihit: raw.multihit || null,
 
             status: raw.status || null,
-            volatileStatus: raw.volatileStatus || null,
+            // A volatile on a self-targeting move (Protect, Detect, Aqua Ring,
+            // Ingrain, Focus Energy...) lands on the USER. Storing it as a
+            // target volatile made the executor protect the opponent.
+            volatileStatus: (raw.volatileStatus && raw.target !== 'self')
+                ? raw.volatileStatus : null,
 
             selfBoosts: null,
             targetBoosts: null,
-            selfVolatile: null,
+            selfVolatile: (raw.volatileStatus && raw.target === 'self')
+                ? raw.volatileStatus : null,
             selfStatus: null,
 
             selfSwitch: raw.selfSwitch || false,

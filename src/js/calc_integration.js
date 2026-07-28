@@ -717,6 +717,11 @@
         if (moveName === 'Blizzard' && (weather === 'Hail' || weather === 'Snow')) {
             return 100;
         }
+        // RnB: "Thunder Wave: Electric-types cannot miss when using it."
+        if (moveName === 'Thunder Wave' && attacker &&
+            (attacker.types || []).indexOf('Electric') !== -1) {
+            return 100;
+        }
 
         // Accuracy and evasion stages (net stage, clamped to +/-6)
         var accStage = (attacker && attacker.boosts && attacker.boosts.accuracy) || 0;
@@ -788,7 +793,11 @@
         if (dbEntry && dbEntry.willCrit) return 1;
 
         var defenderAbility = defender ? (defender.ability || '') : '';
-        if (defenderAbility === 'Battle Armor' || defenderAbility === 'Shell Armor') {
+        // RnB: "Magma Armor: Prevents critical-hits on top of it's existing
+        // effects." The damage engine already honours this; the planner's crit
+        // chance did not, so a Magma Armor target still showed a crit branch.
+        if (defenderAbility === 'Battle Armor' || defenderAbility === 'Shell Armor' ||
+            defenderAbility === 'Magma Armor') {
             return 0;
         }
 
@@ -815,7 +824,11 @@
         }
 
         if (genNum >= 7) {
-            var rates = [1 / 24, 1 / 8, 1 / 2, 1, 1];
+            // Run and Bun documents "Critical hit chance: 1/16", overriding the
+            // Gen 7+ move to 1/24 — i.e. it keeps the Gen 6 ladder. Every crit
+            // percentage in the planner, and every crit branch weight in the
+            // branching engine, depends on this number.
+            var rates = [1 / 16, 1 / 8, 1 / 2, 1, 1];
             return rates[Math.min(critStage, 4)];
         } else {
             var rates = [1 / 16, 1 / 8, 1 / 4, 1 / 3, 1 / 2];
@@ -1053,9 +1066,10 @@
             effects.itemEffect = 'Sitrus Berry restored ' + effects.healed + ' HP';
         }
 
-        // Pinch berries - Heal 1/3 max HP at 25% or below
+        // RnB: "Confuse inducing berries: Restore half HP, triggering at 1/4 HP."
+        // Standard gen 7+ heals a third.
         if (PINCH_BERRIES.indexOf(item) !== -1 && hpPercent <= 25 && wasAboveQuarter && newHP > 0) {
-            effects.healed = Math.max(1, Math.floor(maxHP / 3));
+            effects.healed = Math.max(1, Math.floor(maxHP / 2));
             effects.itemConsumed = true;
             effects.itemEffect = item + ' restored ' + effects.healed + ' HP';
         }
@@ -1104,13 +1118,22 @@
 
             // Apply target status
             // Pokemon can only have one status condition - don't overwrite existing status
-            if (statusEffects.targetStatus && (!defender.status || defender.status === 'Healthy')) {
-                defender.setStatus(convertStatusCode(statusEffects.targetStatus));
+            if (statusEffects.targetStatus) {
+                // inflictStatus enforces type/ability immunity (a Steel-type
+                // cannot be poisoned), the one-status rule, and consumes a
+                // curing berry (Lum, Cheri, ...) when the target holds one.
+                defender.inflictStatus(statusEffects.targetStatus, undefined, {
+                    attackerAbility: attacker ? attacker.ability : '',
+                    field: newState.field,
+                    sideState: newState.sides ? newState.sides[attackerSide === 'p1' ? 'p2' : 'p1'] : null
+                });
             }
 
             // Apply self status
             if (statusEffects.selfStatus) {
-                attacker.setStatus(convertStatusCode(statusEffects.selfStatus));
+                // Rest deliberately overwrites, so clear first
+                if (statusEffects.heal === 1) attacker.setStatus('Healthy');
+                attacker.inflictStatus(statusEffects.selfStatus);
             }
 
             // Apply self boosts. accuracy/evasion are included now that
@@ -1201,8 +1224,13 @@
             outcome.effects.secondaryEffects.forEach(function (effect) {
                 // Apply with probability
                 // Don't overwrite existing status conditions
-                if (effect.status && (!defender.status || defender.status === 'Healthy')) {
-                    defender.setStatus(convertStatusCode(effect.status));
+                if (effect.status) {
+                    defender.inflictStatus(effect.status, undefined, {
+                        attackerAbility: attacker ? attacker.ability : '',
+                        field: newState.field,
+                        sideState: newState.sides
+                            ? newState.sides[attackerSide === 'p1' ? 'p2' : 'p1'] : null
+                    });
                 }
                 if (effect.selfBoost) {
                     for (var stat in effect.selfBoost) {
@@ -1286,6 +1314,21 @@
                 if (snapshot.boosts) {
                     cloned.boosts = Object.assign({}, snapshot.boosts);
                 }
+                // Soak, Magic Powder etc. rewrite the snapshot's types; the
+                // engine clone still carries the species' original typing, so
+                // without this a Soak'd Steel type kept its poison immunity in
+                // every damage calc.
+                if (snapshot.types && snapshot.types.length &&
+                        snapshot.types.join('/') !== (cloned.types || []).join('/')) {
+                    // Both places: `.types` is what the mechanics read, but
+                    // calculate() clones the Pokemon internally and clone()
+                    // rebuilds `.types` FROM `.species` — so without the
+                    // species override the change evaporated inside the very
+                    // first calc.
+                    cloned.species = Object.assign({}, cloned.species,
+                        {types: snapshot.types.slice()});
+                    cloned.types = snapshot.types.slice();
+                }
                 return cloned;
             } catch (e) {
                 console.warn('snapshotToPokemon: Clone failed, falling back to recreation:', e);
@@ -1321,7 +1364,18 @@
                 });
             }
 
-            return new window.calc.Pokemon(genNum, snapshot.name, options);
+            var rebuilt = new window.calc.Pokemon(genNum, snapshot.name, options);
+            // Soak, Magic Powder etc. rewrite the snapshot's typing — same
+            // treatment as the clone path above: the species override matters
+            // because calculate() re-clones internally and clone() derives
+            // `.types` from `.species`.
+            if (snapshot.types && snapshot.types.length &&
+                    snapshot.types.join('/') !== (rebuilt.types || []).join('/')) {
+                rebuilt.species = Object.assign({}, rebuilt.species,
+                    {types: snapshot.types.slice()});
+                rebuilt.types = snapshot.types.slice();
+            }
+            return rebuilt;
         } catch (e) {
             console.error('Failed to create Pokemon from snapshot:', e);
             return null;

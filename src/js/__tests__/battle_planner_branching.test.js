@@ -646,8 +646,15 @@ describe('createTurnExecutor with the real engine', () => {
   });
 
   test('a move with a secondary effect branches on that effect', () => {
-    // Thunder Punch has a 10% paralysis chance in RnB
+    // Thunder Punch has a 10% paralysis chance in RnB. The target must not be
+    // the default Swampert — Water/Ground is immune to Electric, and an immune
+    // move now correctly does nothing at all.
     const state = realState({}, {});
+    const g = realCalc.Generations.get(8);
+    const blissey = new BP.PokemonSnapshot(new realCalc.Pokemon(g, 'Blissey', { level: 100 }));
+    blissey.refreshPP();
+    state.p2.active = blissey;
+    state.p2.team = [blissey.clone()];
     const produced = executor(state, {
       p1: { type: 'move', moveName: 'Thunder Punch' },
       p2: null

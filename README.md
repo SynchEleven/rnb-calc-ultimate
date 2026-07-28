@@ -25,9 +25,63 @@ This project combines the advanced damage calculation features of the [SylmarDev
   the whole tree from the root, adding branches that have become relevant,
   collapsing ones that stopped mattering, and marking paths that can no longer
   happen. See `src/js/battle_planner_branching.js`
+
+  Branch-worthy events currently modelled: KO, miss, crit-that-matters, item
+  consumption and HP thresholds (Sitrus/Oran/pinch berries, Focus Sash, Sturdy),
+  Focus Band's 10% survival roll, secondary statuses and stat drops, flinch,
+  full paralysis, confusion self-hits, freeze thaw, speed ties, weather/terrain
+  and hazard changes. Secondary effects respect Sheer Force, Shield Dust,
+  Covert Cloak, Serene Grace, Mold Breaker, King's Rock/Razor Fang and Poison
+  Touch; status-curing berries (Lum, Cheri, Chesto, Pecha, Rawst, Aspear,
+  Persim) are consumed the instant the status lands.
+
+  **One engine.** The old "variance warning -> click to branch" system has been
+  deleted, not left dormant: it created branches unconditionally with hardcoded
+  probabilities (0.9375/0.0625 crit rates that were not even RnB's 1/24, a flat
+  50/50 speed tie), patched HP by hand on top of already-damaged states, and
+  never revisited a branch once created. Every executed move now re-derives the
+  whole tree from the root through the branching engine, so parents and children
+  are always consistent.
+
+  **Percentages are checked, not assumed.** `validateTree()` runs after every
+  reconciliation and asserts that each node's children sum to exactly 1, that no
+  probability is out of range, that each node's distribution is normalised, and
+  that the leaves of the tree sum to 1. Violations are reported rather than
+  silently rendered.
+
+  **Speed ties** only branch when the two orderings actually lead somewhere
+  different — trading weak moves between two healthy Pokemon converges, so no
+  branch; a tie that decides who faints first forks 50/50.
+
+  **Tied AI moves** fork with their real weights: an action carrying
+  `candidates` from the AI distribution expands into one weighted sub-turn per
+  candidate.
+
+  **Impossible branches are marked, not deleted** — a line that can no longer
+  occur is usually one the user planned deliberately, so it is shown at 0%
+  rather than silently removed.
+
+  **Bulk apply** — `validateBulkApply()` / `bulkApply()` apply one pair of moves
+  to every branch at a level at once, and refuse to do so on branches where the
+  Pokemon is fainted, does not know the move, is asleep/frozen, is out of PP, is
+  immune, or where the move would be redundant. Pass `{force: true}` to override.
+
+  **Team building is separate from the tree.** The roster lives on the tree, not
+  inside every node: `getUsedPokemon()` / `canEditRosterSlot()` / `updateRoster()`
+  let you swap any Pokemon that has not featured in the plan yet, re-projecting
+  the change into every node without disturbing the branch structure or a single
+  probability. A Pokemon that is already committed (it has been active, damaged,
+  statused or boosted somewhere) cannot be swapped out and the edit is refused.
+
+  Not yet modelled in branching: Destiny Bond /
+  Substitute, multi-turn charge moves, Disable/Encore/Taunt, and doubles. Sleep
+  is modelled as a fixed 3-turn duration rather than a 1-3 branch. Protect IS
+  modelled (blocks damage and effects, Defend Order included); a consecutive
+  Protect is approximated as always failing (the real game gives ~1/3), and
+  the AI never offers Protect twice in a row.
 - **Range Compare** -- Compare damage ranges across different move/set combinations with chart visualization
 - **Custom RnB Moves** -- Paleo Wave (85 BP, Rock, Special) and Shadow Strike (80 BP, Ghost, Physical) fully integrated in the calc engine
-- **Custom RnB Items** -- Soul Dew functions as Choice Specs/Assault Vest equivalent for Latios/Latias (matching the ROM hack)
+- **Custom RnB Items** -- Soul Dew raises Latios/Latias SpA and SpD by one stage (x1.5 each), per the official docs. It is not a Choice item and does not lock the move.
 - **Dark Mode** -- Toggleable dark/light theme with persistence
 - **Export All** -- Export all imported sets at once
 - **Color Codings** -- Persist between sessions
@@ -38,10 +92,22 @@ This project combines the advanced damage calculation features of the [SylmarDev
 These are **intentional** and match the ROM, not bugs. They are called out here
 because they make this fork's numbers differ from any other calculator:
 
-- **Explosion / Self-Destruct halve the target's Defense** (`gen789.ts`), which
-  standard Gen 5+ removed
+- **Critical hits are 1/16, not the Gen 7+ 1/24**, at x1.5 damage. The ladder is
+  1/16 -> 1/8 -> 1/2 -> guaranteed
+- **Explosion / Self-Destruct / Misty Explosion halve the target's Defense**
+  (`gen789.ts`), which standard Gen 5+ removed
+- **Misty Explosion is 200 BP** (100 in vanilla)
 - **Terrain boosts damage by 1.5x, not 1.3x** (`gen789.ts`, `terrainMultiplier`)
 - **Paralysis leaves 25% Speed, not 50%** (`mechanics/util.ts`)
+- **Confuse-inducing berries (Figy/Wiki/Mago/Aguav/Iapapa) restore HALF max HP**
+  at 1/4 HP, not the standard third
+- **Weather and Terrain set by an ability are permanent** and never tick down
+- **Magma Armor prevents critical hits**, and **Gale Wings** boosts Flying-move
+  priority at any HP
+- **Disguise absorbs a hit with no chip damage** (vanilla gen 8 costs 1/8 max HP)
+- **Thunder Wave cannot miss when used by an Electric type**
+- **Sleep counters reset on switch-in**, so sleep turns cannot be banked
+- **Super Fang is Dark**, **Covet is Fairy**, **Hidden Power is always 60 BP**
 - **Gen 9 rebalances applied at gen 8** -- Cresselia, Zacian(-Crowned),
   Zamazenta(-Crowned) stats and Glacial Lance / Grassy Glide / Wicked Blow BP
 - **~135 species have RnB-specific primary abilities** (`RNB_ABILITY_PATCH` in
@@ -49,7 +115,10 @@ because they make this fork's numbers differ from any other calculator:
 - **Soul Dew** acts as Choice Specs / Assault Vest for Latios and Latias
 
 `calc/src/test/data.test.ts` cross-validates the damage engine's data against
-`src/js/data/rbdex/` on every run, so these cannot silently drift apart again.
+`src/js/data/rbdex/` on every run, and
+`src/js/__tests__/runbun_spec.test.js` checks both of them against the official
+documentation — so a value can no longer be wrong in the same way in both places
+and pass unnoticed.
 
 ### Known Issues (Bugs)
 

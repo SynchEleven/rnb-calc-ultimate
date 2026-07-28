@@ -94,7 +94,8 @@
         $('body').append(html);
 
         $container = $('#battle-planner');
-        $treePanel = $('.planner-tree-panel');
+        // The timeline column became the all-lines drawer
+        $treePanel = $('#lines-drawer');
         $stagePanel = $('.planner-stage-panel');
         $inspectorPanel = $('.planner-inspector-panel');
     }
@@ -337,14 +338,270 @@
             }
         });
 
-        // Variance icon click: retrigger branch creation
-        $(document).on('click', '.tree-variance-icon', function (e) {
+        // Back-to-back fights: snapshot the team AS IT STANDS at the current
+        // node, then pick the next trainer. The next battle starts with this
+        // damage instead of a fresh team.
+        $(document).on('click', '#planner-carry', function () {
+            var node = uiState.tree && uiState.tree.getCurrentNode();
+            if (!node || !node.state || !node.state.p1.team || !node.state.p1.team.length) {
+                alert('Nothing to carry yet - play the first battle to the point you want to carry from.');
+                return;
+            }
+            uiState.carriedTeam = node.state.p1.team.map(function (m) { return m.clone(); });
+            var survivors = uiState.carriedTeam.filter(function (m) {
+                return m.currentHP > 0;
+            }).length;
+            alert('Carrying ' + uiState.carriedTeam.length + ' Pokemon (' + survivors +
+                ' standing) into the next battle.\nPick the next trainer, then start the battle.');
+            $('#planner-select-trainer').trigger('click');
+        });
+
+        // Replay the projected line into the planner: each simulated turn is
+        // committed through the SAME executeTurn path a human click uses, so
+        // forks, reconciles and prompts all behave normally. The walkthrough
+        // stops the moment the tree's reality diverges from the simulated
+        // line (a fork went the other way, a replacement is pending...).
+        // Play the projected strategy INTO the planner. This does not replay
+        // the traced script (a fixed script diverges the moment one damage
+        // roll lands differently) — it re-derives each turn's action from the
+        // tree's ACTUAL current state with the same policy tier that won the
+        // projection, exactly like a human re-reading the position each turn.
+        $(document).on('click', '.ro-apply-line', function () {
+            var r = uiState.lastProjection;
+            if (!r) return;
+            if (r.recruits && r.recruits.length) {
+                alert('This plan uses Pokemon recruited from your box (' +
+                    r.recruits.join(', ') + ').\nAdopt the team first, then run ' +
+                    'the projection again.');
+                return;
+            }
+
+            var deps, policy, chooseAI;
+            try {
+                deps = readoutDeps();
+                deps.executeTurn = makeBranchingExecutor();
+                policy = window.BattlePlannerProjection.createPlayerPolicy(deps, {
+                    complexity: r.strategyTier !== undefined ? r.strategyTier : 2
+                });
+                chooseAI = window.BattlePlannerProjection.createAIPolicy(deps);
+            } catch (e) {
+                console.error('Play-forward unavailable:', e);
+                return;
+            }
+
+            function normalizeApplyAction(action, active) {
+                var a = JSON.parse(JSON.stringify(action));
+                if (a.type === 'move' && a.index === undefined) {
+                    a.index = Math.max(0, (active.moves || []).indexOf(a.moveName));
+                }
+                if (a.type === 'switch' && a.targetSlot === undefined) {
+                    a.targetSlot = a.switchToIndex;
+                }
+                return a;
+            }
+
+            var Proj = window.BattlePlannerProjection;
+            var guard = (r.trace ? r.trace.length : 12) + 6;
+            var applied = 0;
+            var stoppedBecause = null;
+
+            while (applied < guard) {
+                var node = uiState.tree.getCurrentNode();
+                var st = node && node.state;
+                if (!st || !st.p1.active || !st.p2.active) {
+                    stoppedBecause = 'the battle state ended'; break;
+                }
+                if (Proj.sideIsWiped(st, 'p2')) { stoppedBecause = 'the battle is WON'; break; }
+                if (Proj.sideIsWiped(st, 'p1')) { stoppedBecause = 'the battle is lost'; break; }
+                if (st.p1.active.currentHP <= 0 || st.p2.active.currentHP <= 0) {
+                    stoppedBecause = 'a replacement is pending — pick it, then press ' +
+                        'the button again to continue';
+                    break;
+                }
+                var p1 = policy(st, null);
+                var p2 = chooseAI(st);
+                if (!p1 || !p2) { stoppedBecause = 'no action available'; break; }
+                uiState.p1Action = normalizeApplyAction(p1, st.p1.active);
+                uiState.p2Action = normalizeApplyAction(p2, st.p2.active);
+                try {
+                    executeTurn();
+                } catch (e) {
+                    console.error('Play-forward stopped:', e);
+                    stoppedBecause = 'the turn could not be executed';
+                    break;
+                }
+                applied++;
+            }
+
+            if (stoppedBecause) {
+                alert('Played ' + applied + ' turn' + (applied === 1 ? '' : 's') +
+                    ' with the "' + (r.strategy || 'projected') + '" strategy.\n' +
+                    'Stopped because ' + stoppedBecause + '.');
+            }
+        });
+
+        // Adopt the team the projection planned with (recruits from the box
+        // become real team members; turn 0 only).
+        $(document).on('click', '.ro-adopt-team', function () {
+            var r = uiState.lastProjection;
+            if (!r || !r.plannedRoster || !r.plannedRoster.length) return;
+            var node = uiState.tree && uiState.tree.getCurrentNode();
+            if (!node || (node.state.turnNumber || 0) !== 0) {
+                alert('The team can only be adopted before the first turn.');
+                return;
+            }
+            var fresh = node.state.clone();
+
+            // Everything owned, by name: current team members + box
+            var pool = {};
+            (fresh.p1.team || []).forEach(function (m) {
+                if (m) pool[m.name] = m;
+            });
+            (uiState.p1Box || []).forEach(function (snap) {
+                if (snap && !pool[snap.name]) pool[snap.name] = snap;
+            });
+
+            var newTeam = [];
+            r.plannedRoster.forEach(function (name) {
+                if (pool[name]) newTeam.push(pool[name].clone());
+            });
+            if (!newTeam.length) return;
+            fresh.p1.team = newTeam;
+            var teamNames = newTeam.map(function (m) { return m.name; });
+            var leadIdx = teamNames.indexOf(fresh.p1.active ? fresh.p1.active.name : '');
+            if (leadIdx === -1) {
+                fresh.p1.active = newTeam[0].clone();
+                leadIdx = 0;
+            }
+            fresh.p1.teamSlot = leadIdx;
+
+            // The box now holds everything that is NOT on the roster
+            // (benched ex-team members go back in — nothing is lost)
+            uiState.p1Box = Object.keys(pool).filter(function (name) {
+                return r.plannedRoster.indexOf(name) === -1;
+            }).map(function (name) { return pool[name]; });
+            uiState.tree.initialize(fresh);
+            uiState.p1Action = null;
+            uiState.p2Action = null;
+            uiState.lastProjection = null;
+            uiState.lastProjectionNodeId = null;
+            renderTree();
+            renderStage();
+            runProjection();
+        });
+
+        // Turn 0 only: restart the battle with a different lead — the answer
+        // to "the projection says Chewtle opens better" is one click, and the
+        // next projection then shows Chewtle's line.
+        $(document).on('click', '.ro-lead-use', function () {
+            var slot = Number($(this).attr('data-slot'));
+            var node = uiState.tree && uiState.tree.getCurrentNode();
+            if (!node || !node.state) return;
+            if ((node.state.turnNumber || 0) !== 0) {
+                alert('Leads can only be changed before the first turn.');
+                return;
+            }
+            var fresh = node.state.clone();
+            if (!fresh.p1.team || !fresh.p1.team[slot] ||
+                    fresh.p1.team[slot].currentHP <= 0) return;
+            fresh.p1.teamSlot = slot;
+            fresh.p1.active = fresh.p1.team[slot].clone();
+            fresh.p1.active.boosts = {
+                atk: 0, def: 0, spa: 0, spd: 0, spe: 0, accuracy: 0, evasion: 0
+            };
+            fresh.p1.active.volatiles = {};
+
+            uiState.tree.initialize(fresh);
+            uiState.p1Action = null;
+            uiState.p2Action = null;
+            uiState.lastProjection = null;
+            uiState.lastProjectionNodeId = null;
+            renderTree();
+            renderStage();
+            runProjection();
+        });
+
+        // ---- redesign: mainline ribbon, fork switching, read-out ----
+
+        // Step into any turn on the current line
+        $(document).on('click', '.ml-card', function () {
+            var nodeId = $(this).data('node-id');
+            if (nodeId && uiState.tree && uiState.tree.getNode(nodeId)) {
+                uiState.tree.navigate(nodeId);
+                renderTree();
+                renderStage();
+                promptPendingReplacements(nodeId);
+            }
+        });
+
+        // Switch to a sibling line at a fork
+        $(document).on('click', '.ml-fork-badge', function (e) {
+            e.stopPropagation();
+            showForkPicker($(this).data('parent'), this);
+        });
+
+        $(document).on('click', '.fork-option', function (e) {
             e.stopPropagation();
             var nodeId = $(this).data('node-id');
-            var node = uiState.tree ? uiState.tree.getNode(nodeId) : null;
-            if (node && node.outcome && node.outcome.varianceWarnings && node.outcome.varianceWarnings.length > 0) {
-                var parentNodeId = node.parentId || nodeId;
-                showVarianceNotification(node.outcome.varianceWarnings, parentNodeId, nodeId);
+            $('#planner-popover').remove();
+            if (nodeId && uiState.tree && uiState.tree.getNode(nodeId)) {
+                uiState.tree.navigate(nodeId);
+                renderTree();
+                renderStage();
+                // A branch where something fainted needs a replacement before
+                // the plan can continue from it
+                promptPendingReplacements(nodeId);
+            }
+        });
+
+        // Alternatives at the node you are standing on
+        $(document).on('click', '#mainline-alt', function () {
+            var node = uiState.tree && uiState.tree.getCurrentNode();
+            if (node && node.parentId) showForkPicker(node.parentId, this);
+        });
+
+        // The full tree, on demand
+        $(document).on('click', '#mainline-all-lines', function () {
+            var $drawer = $('#lines-drawer');
+            var showing = $drawer.is(':visible');
+            $drawer.toggle(!showing);
+            $(this).toggleClass('active', !showing);
+            if (!showing) renderTree();
+        });
+        $(document).on('click', '#lines-drawer-close', function () {
+            $('#lines-drawer').hide();
+            $('#mainline-all-lines').removeClass('active');
+        });
+
+        // Expand a move row for rolls, description and effect controls
+        $(document).on('click', '.mv-expand', function (e) {
+            e.stopPropagation();
+            $(this).closest('.mv-row').toggleClass('expanded');
+        });
+
+        // Read-out controls
+        $(document).on('click', '#ro-project-run', function (e) {
+            e.stopPropagation();
+            runProjection();
+        });
+        $(document).on('click', '#readout-refresh', function () {
+            uiState.lastProjection = null;
+            renderReadout();
+        });
+
+        // Variance icon click: re-derive the tree.
+        //
+        // Branching is no longer something the user opts into per warning — the
+        // engine creates exactly the branches that matter on every executed
+        // turn. This button now just forces a full re-derivation, which is also
+        // the escape hatch if anything upstream (a set edit, an ability change)
+        // should have changed the shape of the tree.
+        $(document).on('click', '.tree-variance-icon', function (e) {
+            e.stopPropagation();
+            var report = reconcileWholeTree();
+            if (report) {
+                renderTree();
+                renderStage();
             }
         });
 
@@ -959,6 +1216,10 @@
             initialState.p1.active = new BattlePlanner.PokemonSnapshot(p1Pokemon);
             initialState.p1.team = [initialState.p1.active.clone()];
 
+            if (uiState.carriedTeam) {
+                BattlePlanner.applyCarriedTeam(initialState, uiState.carriedTeam);
+            }
+
             // Add imported Pokemon to P1 box (excluding the active one)
             uiState.p1Box = [];
             for (var i = 0; i < importedPokemon.length; i++) {
@@ -1015,7 +1276,11 @@
             uiState.p1Action = null;
             uiState.p2Action = null;
 
-            uiState.tree.initialize(initialState);
+            if (uiState.carriedTeam) {
+            BattlePlanner.applyCarriedTeam(initialState, uiState.carriedTeam);
+            uiState.carriedTeam = null;
+        }
+        uiState.tree.initialize(initialState);
 
             renderTree();
             renderStage();
@@ -1035,33 +1300,60 @@
      * Uses CURRENT_TRAINER_POKS (sorted by [index] from SETDEX_SS) if available,
      * falling back to DOM iteration order.
      */
-    function getOpponentTrainerPokemon() {
-        var trainerPokemon = [];
+    /** Numeric trainer-data index from a "[123]Species (Trainer)" entry. */
+    function trainerEntryIndex(entry) {
+        var m = /^\[(\d+)\]/.exec(entry || '');
+        return m ? parseInt(m[1], 10) : Number.MAX_SAFE_INTEGER;
+    }
 
-        // Prefer the global CURRENT_TRAINER_POKS which is already sorted by trainer data index
+    /**
+     * The opponent's team, in the trainer's real slot order.
+     *
+     * This used to depend on side effects that are not guaranteed to have run:
+     *  - it trusted CURRENT_TRAINER_POKS to be pre-sorted, but that sort happens
+     *    in the `.set-selector` change handler, so a restored selection or a
+     *    programmatic open left it in TR_NAMES iteration order;
+     *  - the DOM fallback reads the sprite strip, which deliberately SKIPS the
+     *    currently selected Pokemon, so it returned a five-mon team;
+     *  - and it unshifted the selected Pokemon to the FRONT, promoting whichever
+     *    mon you happened to be looking at to the lead slot.
+     *
+     * Now the order is derived and sorted here, from the set data where possible,
+     * so it does not matter what the rest of the page has done.
+     */
+    function getOpponentTrainerPokemon() {
+        var raw = [];
+
         if (typeof CURRENT_TRAINER_POKS !== 'undefined' && CURRENT_TRAINER_POKS && CURRENT_TRAINER_POKS.length > 0) {
-            for (var i = 0; i < CURRENT_TRAINER_POKS.length; i++) {
-                var entry = CURRENT_TRAINER_POKS[i];
-                // Format is "[index]PokemonName (TrainerName)" — strip the bracket prefix
-                var cleanId = entry.replace(/^\[\d+\]/, '');
-                trainerPokemon.push(cleanId);
+            raw = CURRENT_TRAINER_POKS.slice();
+        } else if (typeof TR_NAMES !== 'undefined' && TR_NAMES && window.CURRENT_TRAINER) {
+            // Re-derive straight from the set index rather than trusting the DOM
+            var needle = window.CURRENT_TRAINER;
+            for (var k = 0; k < TR_NAMES.length; k++) {
+                if (TR_NAMES[k].indexOf(needle) !== -1) raw.push(TR_NAMES[k]);
             }
         } else {
-            // Fallback: read from DOM in document order
             $('.trainer-pok-list-opposing .trainer-pok, .trainer-pok.right-side').each(function () {
                 var dataId = $(this).data('id');
-                if (dataId) {
-                    var cleanId = dataId.replace(/^\[\d+\]/, '');
-                    trainerPokemon.push(cleanId);
-                }
+                if (dataId) raw.push(dataId);
             });
         }
 
-        // Also check if there's a P2 Pokemon currently selected that's not in the list
+        // Sort by the trainer-data index; entries without one keep their order
+        raw.sort(function (a, b) { return trainerEntryIndex(a) - trainerEntryIndex(b); });
+
+        var trainerPokemon = [];
+        for (var i = 0; i < raw.length; i++) {
+            var cleanId = String(raw[i]).replace(/^\[\d+\]/, '');
+            if (trainerPokemon.indexOf(cleanId) === -1) trainerPokemon.push(cleanId);
+        }
+
+        // A selected opponent that is not part of this trainer's team is appended,
+        // never unshifted — it must not displace the real lead.
         var p2Select = $('input.set-selector.opposing').val();
-        if (p2Select && !trainerPokemon.includes(p2Select)) {
+        if (p2Select) {
             var cleanP2 = p2Select.replace(/^\[\d+\]/, '');
-            trainerPokemon.unshift(cleanP2);
+            if (trainerPokemon.indexOf(cleanP2) === -1) trainerPokemon.push(cleanP2);
         }
 
         return trainerPokemon;
@@ -1147,6 +1439,16 @@
         $('.planner-btn-view').removeClass('active');
         $('.planner-btn-view[data-view="' + mode + '"]').addClass('active');
         $container.removeClass('view-split view-tree view-stage').addClass('view-' + mode);
+
+        // Tree view is only meaningful with the all-lines drawer open
+        if (mode === 'tree') {
+            $('#lines-drawer').show();
+            $('#mainline-all-lines').addClass('active');
+            renderTree();
+        } else if (mode === 'stage') {
+            $('#lines-drawer').hide();
+            $('#mainline-all-lines').removeClass('active');
+        }
     }
 
     /**
@@ -1180,7 +1482,7 @@
             $('#stage-ko-banner').remove();
             $('#p1-selected-move').text('Select a move').removeClass('selected');
             $('#p2-selected-move').text('Select a move').removeClass('selected');
-            $('#p1-move-list .move-row, #p2-move-list .move-row').removeClass('selected');
+            $('#stage-p1-moves .mv-row, #stage-p2-moves .mv-row').removeClass('selected');
             updateTurnActionsPanel();
             updateExecuteTurnButton();
 
@@ -1212,7 +1514,11 @@
             uiState.p1Box = [];
             uiState.p2Box = [];
 
-            uiState.tree.initialize(initialState);
+            if (uiState.carriedTeam) {
+            BattlePlanner.applyCarriedTeam(initialState, uiState.carriedTeam);
+            uiState.carriedTeam = null;
+        }
+        uiState.tree.initialize(initialState);
 
             renderTree();
             renderStage();
@@ -1274,7 +1580,11 @@
             uiState.p1Box = [];
             uiState.p2Box = [];
 
-            uiState.tree.initialize(initialState);
+            if (uiState.carriedTeam) {
+            BattlePlanner.applyCarriedTeam(initialState, uiState.carriedTeam);
+            uiState.carriedTeam = null;
+        }
+        uiState.tree.initialize(initialState);
 
             renderTree();
             renderStage();
@@ -1302,6 +1612,8 @@
         snapshot.nature = data.nature || 'Hardy';
         snapshot.moves = data.moves || [];
         snapshot.types = data.types || [];
+        // Moves are assigned after construction here, so PP has to be re-derived
+        snapshot.refreshPP();
 
         if (data.evs) {
             var statMap = { hp: 'hp', at: 'atk', df: 'def', sa: 'spa', sd: 'spd', sp: 'spe' };
@@ -1693,6 +2005,11 @@
      * Render tree visualization
      */
     function renderTree() {
+        // The ribbon and the read-out are derived from the same tree, so they
+        // refresh together and can never disagree with what is on screen.
+        try { renderMainlineRibbon(); } catch (e) { console.error('ribbon:', e); }
+        try { renderReadout(); } catch (e) { console.error('read-out:', e); }
+
         var $treeContent = $('#tree-container');
 
         if (!uiState.tree.rootId) {
@@ -2208,235 +2525,22 @@
         var selectedAction = side === 'p1' ? uiState.p1Action : uiState.p2Action;
         var gen = getGenNum();
 
-        var movesHtml = '<div class="move-grid-2x2">';
+        // Moves render as dense rows rather than a 2x2 grid of mostly-empty
+        // cards. renderMoveListForSide carries the same information plus the
+        // roll list, description, crit range and effect controls in a detail
+        // strip that opens on demand.
+        var attackerSideState = side === 'p1'
+            ? uiState.tree.getCurrentNode().state.p1
+            : uiState.tree.getCurrentNode().state.p2;
+        $('#' + prefix + '-moves').html(
+            renderMoveListForSide(side, pokemon, defender, gen));
 
-        // AI move scoring: use the full R&B AI scoring engine when available
-        var aiRecommendedIdx = -1;
-        var aiScores = null;
-        if (side === 'p2' && defender && BattlePlannerLogic && BattlePlannerLogic.scoreAIMoves) {
-            var currentNode = uiState.tree ? uiState.tree.getCurrentNode() : null;
-            var scoreState = currentNode ? currentNode.state : null;
-            if (scoreState) {
-                var calcDmgForAI = function (attacker, target, moveName) {
-                    try {
-                        var aSide = attacker === pokemon ? 'p2' : 'p1';
-                        var preview = getMovePreviewInfo(aSide, attacker, moveName, target, false);
-                        if (!preview) return null;
-                        return { min: preview.rawMin || 0, max: preview.rawMax || 0 };
-                    } catch (e) { return null; }
-                };
-                aiScores = BattlePlannerLogic.scoreAIMoves(pokemon, defender, scoreState, calcDmgForAI);
-                var bestScore = -999;
-                if (aiScores) {
-                    aiScores.forEach(function (sc, idx) {
-                        if (sc.score > bestScore) { bestScore = sc.score; aiRecommendedIdx = idx; }
-                    });
-                }
-            }
+        // Stats, with live stage changes, directly under the moves
+        var $statsMini = $('#' + prefix + '-stats-mini');
+        if ($statsMini.length) {
+            $statsMini.html(renderStatStrip(
+                pokemon, defender, uiState.tree.getCurrentNode().state, side));
         }
-
-        (pokemon.moves || []).forEach(function (moveName, i) {
-            if (!moveName || moveName === '(No Move)') return;
-
-            var isSelected = selectedAction && selectedAction.type !== 'switch' && selectedAction.index === i;
-            var moveData = getMoveData(moveName, gen);
-            var priority = moveData ? (moveData.priority || 0) : 0;
-
-            // Get damage info
-            var normalDamage = getMovePreviewInfo(side, pokemon, moveName, defender, false);
-            var critDamage = getMovePreviewInfo(side, pokemon, moveName, defender, true);
-
-            // Build classes
-            var cellClasses = ['move-cell'];
-            if (isSelected) cellClasses.push('selected');
-            if (priority > 0) cellClasses.push('priority-move');
-            if (priority < 0) cellClasses.push('negative-priority');
-            if (moveData && moveData.category === 'Status') cellClasses.push('status-move');
-            if (normalDamage && normalDamage.effectiveness === 'immune') cellClasses.push('immune-move');
-
-            // Damage-based Highlighting (Inherit colors from matchup scheme)
-            var defenderHP = defender ? (defender.currentHP !== undefined ? defender.currentHP : defender.maxHP) : 100;
-            if (normalDamage && normalDamage.rawMax > 0 && moveData && moveData.category !== 'Status') {
-                if (side === 'p1') {
-                    if (normalDamage.rawMin >= defenderHP) cellClasses.push('match-dmg-1');
-                    else if (normalDamage.rawMax >= defenderHP) cellClasses.push('match-dmg-2');
-                } else {
-                    if (normalDamage.rawMin >= defenderHP) cellClasses.push('match-dmg-4');
-                    else if (normalDamage.rawMax >= defenderHP) cellClasses.push('match-dmg-3');
-                }
-            }
-
-            // AI recommended move highlight for opponent
-            if (side === 'p2' && i === aiRecommendedIdx) {
-                cellClasses.push('ai-recommended');
-            }
-
-            movesHtml += '<button class="' + cellClasses.join(' ') + '" data-side="' + side + '" data-index="' + i + '" data-move="' + moveName + '">';
-
-            // Move name with priority indicator and AI badge
-            movesHtml += '<div class="move-cell-header">';
-            movesHtml += '<span class="move-cell-name">' + moveName + '</span>';
-            if (side === 'p2' && i === aiRecommendedIdx && aiScores && aiScores[i]) {
-                var scoreVal = aiScores[i].score;
-                var scoreReason = aiScores[i].reason || '';
-                movesHtml += '<span class="ai-move-badge" title="' + scoreReason.replace(/"/g, '&quot;') + '">AI +' + scoreVal + '</span>';
-            }
-            if (priority > 0) {
-                movesHtml += '<span class="priority-badge">+' + priority + '</span>';
-            } else if (priority < 0) {
-                movesHtml += '<span class="priority-badge neg">' + priority + '</span>';
-            }
-            if (normalDamage && normalDamage.type) {
-                movesHtml += '<span class="move-type-mini type-' + normalDamage.type.toLowerCase() + '">' + normalDamage.type.substring(0, 3) + '</span>';
-            }
-            movesHtml += '</div>';
-
-            // Damage or status info
-            var isActualStatusMove = moveData && moveData.category === 'Status';
-            var isImmune = normalDamage && normalDamage.effectiveness === 'immune';
-
-            movesHtml += '<div class="move-cell-damage">';
-            if (normalDamage && normalDamage.rawMin !== undefined && normalDamage.rawMax > 0) {
-                var defHP = defender ? defender.maxHP : 100;
-                var minPct = Math.round((normalDamage.rawMin / defHP) * 100);
-                var maxPct = Math.round((normalDamage.rawMax / defHP) * 100);
-
-                movesHtml += '<div class="move-cell-damage-row">';
-                movesHtml += '<span class="dmg-range">' + normalDamage.rawMin + '-' + normalDamage.rawMax + '</span>';
-                movesHtml += '<span class="dmg-percent">(' + minPct + '-' + maxPct + '%)</span>';
-                if (normalDamage.effectiveness && normalDamage.effectivenessIcon) {
-                    movesHtml += '<span class="eff-icon">' + normalDamage.effectivenessIcon + '</span>';
-                }
-                movesHtml += '</div>';
-
-                // Show all 16 damage rolls as comma-separated list (like base calc)
-                if (normalDamage.rolls && Array.isArray(normalDamage.rolls) && normalDamage.rolls.length > 1) {
-                    var rolls = normalDamage.rolls.slice().sort(function(a,b){return a-b;});
-                    var rollSpans = rolls.map(function(v) {
-                        var isKO = v >= defenderHP;
-                        var cls = isKO ? 'roll-ko' : '';
-                        return '<span class="dmg-roll ' + cls + '">' + v + '</span>';
-                    });
-                    var koCount = rolls.filter(function(v) { return v >= defenderHP; }).length;
-                    var koInfo = koCount > 0 && koCount < rolls.length
-                        ? ' <span class="rolls-ko-info">(' + koCount + '/' + rolls.length + ' KO)</span>'
-                        : '';
-                    movesHtml += '<div class="move-cell-rolls">' + rollSpans.join(', ') + koInfo + '</div>';
-                }
-
-                if (critDamage && critDamage.rawMin !== undefined) {
-                    var critMinPct = Math.round((critDamage.rawMin / defHP) * 100);
-                    var critMaxPct = Math.round((critDamage.rawMax / defHP) * 100);
-                    movesHtml += '<div class="move-cell-damage-row">';
-                    movesHtml += '<span class="crit-range">Crit: ' + critDamage.rawMin + '-' + critDamage.rawMax + ' (' + critMinPct + '-' + critMaxPct + '%)</span>';
-                    movesHtml += '</div>';
-                }
-            } else if (isImmune) {
-                // Damaging move that deals 0 due to type immunity — NOT a status move
-                movesHtml += '<div class="move-cell-damage-row">';
-                movesHtml += '<span class="immune-label">Immune 🚫</span>';
-                movesHtml += '<span class="dmg-range immune">0</span>';
-                movesHtml += '</div>';
-            } else if (isActualStatusMove) {
-                // Real status-category move
-                movesHtml += '<div class="move-cell-damage-row">';
-                movesHtml += '<span class="status-label">Status</span>';
-                if (moveData && moveData.status) {
-                    movesHtml += '<span class="status-effect">' + moveData.status.toUpperCase() + '</span>';
-                }
-                if (moveData && moveData.boosts) {
-                    var boostStr = Object.entries(moveData.boosts).map(function (e) {
-                        return e[0] + (e[1] > 0 ? '+' : '') + e[1];
-                    }).join(' ');
-                    movesHtml += '<span class="boost-effect">' + boostStr + '</span>';
-                }
-                movesHtml += '</div>';
-            } else {
-                // Non-status move with 0 or unknown damage (e.g. basePower = 0, weather-dependent, etc.)
-                movesHtml += '<div class="move-cell-damage-row">';
-                movesHtml += '<span class="dmg-range zero-dmg">0</span>';
-                if (normalDamage && normalDamage.effectivenessIcon) {
-                    movesHtml += '<span class="eff-icon">' + normalDamage.effectivenessIcon + '</span>';
-                }
-                movesHtml += '</div>';
-            }
-
-            if (normalDamage && normalDamage.hitCount && normalDamage.hitCount > 1) {
-                var perHitMin = normalDamage.perHitMin;
-                var perHitMax = normalDamage.perHitMax;
-                var isVariable = normalDamage.multiHitRange && normalDamage.multiHitRange[0] !== normalDamage.multiHitRange[1];
-
-                movesHtml += '<div class="multihit-info">';
-                if (perHitMin !== null && perHitMin !== undefined) {
-                    movesHtml += '<div class="multihit-per-hit">Per hit: ' + perHitMin + '–' + perHitMax + '</div>';
-
-                    // Show damage at each possible hit count for variable-hit moves
-                    if (isVariable) {
-                        var minHits = normalDamage.multiHitRange[0];
-                        var maxHits = normalDamage.multiHitRange[1];
-                        movesHtml += '<div class="multihit-breakdown">';
-                        for (var h = minHits; h <= maxHits; h++) {
-                            var totalMin = perHitMin * h;
-                            var totalMax = perHitMax * h;
-                            var hitsKO = totalMin >= defenderHP;
-                            var hitsMayKO = !hitsKO && totalMax >= defenderHP;
-                            var cls = hitsKO ? 'multihit-ko' : (hitsMayKO ? 'multihit-range-ko' : '');
-                            movesHtml += '<span class="multihit-hit-count ' + cls + '">';
-                            movesHtml += h + '× = ' + totalMin + '–' + totalMax;
-                            if (hitsKO) movesHtml += ' ☠';
-                            else if (hitsMayKO) movesHtml += ' ⚠';
-                            movesHtml += '</span>';
-                        }
-                        movesHtml += '</div>';
-                    } else {
-                        // Fixed hit count
-                        movesHtml += '<div class="multihit-total">' + normalDamage.hitCount + ' hits = ' +
-                            normalDamage.rawMin + '–' + normalDamage.rawMax + ' total</div>';
-                    }
-                } else {
-                    var hitsLabel = isVariable
-                        ? normalDamage.multiHitRange[0] + '–' + normalDamage.multiHitRange[1] + ' hits'
-                        : normalDamage.hitCount + ' hits';
-                    movesHtml += '<div class="multihit-badge">' + hitsLabel + '</div>';
-                }
-                movesHtml += '</div>';
-            } else if (moveData && moveData.multihit) {
-                var hitStr = Array.isArray(moveData.multihit) ? moveData.multihit[0] + '–' + moveData.multihit[1] : moveData.multihit;
-                movesHtml += '<div class="multihit-info"><div class="multihit-badge">' + hitStr + ' hits</div></div>';
-            }
-
-            if (moveData && moveData.recoil) {
-                movesHtml += '<span class="move-recoil">⚠️</span>';
-            }
-            if (moveData && moveData.drain) {
-                movesHtml += '<span class="move-drain">💚</span>';
-            }
-
-            movesHtml += '</div>';
-
-            // Move description from RBDex
-            if (window.RBDex) {
-                var dexDesc = window.RBDex.getMoveDesc(moveName);
-                if (dexDesc) {
-                    movesHtml += '<div class="move-cell-desc">' + dexDesc + '</div>';
-                }
-            }
-
-            // AI score indicator for all P2 moves
-            if (side === 'p2' && aiScores && aiScores[i] && aiScores[i].score > -100) {
-                var sc = aiScores[i];
-                movesHtml += '<div class="ai-score-row" title="' + (sc.reason||'').replace(/"/g,'&quot;') + '">';
-                movesHtml += '<span class="ai-score-label">AI</span>';
-                movesHtml += '<span class="ai-score-val' + (sc.score < 0 ? ' ai-score-neg' : '') + '">+' + sc.score + '</span>';
-                movesHtml += '</div>';
-            }
-
-            movesHtml += '</button>';
-        });
-
-        movesHtml += '</div>';
-
-        $('#' + prefix + '-moves').html(movesHtml);
     }
 
     // =========================================================================
@@ -2542,9 +2646,14 @@
      * Render the move details panel (like base calc)
      */
     function renderMoveDetailsPanel() {
+        // This used to render a SECOND copy of the move panel into
+        // #p1-move-list / #p2-move-list, elements the template has never
+        // contained — so it silently did nothing. The live move rows live in
+        // #stage-p1-moves / #stage-p2-moves, so refresh those instead.
         var currentNode = uiState.tree ? uiState.tree.getCurrentNode() : null;
         if (!currentNode || !currentNode.state) {
-            $('#p1-move-list, #p2-move-list').html('<p class="move-list-empty">Start a battle to see moves</p>');
+            $('#stage-p1-moves, #stage-p2-moves')
+                .html('<p class="move-list-empty">Start a battle to see moves</p>');
             return;
         }
 
@@ -2554,114 +2663,336 @@
         var gen = getGenNum();
 
         if (p1) {
-            $('#p1-move-list').html(renderMoveListForSide('p1', p1, p2, gen));
+            $('#stage-p1-moves').html(renderMoveListForSide('p1', p1, p2, gen));
         }
         if (p2) {
-            $('#p2-move-list').html(renderMoveListForSide('p2', p2, p1, gen));
+            $('#stage-p2-moves').html(renderMoveListForSide('p2', p2, p1, gen));
         }
     }
 
     /**
-     * Render move list for one side with damage ranges, crit, hits, effects
+     * One row per move.
+     *
+     * The old layout gave each move a fixed-height card in a 2x2 grid and left
+     * most of it empty. A row carries the same information in a quarter of the
+     * height: name, type, badges, a damage bar drawn against the target's
+     * CURRENT hp with a lethal marker, and the verdict. Everything a card used
+     * to show all the time — the full roll list, the crit range, the
+     * description, multi-hit breakdown, secondary effects — lives one click
+     * away in the detail strip, so it is available without being noise.
      */
     function renderMoveListForSide(side, attacker, defender, gen) {
         var moves = attacker.moves || [];
-        var html = '';
         var currentAction = side === 'p1' ? uiState.p1Action : uiState.p2Action;
+        var aiInfo = side === 'p2' ? getAIMoveCandidates() : null;
+        var html = '<div class="move-rows">';
+        var rendered = 0;
 
         moves.forEach(function (moveName, i) {
             if (!moveName || moveName === '(No Move)') return;
+            rendered++;
 
             var moveData = getMoveData(moveName, gen);
+            var dbEntry = window.MoveDB ? window.MoveDB.get(moveName) : null;
+            var rbdex = window.RBDex ? window.RBDex.getMove(moveName) : null;
 
-            // Determine current hit count for this move from action state
             var actionHits = (currentAction && currentAction.index === i) ? currentAction.hits : null;
+            var isCrit = !!(currentAction && currentAction.index === i && currentAction.isCrit);
+            var dmg = calculateMoveDamage(attacker, defender, moveName, gen, false, actionHits);
+            var critDmg = calculateMoveDamage(attacker, defender, moveName, gen, true, actionHits);
 
-            var damageInfo = calculateMoveDamage(attacker, defender, moveName, gen, false, actionHits);
-            var critDamageInfo = calculateMoveDamage(attacker, defender, moveName, gen, true, actionHits);
+            var isStatus = (dbEntry && dbEntry.category === 'Status') ||
+                (moveData && moveData.category === 'Status');
+            var isVariableHit = !!(dbEntry && dbEntry.effects && Array.isArray(dbEntry.effects.multihit));
 
-            var isMultiHit = moveData && (Array.isArray(moveData.multihit) || (typeof moveData.multihit === 'number' && moveData.multihit > 1));
-            var isVariableHit = moveData && Array.isArray(moveData.multihit);
-            var isStatus = moveData && moveData.category === 'Status';
-            var hasSecondary = moveData && (moveData.secondary || moveData.boosts || moveData.status ||
-                moveData.drain || moveData.recoil || moveData.self);
+            var accuracy = CalcIntegration.getAccuracy(
+                dbEntry || { name: moveName }, attacker, defender, snapshotFieldForSide(side), gen);
 
-            var selected = (side === 'p1' && uiState.p1Action && uiState.p1Action.index === i) ||
-                (side === 'p2' && uiState.p2Action && uiState.p2Action.index === i);
-
-            html += '<div class="move-row ' + (selected ? 'selected' : '') + '" data-side="' + side + '" data-index="' + i + '">';
-            html += '<div class="move-row-main">';
-
-            // Move name button
-            html += '<button class="move-select-btn" data-side="' + side + '" data-index="' + i + '" data-move="' + moveName + '">';
-            html += moveName;
-            html += '</button>';
-
-            // Damage range (total damage)
-            if (!isStatus && damageInfo) {
-                html += '<span class="move-damage-range">' + damageInfo.minPercent + ' - ' + damageInfo.maxPercent + '%</span>';
-            } else if (isStatus) {
-                html += '<span class="move-damage-range status-move">Status</span>';
-            } else {
-                html += '<span class="move-damage-range">0 - 0%</span>';
+            var effectiveness = 1;
+            if (dbEntry && !isStatus) {
+                effectiveness = CalcIntegration.getTypeEffectiveness(
+                    dbEntry.type, defender.types || [], defender);
             }
 
-            // Crit toggle
-            html += '<label class="move-crit-label">';
-            html += '<input type="checkbox" class="move-crit-toggle" data-side="' + side + '" data-index="' + i + '">';
-            html += '<span class="move-crit-btn">Crit</span>';
-            html += '</label>';
+            // ---- verdict + bar geometry, measured against current HP ----
+            var targetHP = Math.max(1, defender.currentHP || 1);
+            var verdict = '', verdictCls = '', pctText = '';
+            var barHtml = '';
 
-            // Multi-hit selector (only for variable-hit moves like [2,5])
+            if (isStatus) {
+                pctText = '<span style="color:#a970ff">status</span>';
+                verdict = statusMoveVerdict(dbEntry);
+            } else if (effectiveness === 0 || !dmg) {
+                pctText = '—';
+                verdict = effectiveness === 0 ? 'no effect' : 'no data';
+            } else {
+                var minPct = Math.min(100, (dmg.min / targetHP) * 100);
+                var maxPct = Math.min(100, (dmg.max / targetHP) * 100);
+                pctText = dmg.minPercent + '–' + dmg.maxPercent + '%';
+
+                var koInfo = CalcIntegration.calculateKOChance(dmg.avg, defender.currentHP, defender.maxHP);
+                if (dmg.min >= targetHP) { verdict = 'guaranteed KO'; verdictCls = 'kills'; }
+                else if (dmg.max >= targetHP) { verdict = 'can KO'; verdictCls = 'maybe'; }
+                else { verdict = koInfo.label; }
+
+                barHtml = '<div class="mv-bar">' +
+                    '<span class="mv-bar-min" style="width:' + minPct.toFixed(1) + '%"></span>' +
+                    '<span class="mv-bar-span" style="left:' + minPct.toFixed(1) +
+                        '%;width:' + Math.max(0, maxPct - minPct).toFixed(1) + '%"></span>' +
+                    (critDmg && critDmg.max > dmg.max
+                        ? '<span class="mv-bar-crit" style="left:' +
+                          Math.min(100, (critDmg.max / targetHP) * 100).toFixed(1) + '%"></span>'
+                        : '') +
+                    '<span class="mv-bar-ko" style="left:100%"></span>' +
+                    '</div>';
+            }
+
+            // ---- badges ----
+            var badges = '';
+            if (dbEntry && dbEntry.type) {
+                badges += '<span class="move-type-badge type-' +
+                    escapeHtml(String(dbEntry.type).toLowerCase()) + '">' +
+                    escapeHtml(String(dbEntry.type).slice(0, 3).toUpperCase()) + '</span>';
+            }
+            if (aiInfo) {
+                var cand = aiInfo.candidates.filter(function (c) { return c.moveName === moveName; })[0];
+                if (cand) {
+                    var tied = aiInfo.tied.indexOf(moveName) !== -1;
+                    badges += '<span class="mv-tag ' + (tied ? 'tie' : 'ai') + '" title="' +
+                        (tied ? 'The AI is equally likely to pick this' : 'AI likelihood') + '">' +
+                        (tied ? 'tied ' : 'AI ') + formatPct(cand.probability) + '</span>';
+                }
+            }
+            if (accuracy < 100) {
+                badges += '<span class="mv-tag pp">' + accuracy + '% acc</span>';
+            }
+            if (dbEntry && dbEntry.pp) {
+                var ppLeft = attacker.pp && attacker.pp[i] !== undefined ? attacker.pp[i] : dbEntry.pp;
+                badges += '<span class="mv-tag pp">' + ppLeft + '/' + dbEntry.pp + ' pp</span>';
+            }
+            if (effectiveness > 1) badges += '<span class="mv-tag" style="background:#f4212e;color:#fff">' +
+                effectiveness + 'x</span>';
+            else if (effectiveness > 0 && effectiveness < 1) badges +=
+                '<span class="mv-tag" style="background:#37474f;color:#b0bec5">' + effectiveness + 'x</span>';
+
+            // ---- row classes ----
+            var cls = 'mv-row move-cell';
+            if (currentAction && currentAction.index === i) cls += ' selected';
+            if (isStatus) cls += ' mv-status-move';
+            if (effectiveness === 0) cls += ' mv-immune';
+            if (aiInfo && aiInfo.tied.indexOf(moveName) !== -1) cls += ' ai-likely';
+
+            html += '<div class="' + cls + '" data-side="' + side + '" data-index="' + i +
+                '" data-move="' + escapeHtml(moveName) + '">';
+
+            html += '<div class="mv-line">';
+            html += '<div><div class="mv-id">' +
+                '<span class="mv-nm move-cell-name" data-move="' + escapeHtml(moveName) + '">' +
+                escapeHtml(moveName) + '</span>' +
+                '<span class="mv-badges">' + badges + '</span>' +
+                '<button class="mv-expand" data-side="' + side + '" data-index="' + i +
+                '" title="Per-hit breakdown, priority and effect controls">more</button>' +
+                '</div>' + barHtml + '</div>';
+            html += '<div class="mv-figures"><div class="mv-pct">' + pctText + '</div>' +
+                '<div class="mv-verdict ' + verdictCls + '">' + escapeHtml(verdict) + '</div></div>';
+            html += '</div>';
+
+            // ---- always-on detail: rolls and description ----
+            // The row column is ~500px wide and was mostly empty, while the two
+            // things a decision actually needs — the roll spread and what the
+            // move does — were hidden behind a click.
+            if (!isStatus && dmg && effectiveness !== 0) {
+                var inlineRolls = damageRollList(attacker, defender, moveName, gen, actionHits);
+                html += '<div class="mv-inline">';
+                if (inlineRolls) {
+                    html += '<span class="mv-rolls">' + inlineRolls + '</span>';
+                }
+                if (critDmg && critDmg.max > dmg.max) {
+                    html += '<span class="mv-inline-crit">crit ' + critDmg.min + '–' +
+                        critDmg.max + ' (' + critDmg.minPercent + '–' + critDmg.maxPercent +
+                        '%) @ ' + formatPct(CalcIntegration.getCritChance(
+                            { name: moveName }, attacker, defender, null, gen)) + '</span>';
+                }
+                html += '</div>';
+            }
+
+            var inlineDesc = (rbdex && (rbdex.shortDesc || rbdex.desc)) || '';
+            if (inlineDesc) {
+                html += '<div class="mv-inline-desc">' + escapeHtml(inlineDesc) + '</div>';
+            }
+
+            // ---- extra detail on demand ----
+            html += '<div class="mv-detail">';
+            if (!isStatus && dmg) {
+                var rollList = damageRollList(attacker, defender, moveName, gen, actionHits);
+                if (rollList) {
+                    html += '<div class="mv-rolls"><b>Rolls</b> ' + rollList + '</div>';
+                }
+                if (critDmg) {
+                    html += '<div class="mv-crit-line">Crit ' + critDmg.min + '–' + critDmg.max +
+                        ' (' + critDmg.minPercent + '–' + critDmg.maxPercent + '%)' +
+                        ' · chance ' + formatPct(CalcIntegration.getCritChance(
+                            { name: moveName }, attacker, defender, null, gen)) + '</div>';
+                }
+                if (dmg.hitCount > 1 && dmg.perHitMin !== null) {
+                    html += '<div class="mv-rolls">' + dmg.perHitMin + '–' + dmg.perHitMax +
+                        ' per hit × ' + dmg.hitCount + ' = <b>' + dmg.min + '–' + dmg.max + '</b> total</div>';
+                }
+            }
+
+            var desc = (rbdex && (rbdex.shortDesc || rbdex.desc)) ||
+                (dbEntry && dbEntry.effects && dbEntry.effects.shortDesc) || '';
+            if (desc) html += '<div class="mv-desc">' + escapeHtml(desc) + '</div>';
+
+            html += '<div class="mv-meta">';
+            if (dbEntry) {
+                html += '<span>' + escapeHtml(dbEntry.category || '') + '</span>';
+                if (dbEntry.basePower) html += '<span>' + dbEntry.basePower + ' BP</span>';
+                if (dbEntry.priority) html += '<span>priority ' +
+                    (dbEntry.priority > 0 ? '+' : '') + dbEntry.priority + '</span>';
+            }
+            html += '</div>';
+
+            // Controls kept from the old card so every existing handler still works
+            html += '<div class="mv-meta" style="margin-top:6px">' +
+                '<label class="move-crit-label"><input type="checkbox" class="move-crit-btn" data-side="' +
+                side + '" data-index="' + i + '"' + (isCrit ? ' checked' : '') + '> crit</label>';
             if (isVariableHit) {
-                var minHit = moveData.multihit[0];
-                var maxHit = moveData.multihit[1];
-                var selectedHits = actionHits || maxHit;
+                var mh = dbEntry.effects.multihit;
+                var selected = actionHits || mh[1];
                 html += '<select class="move-hits-select" data-side="' + side + '" data-index="' + i + '">';
-                for (var h = minHit; h <= maxHit; h++) {
-                    html += '<option value="' + h + '"' + (h === selectedHits ? ' selected' : '') + '>' + h + ' hits</option>';
+                for (var h = mh[0]; h <= mh[1]; h++) {
+                    html += '<option value="' + h + '"' + (h === selected ? ' selected' : '') + '>' +
+                        h + ' hits</option>';
                 }
                 html += '</select>';
             }
-
-            // Effect toggle for moves with effects
-            if (hasSecondary || isStatus) {
-                var effectLabel = getEffectLabel(moveData);
-                if (effectLabel) {
-                    html += '<label class="move-effect-label">';
-                    html += '<input type="checkbox" class="move-effect-toggle" data-side="' + side + '" data-index="' + i + '" data-effect="' + effectLabel + '">';
-                    html += '<span class="move-effect-btn" title="Apply effect: ' + effectLabel + '">' + effectLabel + '</span>';
-                    html += '</label>';
-                }
+            var effectLabel = getEffectLabel(moveData);
+            if (effectLabel) {
+                html += '<label class="move-effect-label"><input type="checkbox" class="move-effect-toggle" data-side="' +
+                    side + '" data-index="' + i + '" data-effect="' + escapeHtml(effectLabel) + '"> ' +
+                    escapeHtml(effectLabel) + '</label>';
             }
+            html += '<button class="move-additional-effects-btn" data-side="' + side +
+                '" data-index="' + i + '">more…</button>';
+            html += '</div>';
 
-            html += '</div>'; // move-row-main
-
-            // Multi-hit breakdown row (per-hit × count = total)
-            if (!isStatus && damageInfo && damageInfo.hitCount > 1 && damageInfo.perHitMin !== null) {
-                html += '<div class="move-multihit-row">';
-                html += '<span class="multihit-detail">' +
-                    damageInfo.perHitMin + '-' + damageInfo.perHitMax + ' per hit × ' + damageInfo.hitCount +
-                    ' = ' + damageInfo.min + '-' + damageInfo.max + ' total</span>';
-                html += '</div>';
-            }
-
-            // Crit damage row (shown when crit is checked)
-            if (critDamageInfo && !isStatus) {
-                html += '<div class="move-crit-row" style="display:none;">';
-                html += '<span class="crit-label">Crit:</span>';
-                html += '<span class="move-damage-range crit">' + critDamageInfo.minPercent + ' - ' + critDamageInfo.maxPercent + '%</span>';
-                if (critDamageInfo.hitCount > 1 && critDamageInfo.perHitMin !== null) {
-                    html += '<span class="multihit-detail crit"> (' +
-                        critDamageInfo.perHitMin + '-' + critDamageInfo.perHitMax + ' per hit × ' + critDamageInfo.hitCount + ')</span>';
-                }
-                html += '</div>';
-            }
-
-            html += '</div>'; // move-row
+            html += '</div>';  // mv-detail
+            html += '</div>';  // mv-row
         });
 
-        return html || '<p class="move-list-empty">No moves available</p>';
+        html += '</div>';
+        return rendered ? html : '<p class="move-list-empty">No moves available</p>';
+    }
+
+    /** Plain-language verdict for a status move, from RBDex effects. */
+    function statusMoveVerdict(entry) {
+        if (!entry || !entry.effects) return 'status';
+        var fx = entry.effects;
+        if (fx.status) {
+            var names = { par: 'paralyses', brn: 'burns', psn: 'poisons',
+                tox: 'badly poisons', slp: 'sleeps', frz: 'freezes' };
+            return names[fx.status] || 'status';
+        }
+        if (fx.selfBoosts) {
+            var ups = Object.keys(fx.selfBoosts).map(function (k) {
+                return k + (fx.selfBoosts[k] > 0 ? '+' : '') + fx.selfBoosts[k];
+            });
+            return ups.join(' ');
+        }
+        if (fx.targetBoosts) {
+            return Object.keys(fx.targetBoosts).map(function (k) {
+                return 'foe ' + k + fx.targetBoosts[k];
+            }).join(' ');
+        }
+        if (fx.heal) return 'heals ' + Math.round((fx.heal.numerator / fx.heal.denominator) * 100) + '%';
+        if (fx.sideCondition) return 'sets ' + fx.sideCondition;
+        if (fx.weather) return 'sets weather';
+        if (fx.terrain) return 'sets terrain';
+        return 'status';
+    }
+
+    /** The full roll spread, grouped so repeated values read as counts. */
+    function damageRollList(attacker, defender, moveName, gen, hits) {
+        try {
+            var genNum = (gen && gen.num) ? gen.num : (typeof gen === 'number' ? gen : 8);
+            var atk = CalcIntegration.snapshotToPokemon(attacker, genNum);
+            var def = CalcIntegration.snapshotToPokemon(defender, genNum);
+            if (!atk || !def) return '';
+
+            var entry = window.MoveDB ? window.MoveDB.get(moveName) : null;
+            var opts = {};
+            if (entry && entry.effects && entry.effects.multihit) {
+                var mh = entry.effects.multihit;
+                opts.hits = hits || (Array.isArray(mh) ? mh[1] : mh);
+            }
+            var result = window.calc.calculate(genNum, atk, def,
+                new window.calc.Move(genNum, moveName, opts),
+                window.createField ? window.createField() : null);
+
+            var rolls = CalcIntegration.getDamageRolls(result, opts.hits);
+            if (!rolls || !rolls.length) return '';
+
+            return rolls.map(function (r) {
+                var count = Math.round(r.probability * 16);
+                return r.damage + (count > 1 ? '<span style="opacity:.55">×' + count + '</span>' : '');
+            }).join(', ');
+        } catch (e) {
+            return '';
+        }
+    }
+
+    /** The field as the calc engine sees it, from the side's point of view. */
+    function snapshotFieldForSide(side) {
+        var field = window.createField ? window.createField() : null;
+        if (!field) return null;
+        return side === 'p2' && field.clone ? field.clone().swap() : field;
+    }
+
+    /**
+     * Stats strip with live stage changes, so a -1 Speed or a +2 Attack is
+     * visible on the card instead of hidden in a modal.
+     */
+    function renderStatStrip(mon, opponent, state, side) {
+        if (!mon) return '';
+        var stats = mon.stats || {};
+        var boosts = mon.boosts || {};
+        var order = [
+            { key: 'hp', label: 'HP' }, { key: 'atk', label: 'Atk' },
+            { key: 'def', label: 'Def' }, { key: 'spa', label: 'SpA' },
+            { key: 'spd', label: 'SpD' }, { key: 'spe', label: 'Spe' }
+        ];
+
+        var mySpeed = mon.getEffectiveSpeed
+            ? mon.getEffectiveSpeed(state && state.sides ? state.sides[side] : null) : stats.spe;
+        var theirSpeed = opponent && opponent.getEffectiveSpeed
+            ? opponent.getEffectiveSpeed(state && state.sides ?
+                state.sides[side === 'p1' ? 'p2' : 'p1'] : null) : null;
+
+        var html = '<div class="stat-strip">';
+        order.forEach(function (s) {
+            var stage = s.key === 'hp' ? 0 : (boosts[s.key] || 0);
+            var cls = 'stat-cell' + (stage > 0 ? ' boosted' : (stage < 0 ? ' dropped' : ''));
+            if (s.key === 'spe' && theirSpeed !== null && mySpeed > theirSpeed) cls += ' is-speed-win';
+
+            var shown = stats[s.key] || 0;
+            if (s.key === 'spe') shown = mySpeed;
+            else if (stage !== 0) {
+                shown = stage > 0
+                    ? Math.floor(shown * (2 + stage) / 2)
+                    : Math.floor(shown * 2 / (2 - stage));
+            }
+
+            html += '<div class="' + cls + '" title="' + s.label +
+                (stage ? ' at ' + (stage > 0 ? '+' : '') + stage : '') + '">' +
+                '<span class="stat-lbl">' + s.label + '</span>' +
+                '<span class="stat-val">' + shown + '</span>' +
+                (stage ? '<span class="stat-delta ' + (stage > 0 ? 'up' : 'down') + '">' +
+                    (stage > 0 ? '+' : '') + stage + '</span>' : '') +
+                '</div>';
+        });
+        html += '</div>';
+        return html;
     }
 
     /**
@@ -3114,6 +3445,18 @@
     /**
      * Render full team overview
      */
+    /** Type chips, used on the team slots and anywhere a species is listed. */
+    function renderTypeBadges(types) {
+        if (!types || !types.length) return '';
+        var html = '<div class="team-slot-types">';
+        types.forEach(function (t) {
+            if (!t) return;
+            html += '<span class="move-type-badge type-' + escapeHtml(String(t).toLowerCase()) +
+                '">' + escapeHtml(String(t).slice(0, 3).toUpperCase()) + '</span>';
+        });
+        return html + '</div>';
+    }
+
     function renderTeamOverview(side, team, activeSlot, opponent) {
         var $container = $('#team-overview-slots-' + side);
         var field = uiState.tree.getCurrentNode()?.state.field;
@@ -3174,6 +3517,9 @@
                     '<img class="team-slot-sprite" src="' + spriteUrl + '" alt="' + poke.name + '" onerror="this.src=\'' + fallbackUrl + '\'">' +
                     '<div class="team-slot-info">' +
                     '<div class="team-slot-name">' + poke.name + (poke.item ? ' <span class="team-item-name">(' + poke.item + ')</span>' : '') + '</div>' +
+                    // Types on every slot, not just the active Pokemon — you
+                    // cannot judge whether a switch is safe without them.
+                    renderTypeBadges(poke.types) +
                     '<div class="team-slot-hp-bar"><div class="team-slot-hp-fill ' + hpColor + '" style="width: ' + hpPercent + '%"></div></div>' +
                     '<div class="team-slot-hp-text">' + Math.max(0, poke.currentHP) + '/' + poke.maxHP + '</div>' +
                     statusBadge +
@@ -4758,6 +5104,51 @@
     /**
      * Show KO replacement modal
      */
+    /**
+     * After stepping into a branch, ask who replaces anything that fainted.
+     *
+     * Selecting the "opponent faints" fork used to leave the plan stuck: the
+     * opponent had no active Pokemon and there was no way to say who they send
+     * in, so the turn could not be continued. Both sides are prompted, opponent
+     * first, and the tree is re-derived once the choices are in.
+     */
+    function promptPendingReplacements(nodeId, done) {
+        var node = uiState.tree && uiState.tree.getNode(nodeId);
+        if (!node || !node.state) { if (done) done(); return; }
+
+        var state = node.state;
+
+        function needsReplacement(side) {
+            var sideState = state[side];
+            var active = sideState && sideState.active;
+            if (!active || active.currentHP > 0) return false;
+            return (sideState.team || []).some(function (p, i) {
+                return p && p.currentHP > 0 && i !== sideState.teamSlot;
+            });
+        }
+
+        function finish() {
+            syncActiveToTeam(state);
+            reconcileWholeTree();
+            renderTree();
+            renderStage();
+            if (done) done();
+        }
+
+        function askFor(side, next) {
+            if (!needsReplacement(side)) { next(); return; }
+            var label = side === 'p2' ? 'Opponent sends in:' : 'You send in:';
+            showKOReplacementModal(side, state, function (slot) {
+                if (slot !== null && slot !== undefined && BattlePlannerLogic) {
+                    BattlePlannerLogic.performSwitch(state, side, slot);
+                }
+                next();
+            }, label);
+        }
+
+        askFor('p2', function () { askFor('p1', finish); });
+    }
+
     function showKOReplacementModal(side, state, onComplete, titleOverride) {
         var team = side === 'p1' ? state.p1.team : state.p2.team;
         var activeSlot = side === 'p1' ? state.p1.teamSlot : state.p2.teamSlot;
@@ -4947,335 +5338,14 @@
         return 10;
     }
 
-    /**
-     * Variance notification with priority-sorted warnings.
-     * "Branch All" creates hierarchical branches: variance outcomes become
-     * CHILDREN of the current node, preserving the tree hierarchy.
-     */
-    function showVarianceNotification(warnings, parentNodeId, currentNodeId) {
-        var currentNode = uiState.tree.getNode(currentNodeId);
-        var firstMover = currentNode && currentNode.outcome && currentNode.outcome.effects
-            ? currentNode.outcome.effects.firstMover : 'p1';
-
-        var sorted = sortVarianceByPriority(warnings, firstMover);
-
-        var branchable = [];
-        sorted.forEach(function (w, idx) {
-            var d = w.detail || {};
-            var canBranch = !!(d.minResult && d.maxResult) || d.isCrit || d.isSecondary || d.isFlinch || d.isSpeedTie;
-            if (canBranch) branchable.push({ warning: w, idx: idx });
-        });
-
-        var lines = sorted.map(function (w, idx) {
-            var moverLabel = w.mover === 'p1' ? 'Player' : 'Opponent';
-            var icon = '';
-            if (w.detail.isSpeedTie) icon = '⚡ ';
-            else if (w.detail.isCrit) icon = '💥 ';
-            else if (w.detail.isSecondary) icon = '🎲 ';
-            else if (w.detail.isFlinch) icon = '💫 ';
-            else if (w.detail.reason && w.detail.reason.indexOf('KO') !== -1) icon = '☠ ';
-
-            var priorityLabel = '';
-            if (branchable.length > 1) {
-                var bIdx = -1;
-                for (var bi = 0; bi < branchable.length; bi++) {
-                    if (branchable[bi].idx === idx) { bIdx = bi; break; }
-                }
-                if (bIdx === 0) priorityLabel = '<span class="variance-priority">1st</span> ';
-                else if (bIdx === 1) priorityLabel = '<span class="variance-priority">2nd</span> ';
-                else if (bIdx >= 2) priorityLabel = '<span class="variance-priority">' + (bIdx + 1) + 'th</span> ';
-            }
-
-            var btnHtml = '';
-            var isBranchable = branchable.some(function (b) { return b.idx === idx; });
-            if (isBranchable) {
-                btnHtml = ' <button class="planner-btn planner-btn-xs variance-branch-single" data-vidx="' + idx + '">Branch</button>';
-            }
-
-            return '<div class="variance-line">' + priorityLabel + icon + '<strong>' + moverLabel + '</strong> ' +
-                w.move + ': ' + w.detail.reason + btnHtml + '</div>';
-        }).join('');
-
-        var html = '<div class="variance-banner" id="variance-banner">' +
-            '<div class="variance-header">⚠ Variance Detected (ordered by speed priority)</div>' +
-            '<div class="variance-body">' + lines + '</div>' +
-            '<div class="variance-actions">' +
-            (branchable.length > 0 ? '<button class="planner-btn planner-btn-sm planner-btn-accent" id="variance-branch-all">Branch All (' + branchable.length + ')</button>' : '') +
-            '<button class="planner-btn planner-btn-sm" id="variance-dismiss">Dismiss</button>' +
-            '</div>' + '</div>';
-
-        $('#variance-banner').remove();
-        $('#stage-container').prepend(html);
-
-        $('#variance-dismiss').on('click', function () {
-            $('#variance-banner').remove();
-        });
-
-        // Hierarchical "Branch All": variance outcomes become children of the current node.
-        // The first warning creates branches under currentNode, remaining warnings
-        // become sub-branches under each surviving outcome.
-        $('#variance-branch-all').on('click', function () {
-            var sortedWarnings = branchable.map(function (b) { return b.warning; });
-            createHierarchicalBranches(sortedWarnings, currentNodeId, currentNodeId);
-            normalizeSiblingProbabilities(currentNodeId);
-            uiState.tree.navigate(currentNodeId);
-            $('#variance-banner').remove();
-            renderTree();
-            renderStage();
-        });
-
-        // Single branch: create branches for just one warning under the current node
-        $('.variance-branch-single').on('click', function () {
-            var vidx = parseInt($(this).data('vidx'));
-            var match = branchable.find(function (b) { return b.idx === vidx; });
-            if (match) {
-                createVarianceBranchNodes(match.warning, currentNodeId, currentNodeId);
-                normalizeSiblingProbabilities(currentNodeId);
-                $(this).closest('.variance-line').addClass('variance-branched');
-                $(this).prop('disabled', true).text('Done');
-                uiState.tree.navigate(currentNodeId);
-                renderTree();
-                renderStage();
-            }
-        });
-    }
-
-    /**
-     * Create hierarchical branches: process the first warning to create branches
-     * as CHILDREN of parentNodeId (which is the currentNode), then recursively
-     * attach remaining warnings as sub-branches under surviving outcomes.
-     * Normalizes sibling probabilities at each level to ensure they always sum to 1.0.
-     */
-    function createHierarchicalBranches(sortedWarnings, parentNodeId, currentNodeId) {
-        if (sortedWarnings.length === 0) return;
-
-        var firstWarning = sortedWarnings[0];
-        var remaining = sortedWarnings.slice(1);
-
-        // Create branch nodes as children of parentNodeId
-        var branches = createVarianceBranchNodes(firstWarning, parentNodeId, currentNodeId);
-
-        // Normalize the newly-created sibling branches at this level
-        normalizeSiblingProbabilities(parentNodeId);
-
-        if (remaining.length > 0 && branches.length > 0) {
-            branches.forEach(function (branch) {
-                if (!branch.node) return;
-                var defSide = firstWarning.mover === 'p1' ? 'p2' : 'p1';
-                var defAlive = branch.node.state[defSide].active && branch.node.state[defSide].active.currentHP > 0;
-                var atkAlive = branch.node.state[firstWarning.mover].active &&
-                    branch.node.state[firstWarning.mover].active.currentHP > 0;
-
-                if (defAlive && atkAlive) {
-                    var applicable = remaining.filter(function (w) {
-                        var wDefSide = w.mover === 'p1' ? 'p2' : 'p1';
-                        return branch.node.state[wDefSide].active &&
-                            branch.node.state[wDefSide].active.currentHP > 0;
-                    });
-                    if (applicable.length > 0) {
-                        // Sub-branches become children of this branch node
-                        createHierarchicalBranches(applicable, branch.node.id, branch.node.id);
-                    }
-                }
-            });
-        }
-    }
-
-    /**
-     * Create branch nodes for a single variance warning.
-     * Returns array of { node, isKO } objects for hierarchical branching.
-     *
-     * IMPORTANT: Branch states are built from the PARENT node's pre-turn state,
-     * NOT from the current (post-damage) node. This prevents double-damage bugs.
-     * For each branch we recalculate the correct HP from the parent's state
-     * using the variance detail's simulated HP values.
-     */
-    function createVarianceBranchNodes(w, parentNodeId, currentNodeId) {
-        var currentNode = uiState.tree.getNode(currentNodeId);
-        if (!currentNode) return [];
-        var d = w.detail;
-        var defSide = w.mover === 'p1' ? 'p2' : 'p1';
-        var atkSide = w.mover;
-        var results = [];
-
-        if (d.isSpeedTie) {
-            // Speed tie: create two branches — P1 moves first vs P2 moves first
-            var p1FirstState = currentNode.state.clone();
-            var p1FirstN = uiState.tree.addBranch(parentNodeId, p1FirstState, currentNode.actions,
-                new BattlePlanner.BattleOutcome('⚡ P1 Moves First', 0.5, 0, { rollType: 'speedTie', firstMover: 'p1' }));
-            results.push({ node: p1FirstN, isKO: false });
-
-            var p2FirstState = currentNode.state.clone();
-            var p2FirstN = uiState.tree.addBranch(parentNodeId, p2FirstState, currentNode.actions,
-                new BattlePlanner.BattleOutcome('⚡ P2 Moves First', 0.5, 0, { rollType: 'speedTie', firstMover: 'p2' }));
-            results.push({ node: p2FirstN, isKO: false });
-
-        } else if (d.minResult && d.maxResult) {
-            // Damage roll variance: "Survives" vs "KO" (or berry trigger)
-            // d.minResult / d.maxResult contain the simulated HP values
-            var survProb = d.surviveChance || 0.5;
-            var koProb = d.koChance || 0.5;
-            var survPct = CalcIntegration.formatProbability(survProb);
-            var koPct = CalcIntegration.formatProbability(koProb);
-
-            // --- Survives branch: use minResult HP ---
-            var minState = currentNode.state.clone();
-            minState[defSide].active.currentHP = Math.max(0, d.minResult.hp);
-            minState[defSide].active.percentHP = minState[defSide].active.maxHP > 0
-                ? Math.round((minState[defSide].active.currentHP / minState[defSide].active.maxHP) * 100) : 0;
-            minState[defSide].active.hasFainted = minState[defSide].active.currentHP <= 0;
-            if (d.minResult.itemConsumed) minState[defSide].active.item = '';
-            syncActiveToTeam(minState);
-            var defName = currentNode.state[defSide].active.name;
-            var survDesc = defName + ' survives ' + w.move + ' (' + survPct + ')';
-            var minN = uiState.tree.addBranch(parentNodeId, minState, currentNode.actions,
-                new BattlePlanner.BattleOutcome(survDesc, survProb, 0, { rollType: 'min' }));
-            markBranchKOs(minN, minState);
-            results.push({ node: minN, isKO: false });
-
-            // --- KO branch: use maxResult HP ---
-            var maxState = currentNode.state.clone();
-            maxState[defSide].active.currentHP = Math.max(0, d.maxResult.hp);
-            maxState[defSide].active.percentHP = maxState[defSide].active.maxHP > 0
-                ? Math.round((maxState[defSide].active.currentHP / maxState[defSide].active.maxHP) * 100) : 0;
-            maxState[defSide].active.hasFainted = maxState[defSide].active.currentHP <= 0;
-            if (d.maxResult.itemConsumed) maxState[defSide].active.item = '';
-            syncActiveToTeam(maxState);
-            var koDesc = d.maxResult.fainted
-                ? (defName + ' KO\'d by ' + w.move + ' (' + koPct + ')')
-                : (defName + ' takes max roll ' + w.move + ' (' + koPct + ')');
-            var maxN = uiState.tree.addBranch(parentNodeId, maxState, currentNode.actions,
-                new BattlePlanner.BattleOutcome(koDesc, koProb, 0, { rollType: 'max' }));
-            markBranchKOs(maxN, maxState);
-            results.push({ node: maxN, isKO: d.maxResult.fainted });
-
-        } else if (d.isCrit) {
-            // Crit variance: recalculate absolute HP from the pre-damage defender HP.
-            // The currentNode already has avg (normal) damage applied.
-            // We need to: (a) restore the no-crit branch to the current state as-is,
-            //             (b) calculate the crit branch from scratch using pre-damage HP.
-            var critMoveName = w.move.replace(' (crit)', '');
-
-            // No-crit branch: the current state IS the no-crit outcome already
-            var normState = currentNode.state.clone();
-            var normN = uiState.tree.addBranch(parentNodeId, normState, currentNode.actions,
-                new BattlePlanner.BattleOutcome('No Crit (' + critMoveName + ')', 0.9375, 0, { rollType: 'noCrit' }));
-            results.push({ node: normN, isKO: false });
-
-            // Crit branch: compute the crit damage and apply to the pre-damage HP.
-            // d.defenderHP is the HP BEFORE this move hit. d.critMin/critMax are the crit damage rolls.
-            var critAvgDmg = Math.floor((d.critMin + d.critMax) / 2);
-            var preDamageHP = d.defenderHP; // HP before the move that could crit
-            var critHP = Math.max(0, preDamageHP - critAvgDmg);
-
-            var critState = currentNode.state.clone();
-            var critDef = critState[defSide].active;
-            critDef.currentHP = critHP;
-            critDef.percentHP = critDef.maxHP > 0 ? Math.round((critDef.currentHP / critDef.maxHP) * 100) : 0;
-            critDef.hasFainted = critDef.currentHP <= 0;
-            syncActiveToTeam(critState);
-            var critKO = critDef.currentHP <= 0;
-            var critDesc = critKO
-                ? ('💥 Crit KO! (' + critMoveName + ')')
-                : ('💥 Crit (' + critMoveName + ', ' + critHP + ' HP left)');
-            var critN = uiState.tree.addBranch(parentNodeId, critState, currentNode.actions,
-                new BattlePlanner.BattleOutcome(critDesc, 0.0625, 0, { rollType: 'crit' }));
-            markBranchKOs(critN, critState);
-            results.push({ node: critN, isKO: critKO });
-
-        } else if (d.isSecondary && d.secondaryEffect) {
-            var sec = d.secondaryEffect;
-            var chance = sec.chance / 100;
-            var effectDesc = sec.status
-                ? normalizeStatus(sec.status)
-                : (sec.boosts ? 'stat change' : sec.volatileStatus || 'effect');
-
-            // No-effect branch: state stays as-is
-            var missState = currentNode.state.clone();
-            var missN = uiState.tree.addBranch(parentNodeId, missState, currentNode.actions,
-                new BattlePlanner.BattleOutcome('No Effect (' + w.move + ' ' + sec.chance + '%)', 1 - chance, 0, { rollType: 'noSecondary' }));
-            results.push({ node: missN, isKO: false });
-
-            // Effect-triggers branch: apply secondary to cloned state
-            var hitState = currentNode.state.clone();
-            var effTarget = hitState[defSide].active;
-            var effUser = hitState[atkSide].active;
-            if (sec.status && (!effTarget.status || effTarget.status === 'Healthy')) {
-                effTarget.status = normalizeStatus(sec.status);
-            }
-            if (sec.boosts) applyBoosts(effTarget, sec.boosts);
-            if (sec.selfBoosts) applyBoosts(effUser, sec.selfBoosts);
-            syncActiveToTeam(hitState);
-            var hitN = uiState.tree.addBranch(parentNodeId, hitState, currentNode.actions,
-                new BattlePlanner.BattleOutcome(effectDesc + ' (' + w.move + ' ' + sec.chance + '%)', chance, 0, { rollType: 'secondary' }));
-            results.push({ node: hitN, isKO: false });
-
-        } else if (d.isFlinch) {
-            var noFlinchState = currentNode.state.clone();
-            var flinchPct = Math.round(d.flinchChance * 100);
-            var noFlinchN = uiState.tree.addBranch(parentNodeId, noFlinchState, currentNode.actions,
-                new BattlePlanner.BattleOutcome('No Flinch (' + w.move + ')', 1 - d.flinchChance, 0, { rollType: 'noFlinch' }));
-            results.push({ node: noFlinchN, isKO: false });
-
-            var flinchState = currentNode.state.clone();
-            var flinchN = uiState.tree.addBranch(parentNodeId, flinchState, currentNode.actions,
-                new BattlePlanner.BattleOutcome('💫 Flinch! (' + w.move + ' ' + flinchPct + '%)', d.flinchChance, 0, { rollType: 'flinch' }));
-            results.push({ node: flinchN, isKO: false });
-        }
-
-        return results;
-    }
-
-    /**
-     * Normalize sibling branch probabilities to sum to 1.0
-     */
-    function normalizeSiblingProbabilities(parentNodeId) {
-        var parentNode = uiState.tree.getNode(parentNodeId);
-        if (!parentNode || parentNode.children.length === 0) return;
-
-        var total = 0;
-        var children = [];
-        parentNode.children.forEach(function (childId) {
-            var child = uiState.tree.getNode(childId);
-            if (child) {
-                var prob = child.outcome ? child.outcome.probability : 1.0;
-                total += prob;
-                children.push(child);
-            }
-        });
-
-        if (total > 0 && Math.abs(total - 1.0) > 0.001) {
-            children.forEach(function (child) {
-                if (child.outcome) {
-                    child.outcome.probability = child.outcome.probability / total;
-                }
-            });
-        }
-    }
-
-    /**
-     * After creating a branch node, check if a Pokemon is KO'd and mark
-     * the node so that navigating to it will trigger the switch flow.
-     */
-    function markBranchKOs(node, branchState) {
-        var p1KO = branchState.p1.active && branchState.p1.active.currentHP <= 0;
-        var p2KO = branchState.p2.active && branchState.p2.active.currentHP <= 0;
-        if (p1KO || p2KO) {
-            node.pendingKO = { p1: p1KO, p2: p2KO };
-            if (!node.outcome) node.outcome = {};
-            if (!node.outcome.effects) node.outcome.effects = {};
-            if (p1KO) node.outcome.effects.p1KOName = branchState.p1.active.name;
-            if (p2KO) node.outcome.effects.p2KOName = branchState.p2.active.name;
-            node.outcome.effects.hadKO = { p1: p1KO, p2: p2KO };
-        }
-    }
-
-    /**
-     * Legacy wrapper: create branches for a single variance warning.
-     */
-    function createSingleVarianceBranch(w, parentNodeId, currentNodeId) {
-        createVarianceBranchNodes(w, parentNodeId, currentNodeId);
-    }
+    // The old "variance warning -> click to branch" system used to live here
+    // (~330 lines). It created branches unconditionally with hardcoded
+    // probabilities (0.9375/0.0625 crit, a flat 50/50 speed tie), patched HP by
+    // hand on top of already-damaged states, and never revisited a branch once
+    // made. It has been replaced wholesale by battle_planner_branching.js, which
+    // derives branches from the real roll distributions and re-derives the whole
+    // tree after every executed move. Deleted rather than left dormant so there
+    // can only ever be one branching engine.
 
     /**
      * Calculate the best (highest max-roll) damage an attacker can deal to a defender,
@@ -5832,16 +5902,24 @@
                     uiState.p2Action = null;
                     $('#p1-selected-move').text('Select a move').removeClass('selected');
                     $('#p2-selected-move').text('Select a move').removeClass('selected');
-                    $('#p1-move-list .move-row, #p2-move-list .move-row').removeClass('selected');
+                    $('#stage-p1-moves .mv-row, #stage-p2-moves .mv-row').removeClass('selected');
                     updateExecuteTurnButton();
+
+                    // Re-derive the ENTIRE tree from the root through the
+                    // branching engine. This is what makes the numbers
+                    // trustworthy: parents and children are recomputed on every
+                    // executed move, branches appear only where an outcome
+                    // genuinely diverges, ones that stopped mattering collapse,
+                    // and impossible paths are marked. The manually-built state
+                    // above is only a placeholder until this runs.
+                    //
+                    // It replaces the old "variance warning -> click to branch"
+                    // flow, which created branches unconditionally with
+                    // hardcoded probabilities and never revisited them.
+                    reconcileWholeTree();
 
                     renderTree();
                     renderStage();
-
-                    // Show variance warnings if any (skip banner during AI tie multi-exec)
-                    if (varianceWarnings.length > 0 && !uiState._aiBranchingActive) {
-                        showVarianceNotification(varianceWarnings, currentNode.id, newNode.id);
-                    }
 
                     isExecutingTurn = false;
                 };
@@ -6609,12 +6687,12 @@
         updateExecuteTurnButton();
 
         // Re-apply visual selection on move rows
-        $('#p1-move-list .move-row, #p2-move-list .move-row').removeClass('selected');
+        $('#stage-p1-moves .mv-row, #stage-p2-moves .mv-row').removeClass('selected');
         if (uiState.p1Action && uiState.p1Action.type === 'move') {
-            $('#p1-move-list .move-row[data-index="' + uiState.p1Action.index + '"]').addClass('selected');
+            $('#stage-p1-moves .mv-row[data-index="' + uiState.p1Action.index + '"]').addClass('selected');
         }
         if (uiState.p2Action && uiState.p2Action.type === 'move') {
-            $('#p2-move-list .move-row[data-index="' + uiState.p2Action.index + '"]').addClass('selected');
+            $('#stage-p2-moves .mv-row[data-index="' + uiState.p2Action.index + '"]').addClass('selected');
         }
     }
 
@@ -7182,6 +7260,7 @@
 
         initialState.p1.active = new BattlePlanner.PokemonSnapshot(p1Pokemon);
         initialState.p1.team = [initialState.p1.active.clone()];
+        var carryPending = !!uiState.carriedTeam;
 
         // Add remaining imported Pokemon to team (up to 6)
         var customsets2 = localStorage.customsets ? JSON.parse(localStorage.customsets) : {};
@@ -7244,6 +7323,10 @@
         uiState.tree = new BattlePlanner.BattleTree();
         uiState.tree.onTreeUpdated = onTreeUpdated;
         uiState.tree.onCurrentNodeChanged = onCurrentNodeChanged;
+        if (uiState.carriedTeam) {
+            BattlePlanner.applyCarriedTeam(initialState, uiState.carriedTeam);
+            uiState.carriedTeam = null;
+        }
         uiState.tree.initialize(initialState);
 
         refreshBoxFromCustomsets();
@@ -7383,6 +7466,74 @@
     }
 
     /**
+     * Called after every executed turn. Never throws into the turn flow: if the
+     * engine is unavailable the planner still works, it just does not re-derive.
+     */
+    function reconcileWholeTree(options) {
+        var B = window.BattlePlannerBranching;
+        if (!B || !uiState.tree) return null;
+
+        try {
+            var executor = makeBranchingExecutor();
+            if (!executor) return null;
+
+            // Impossible branches are MARKED, not deleted. A branch that can no
+            // longer occur is often a line the user deliberately planned, and
+            // silently removing their work on every turn would be worse than
+            // showing it greyed out at 0%. Pass {pruneImpossible: true} to clear
+            // them out explicitly.
+            var report = B.reconcile(uiState.tree, executor, Object.assign({
+                pruneImpossible: false
+            }, options || {}));
+
+            // The percentages on screen are only as good as this invariant
+            if (report.validation && !report.validation.valid) {
+                console.warn('Branch probability invariants violated:',
+                    report.validation.violations);
+            }
+            uiState.lastReconcile = report;
+            return report;
+        } catch (e) {
+            console.error('Tree reconciliation failed:', e);
+            return null;
+        }
+    }
+
+    /**
+     * Moves the AI is equally likely to pick, from the AI distribution already
+     * computed for the move panel. Returned so the panel can mark them and so
+     * the branching engine can fork on the choice.
+     */
+    function getAIMoveCandidates(threshold) {
+        // Compute it here rather than relying on a cached field. The previous
+        // version read uiState.lastAIDistribution, which nothing ever populated,
+        // so no AI badge or highlight ever appeared.
+        var dist = uiState.lastAIDistribution;
+        if (!dist || uiState.lastAIDistributionNode !== (uiState.tree && uiState.tree.currentNodeId)) {
+            dist = computeAIDistribution();
+            uiState.lastAIDistribution = dist;
+            uiState.lastAIDistributionNode = uiState.tree && uiState.tree.currentNodeId;
+        }
+        if (!dist || !dist.length) return null;
+
+        var max = Math.max.apply(null, dist.map(function (d) { return d.probability; }));
+        if (!(max > 0)) return null;
+
+        var eps = threshold === undefined ? 1e-6 : threshold;
+        var candidates = dist.filter(function (d) { return d.probability > eps; });
+        if (!candidates.length) return null;
+
+        return {
+            candidates: candidates,
+            max: max,
+            // Every move sharing the top probability. One entry means a clear
+            // favourite; several means a genuine AI tie.
+            tied: dist.filter(function (d) { return Math.abs(d.probability - max) < 1e-6; })
+                .map(function (d) { return d.moveName; })
+        };
+    }
+
+    /**
      * Which earlier nodes still carry damage rolls that could change the
      * outcome of something downstream.
      */
@@ -7390,6 +7541,1049 @@
         var B = window.BattlePlannerBranching;
         if (!B || !uiState.tree) return null;
         return B.analyzeRollRelevance(uiState.tree, nodeId || uiState.tree.currentNodeId);
+    }
+
+
+    // =========================================================================
+    // MAINLINE RIBBON
+    // =========================================================================
+    //
+    // The plan is drawn as the single line you are currently standing in, left
+    // to right. A fork is a badge on the connector rather than an indent, so a
+    // 30-turn plan is exactly as readable as a 3-turn one and nothing is ever
+    // squeezed into a 12-character column.
+
+    /**
+     * Why a node exists as a separate branch from its siblings, reduced to one
+     * cause so it can be shown as a colour rather than a sentence.
+     */
+    function branchCauseOf(node) {
+        if (!node || !node.branchAnswers) return null;
+        var a = node.branchAnswers;
+
+        if (a.p1Fainted === true || a.p2Fainted === true) return { key: 'ko', label: 'KO' };
+        if (a.p1Fainted === false && a.p2Fainted === false) return { key: 'roll', label: 'survives' };
+        if (a.p1Status !== undefined && a.p1Status !== 'Healthy') return { key: 'status', label: a.p1Status };
+        if (a.p2Status !== undefined && a.p2Status !== 'Healthy') return { key: 'status', label: a.p2Status };
+        if (a.p1Status !== undefined || a.p2Status !== undefined) return { key: 'status', label: 'no status' };
+        if (a.p1Item !== undefined || a.p2Item !== undefined) return { key: 'item', label: 'item' };
+        if (a.turnEvents) {
+            if (/speedTie/.test(a.turnEvents)) return { key: 'speed', label: 'speed tie' };
+            if (/aiChoice/.test(a.turnEvents)) return { key: 'ai', label: 'AI pick' };
+            if (/paralysed|confusion|frozen|asleep|flinch/.test(a.turnEvents)) {
+                return { key: 'status', label: 'could not move' };
+            }
+            if (/focusBand/.test(a.turnEvents)) return { key: 'item', label: 'Focus Band' };
+        }
+        if (a.p1Boosts !== undefined || a.p2Boosts !== undefined) return { key: 'roll', label: 'stat change' };
+        if (a.weather !== undefined || a.terrain !== undefined) return { key: 'roll', label: 'field' };
+        if (a.hazards !== undefined) return { key: 'roll', label: 'hazards' };
+        return { key: 'roll', label: 'roll' };
+    }
+
+    /** A one-line description of what both sides did to reach a node. */
+    function nodeActionSummary(node) {
+        if (!node || !node.actions) return 'Battle start';
+        var parts = [];
+        ['p1', 'p2'].forEach(function (side) {
+            var a = node.actions[side];
+            if (!a) return;
+            if (a.type === 'switch') {
+                parts.push('→ switch');
+            } else if (a.moveName) {
+                parts.push(a.moveName);
+            }
+        });
+        return parts.length ? parts.join(' / ') : 'No action';
+    }
+
+    function renderMainlineRibbon() {
+        var $ribbon = $('#mainline-ribbon');
+        if (!$ribbon.length) return;
+
+        if (!uiState.tree || !uiState.tree.rootId) {
+            $ribbon.html('<span class="ro-empty" style="padding:4px 6px">No battle started</span>');
+            $('#mainline-alt-count').text('0');
+            return;
+        }
+
+        var path = uiState.tree.getPathToNode(uiState.tree.currentNodeId);
+        var html = '';
+        var altAtCurrent = 0;
+
+        path.forEach(function (nodeId, index) {
+            var node = uiState.tree.getNode(nodeId);
+            if (!node) return;
+
+            // Connector, carrying a fork badge when the PARENT had alternatives
+            if (index > 0) {
+                var parent = uiState.tree.getNode(node.parentId);
+                var siblingCount = parent ? (parent.children || []).length : 1;
+                var forked = siblingCount > 1;
+                html += '<span class="ml-link' + (forked ? ' forked' : '') + '">';
+                if (forked) {
+                    html += '<button class="ml-fork-badge" data-parent="' + parent.id +
+                        '" data-current="' + nodeId + '" title="' + siblingCount +
+                        ' ways this turn could go — click to switch">' + siblingCount + '</button>';
+                }
+                html += '</span>';
+            }
+
+            var isCurrent = nodeId === uiState.tree.currentNodeId;
+            if (isCurrent) {
+                var parentNow = uiState.tree.getNode(node.parentId);
+                altAtCurrent = parentNow ? Math.max(0, (parentNow.children || []).length - 1) : 0;
+            }
+
+            var cause = branchCauseOf(node);
+            var prob = node.outcome && typeof node.outcome.probability === 'number'
+                ? node.outcome.probability : 1;
+            var cumulative = uiState.tree.getCumulativeProbability(nodeId);
+
+            html += '<span class="ml-stop">';
+            html += '<button class="ml-card' + (isCurrent ? ' current' : '') +
+                (node.isImpossible ? ' impossible' : '') + '" data-node-id="' + nodeId + '">';
+            html += '<span class="ml-turn">T' + (node.state ? node.state.turnNumber : index);
+            if (cause) {
+                html += '<span class="cause-dot cause-' + cause.key + '"></span>' +
+                    '<span class="cause-txt-' + cause.key + '">' + escapeHtml(cause.label) + '</span>';
+            }
+            html += '</span>';
+            html += '<span class="ml-moves">' + escapeHtml(nodeActionSummary(node)) + '</span>';
+            html += '<span class="ml-prob">' + formatPct(prob) +
+                (index > 0 ? ' · line ' + formatPct(cumulative) : '') + '</span>';
+            html += '</button></span>';
+        });
+
+        // Where the plan continues past the node you are looking at
+        var currentNode = uiState.tree.getNode(uiState.tree.currentNodeId);
+        var forward = currentNode ? (currentNode.children || []) : [];
+        if (forward.length) {
+            html += '<span class="ml-link' + (forward.length > 1 ? ' forked' : '') + '">';
+            if (forward.length > 1) {
+                html += '<button class="ml-fork-badge" data-parent="' + currentNode.id +
+                    '" title="' + forward.length + ' continuations">' + forward.length + '</button>';
+            }
+            html += '</span>';
+            var next = uiState.tree.getNode(forward[0]);
+            html += '<span class="ml-stop"><button class="ml-card" data-node-id="' + forward[0] + '">' +
+                '<span class="ml-turn">next</span>' +
+                '<span class="ml-moves">' + escapeHtml(nodeActionSummary(next)) + '</span>' +
+                '<span class="ml-prob">' + formatPct(next.outcome ? next.outcome.probability : 1) + '</span>' +
+                '</button></span>';
+        }
+
+        $ribbon.html(html);
+        $('#mainline-alt-count').text(altAtCurrent);
+
+        // Keep the current stop in view
+        var $cur = $ribbon.find('.ml-card.current');
+        if ($cur.length) {
+            var offset = $cur.position();
+            if (offset) $ribbon.scrollLeft($ribbon.scrollLeft() + offset.left - 140);
+        }
+    }
+
+    /**
+     * The opponent's move distribution from the RnB AI engine, as
+     * [{ moveName, probability }] sorted most-likely first.
+     */
+    function computeAIDistribution() {
+        var node = uiState.tree && uiState.tree.getCurrentNode();
+        if (!node || !node.state) return null;
+        if (!window.calc || !window.calc.generateMoveDist) return null;
+
+        var state = node.state;
+        var ai = state.p2.active;
+        var player = state.p1.active;
+        if (!ai || !player) return null;
+
+        var aiMoveNames = (ai.moves || []).filter(function (m) {
+            return m && m !== '(No Move)';
+        });
+        if (!aiMoveNames.length) return null;
+
+        try {
+            var genNum = getGenNum();
+            var attacker = CalcIntegration.snapshotToPokemon(ai, genNum);
+            var defender = CalcIntegration.snapshotToPokemon(player, genNum);
+            if (!attacker || !defender) return null;
+
+            var field = window.createField ? window.createField() : new window.calc.Field();
+            var swapped = field.clone ? field.clone().swap() : field;
+
+            var playerMoveNames = (player.moves || []).filter(function (m) {
+                return m && m !== '(No Move)';
+            });
+
+            var aiMoves = aiMoveNames.map(function (n) {
+                return new window.calc.Move(genNum, n, {
+                    ability: attacker.ability, item: attacker.item, species: attacker.name
+                });
+            });
+            var playerMoves = (playerMoveNames.length ? playerMoveNames : aiMoveNames)
+                .map(function (n) {
+                    return new window.calc.Move(genNum, n, {
+                        ability: defender.ability, item: defender.item, species: defender.name
+                    });
+                });
+
+            // ai.ts reads the player ability off defender.moves[0]
+            attacker.moves = aiMoves;
+            defender.moves = playerMoves;
+
+            var playerResults = playerMoves.map(function (m) {
+                return window.calc.calculate(genNum, defender, attacker, m, field);
+            });
+            var aiResults = aiMoves.map(function (m) {
+                return window.calc.calculate(genNum, attacker, defender, m, swapped);
+            });
+
+            var p1Speed = player.getEffectiveSpeed(state.sides && state.sides.p1);
+            var p2Speed = ai.getEffectiveSpeed(state.sides && state.sides.p2);
+            var fastestSide = p2Speed >= p1Speed ? '1' : '0';
+
+            var raw = window.calc.generateMoveDist(
+                [playerResults, aiResults], fastestSide, collectAiOptions());
+            if (!raw || !raw.length) return null;
+
+            var out = [];
+            for (var i = 0; i < raw.length && i < aiMoveNames.length; i++) {
+                out.push({ moveName: aiMoveNames[i], probability: raw[i] || 0 });
+            }
+
+            // The AI does not click Protect twice in a row (a consecutive
+            // Protect fails in the engine too) — drop it from the odds when
+            // it protected last turn.
+            if (ai.hasVolatile && ai.hasVolatile('protectused')) {
+                var protectLike = ['Protect', 'Detect', 'Defend Order'];
+                var rest = out.filter(function (c) {
+                    return protectLike.indexOf(c.moveName) === -1;
+                });
+                if (rest.length) out = rest;
+            }
+
+            var total = out.reduce(function (a, c) { return a + c.probability; }, 0);
+            if (total > 0) out.forEach(function (c) { c.probability = c.probability / total; });
+
+            return out.sort(function (a, b) { return b.probability - a.probability; });
+        } catch (e) {
+            console.error('AI distribution failed:', e);
+            return null;
+        }
+    }
+
+    function formatPct(p) {
+        if (typeof p !== 'number' || isNaN(p)) return '—';
+        if (p >= 0.9995) return '100%';
+        if (p > 0 && p < 0.001) return '<0.1%';
+        return (p * 100).toFixed(1) + '%';
+    }
+
+    function escapeHtml(s) {
+        return String(s === undefined || s === null ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    /**
+     * Offer the sibling branches at a fork so the user can step into another
+     * line without hunting through a tree.
+     */
+    function showForkPicker(parentId, anchorEl) {
+        var parent = uiState.tree.getNode(parentId);
+        if (!parent) return;
+
+        var html = '<div class="fork-picker">';
+        (parent.children || []).forEach(function (childId) {
+            var child = uiState.tree.getNode(childId);
+            if (!child) return;
+            var cause = branchCauseOf(child);
+            var onPath = uiState.tree.getPathToNode(uiState.tree.currentNodeId).indexOf(childId) !== -1;
+            html += '<button class="fork-option' + (onPath ? ' on-path' : '') +
+                '" data-node-id="' + childId + '">' +
+                (cause ? '<span class="cause-dot cause-' + cause.key + '"></span>' : '') +
+                '<span class="fork-option-label">' +
+                escapeHtml(child.outcome ? child.outcome.description : nodeActionSummary(child)) +
+                '</span><span class="fork-option-pct">' +
+                formatPct(child.outcome ? child.outcome.probability : 1) + '</span></button>';
+        });
+        html += '</div>';
+
+        showPlannerPopover(html, anchorEl);
+    }
+
+    function showPlannerPopover(html, anchorEl) {
+        $('#planner-popover').remove();
+        var $pop = $('<div id="planner-popover" class="planner-popover"></div>').html(html);
+        $('body').append($pop);
+
+        var rect = anchorEl.getBoundingClientRect();
+        var top = rect.bottom + 6;
+        var left = Math.min(rect.left, window.innerWidth - $pop.outerWidth() - 12);
+        $pop.css({ top: top + 'px', left: Math.max(8, left) + 'px' });
+
+        setTimeout(function () {
+            $(document).one('click.plannerPopover', function () { $('#planner-popover').remove(); });
+        }, 0);
+    }
+
+
+    // =========================================================================
+    // READ-OUT RAIL
+    // =========================================================================
+    //
+    // Three questions in the order players ask them:
+    //   1. "This turn"        — can either side die right now, and to what
+    //   2. "At risk right now"— the same thing as a meter you can read in a glance
+    //   3. "How this ends"    — the forward projection, on two axes
+    // Everything is derived from the same roll distributions the branch engine
+    // uses, so a percentage here always agrees with the branches that follow.
+
+    function readoutDeps() {
+        return {
+            calc: window.calc,
+            CalcIntegration: CalcIntegration,
+            MoveDB: window.MoveDB,
+            Logic: BattlePlannerLogic,
+            gen: getGenNum(),
+            getField: function () {
+                return window.createField ? window.createField() : new window.calc.Field();
+            },
+            // The bundled calc exposes the AI engine; without it the projection
+            // falls back to a damage-greedy opponent and says so.
+            generateMoveDist: (window.calc && window.calc.generateMoveDist) ||
+                (window.generateMoveDist || null),
+            aiOptions: collectAiOptions()
+        };
+    }
+
+    /** AI toggles from the main calculator, so the projection predicts the same AI. */
+    function collectAiOptions() {
+        var opts = {};
+        try {
+            $('#aiOptions input[type=checkbox], .ai-option input[type=checkbox]').each(function () {
+                if (this.name) opts[this.name] = !!this.checked;
+            });
+        } catch (e) { /* the planner can open before those controls exist */ }
+        return opts;
+    }
+
+    function currentStateForReadout() {
+        var node = uiState.tree && uiState.tree.getCurrentNode();
+        return node ? node.state : null;
+    }
+
+    function renderReadout() {
+        var state = currentStateForReadout();
+        if (!state || !state.p1.active || !state.p2.active) {
+            $('#ro-now').html('<p class="ro-empty">Start a battle to see the read-out.</p>');
+            $('#ro-risk').empty();
+            $('#ro-projection').empty();
+            $('#ro-branches').empty();
+            return;
+        }
+
+        var deps = readoutDeps();
+        var read = null;
+        try {
+            read = window.BattlePlannerProjection.assessTurn(state, deps, {
+                selectedMove: uiState.p1Action ? uiState.p1Action.moveName : null
+            });
+        } catch (e) {
+            console.error('Read-out failed:', e);
+        }
+        if (!read) {
+            $('#ro-now').html('<p class="ro-empty">Could not read this position.</p>');
+            return;
+        }
+
+        renderRoNow(read, state);
+        renderRoRisk(read, state);
+        renderRoBranches(state);
+        renderRoProjectionPlaceholder();
+    }
+
+    // ---------- 1. This turn ----------
+    function renderRoNow(read, state) {
+        var you = read.you, foe = read.foe;
+        var html = '';
+
+        // Lead sentence: the single most useful fact about this turn
+        if (read.youCanKO >= 0.999) {
+            html += '<p class="ro-sentence"><b>' + escapeHtml(foe.name) + '</b> dies this turn to ' +
+                '<span class="ro-em-safe">' + escapeHtml(read.youCanKOWith) + '</span>.</p>';
+        } else if (read.youCanKO > 0) {
+            html += '<p class="ro-sentence">' + escapeHtml(read.youCanKOWith) + ' kills ' +
+                '<span class="ro-em-risk n">' + formatPct(read.youCanKO) + '</span> of the time.</p>';
+        } else {
+            html += '<p class="ro-sentence">Nothing you have kills <b>' + escapeHtml(foe.name) +
+                '</b> this turn.</p>';
+        }
+
+        // Order matters: if you kill first, their move never happens. Say so
+        // explicitly rather than reporting two contradictory deaths.
+        if (read.opponentActsChance <= 0.001) {
+            html += '<p class="ro-sentence"><span class="ro-em-safe">' + escapeHtml(foe.name) +
+                ' never gets to move</span> — you are faster and the kill is certain.</p>';
+        } else if (read.youMightDie >= 0.999) {
+            html += '<p class="ro-sentence"><span class="ro-em-ko">' + escapeHtml(you.name) +
+                ' dies</span> to ' + escapeHtml(read.youMightDieTo) + ' unless you switch.</p>';
+        } else if (read.youMightDie > 0) {
+            html += '<p class="ro-sentence">' + escapeHtml(you.name) + ' dies to ' +
+                escapeHtml(read.youMightDieTo) + ' <span class="ro-em-ko n">' +
+                formatPct(read.youMightDie) + '</span> of the time';
+            if (read.opponentActsChance < 0.999) {
+                html += ' <span style="opacity:.7">(' +
+                    formatPct(read.youMightDieUnconditional) + ' if it gets to move, and it moves ' +
+                    formatPct(read.opponentActsChance) + ' of the time)</span>';
+            }
+            html += '.</p>';
+        } else if (read.youMightDieToCrit > 0) {
+            html += '<p class="ro-sentence">' + escapeHtml(you.name) +
+                ' survives every normal roll, but a <span class="ro-em-risk">crit</span> kills — ' +
+                '<span class="n">' + formatPct(read.youMightDieToCrit) + '</span> overall.</p>';
+        } else {
+            html += '<p class="ro-sentence"><span class="ro-em-safe">' + escapeHtml(you.name) +
+                ' cannot die this turn</span>, crit included.</p>';
+        }
+
+        // Turn order, because it decides whether any of the above matters
+        html += '<div class="ro-kv"><span>Turn order</span><span>' +
+            (read.youMoveFirst === null ? 'speed tie'
+                : (read.youMoveFirst ? 'you first' : 'opponent first')) +
+            ' · ' + read.yourSpeed + ' vs ' + read.foeSpeed +
+            (read.trickRoom ? ' (TR)' : '') + '</span></div>';
+        html += '<div class="ro-kv"><span>Opponent gets to move</span><span>' +
+            formatPct(read.opponentActsChance) + '</span></div>';
+
+        $('#ro-now').html(html);
+    }
+
+    // ---------- 2. At risk right now ----------
+    function renderRoRisk(read, state) {
+        // Three mutually exclusive bands for THIS turn, from the same numbers as
+        // the branches: you die outright / a crit is what kills you / you are
+        // safe. youMightDieToCrit is an ABSOLUTE probability (it already
+        // includes the chance of critting and of connecting), so subtracting the
+        // ordinary KO chance leaves the extra risk the crit adds.
+        var dies = Math.max(0, Math.min(1, read.youMightDie));
+        var critOnly = Math.max(0, Math.min(1 - dies, read.youMightDieToCrit - dies));
+        var safe = Math.max(0, 1 - dies - critOnly);
+
+        var html = '<div class="ro-meter">';
+        if (safe > 0.001) {
+            html += '<span class="seg-safe" style="flex:' + (safe * 100).toFixed(2) + '">' +
+                (safe > 0.18 ? 'safe ' + formatPct(safe) : '') + '</span>';
+        }
+        if (critOnly > 0.001) {
+            html += '<span class="seg-risk" style="flex:' + (critOnly * 100).toFixed(2) + '">' +
+                (critOnly > 0.18 ? 'crit ' + formatPct(critOnly) : '') + '</span>';
+        }
+        if (dies > 0.001) {
+            html += '<span class="seg-ko" style="flex:' + (dies * 100).toFixed(2) + '">' +
+                (dies > 0.18 ? 'dies ' + formatPct(dies) : '') + '</span>';
+        }
+        if (safe <= 0.001 && critOnly <= 0.001 && dies <= 0.001) {
+            html += '<span class="seg-none" style="flex:1">no threat</span>';
+        }
+        html += '</div>';
+
+        html += '<div class="ro-legend">' +
+            '<span><i style="background:#00ba7c"></i>safe ' + formatPct(safe) + '</span>' +
+            '<span><i style="background:#ffad1f"></i>crit only ' + formatPct(critOnly) + '</span>' +
+            '<span><i style="background:#f4212e"></i>dies ' + formatPct(dies) + '</span>' +
+            '</div>';
+
+        // What is threatening, biggest first, with the roll spread behind it
+        var threats = (read.theirMoves || [])
+            .filter(function (m) { return m.maxPercent > 0 || m.koChance > 0; })
+            .sort(function (a, b) { return (b.koChance - a.koChance) || (b.maxPercent - a.maxPercent); })
+            .slice(0, 4);
+
+        if (threats.length) {
+            html += '<div style="margin-top:9px">';
+            threats.forEach(function (m) {
+                var cls = m.koChance >= 0.999 ? 'ro-em-ko' : (m.koChance > 0 ? 'ro-em-risk' : '');
+                html += '<div class="ro-kv"><span>' + escapeHtml(m.moveName) +
+                    (m.accuracy < 100 ? ' <span style="opacity:.6">' + m.accuracy + '%</span>' : '') +
+                    '</span><span class="' + cls + '">' +
+                    m.minPercent.toFixed(0) + '–' + m.maxPercent.toFixed(0) + '%' +
+                    (m.koChance > 0 ? ' · KO ' + formatPct(m.koChance) : '') +
+                    '</span></div>';
+            });
+            html += '</div>';
+        }
+
+        var incoming = incomingResidualDamage(state, 'p1');
+        if (incoming.total > 0) {
+            html += '<p class="ro-note">End of turn also costs ' +
+                '<span class="ro-em-risk n">' + incoming.total + ' HP</span> (' +
+                escapeHtml(incoming.sources.join(', ')) + ').</p>';
+        }
+
+        $('#ro-risk').html(html);
+    }
+
+    /** Residual damage the active Pokemon will take at end of turn. */
+    function incomingResidualDamage(state, side) {
+        var mon = state[side].active;
+        var out = { total: 0, sources: [] };
+        if (!mon) return out;
+
+        var code = window.BattlePlanner.normalizeStatusCode(mon.status);
+        var maxHP = mon.maxHP || 1;
+
+        if (code === 'psn') { out.total += Math.max(1, Math.floor(maxHP / 8)); out.sources.push('poison'); }
+        if (code === 'tox') {
+            var counter = mon.toxicCounter || 1;
+            out.total += Math.max(1, Math.floor(maxHP * counter / 16));
+            out.sources.push('toxic x' + counter);
+        }
+        if (code === 'brn') { out.total += Math.max(1, Math.floor(maxHP / 16)); out.sources.push('burn'); }
+
+        var weather = (state.field && state.field.weather ? state.field.weather : '').toLowerCase();
+        var types = mon.types || [];
+        if ((weather === 'sand' || weather === 'sandstorm') &&
+            !types.some(function (t) { return ['Ground', 'Rock', 'Steel'].indexOf(t) !== -1; })) {
+            out.total += Math.max(1, Math.floor(maxHP / 16)); out.sources.push('sandstorm');
+        }
+        if (weather === 'hail' && types.indexOf('Ice') === -1) {
+            out.total += Math.max(1, Math.floor(maxHP / 16)); out.sources.push('hail');
+        }
+        if (mon.volatiles && mon.volatiles.leechseed) {
+            out.total += Math.max(1, Math.floor(maxHP / 8)); out.sources.push('Leech Seed');
+        }
+        if (mon.volatiles && mon.volatiles.curse) {
+            out.total += Math.max(1, Math.floor(maxHP / 4)); out.sources.push('Curse');
+        }
+        return out;
+    }
+
+    // ---------- 3. Why this turn splits ----------
+    function renderRoBranches(state) {
+        var node = uiState.tree && uiState.tree.getCurrentNode();
+        var children = node ? (node.children || []).map(function (id) {
+            return uiState.tree.getNode(id);
+        }).filter(Boolean) : [];
+
+        if (!children.length) {
+            $('#ro-branches').html('<p class="ro-empty">Execute the turn to see how it splits.</p>');
+            return;
+        }
+        if (children.length === 1 && children[0].isTrivialBranch) {
+            $('#ro-branches').html('<p class="ro-note">This turn has only one outcome — every ' +
+                'damage roll leads to the same position, so it does not branch.</p>');
+            return;
+        }
+
+        var html = '';
+        children.forEach(function (child) {
+            var cause = branchCauseOf(child);
+            html += '<div class="ro-branch-row">' +
+                (cause ? '<span class="cause-dot cause-' + cause.key + '"></span>' : '') +
+                '<span>' + escapeHtml(child.outcome ? child.outcome.description : 'Outcome') + '</span>' +
+                '<span class="pct">' + formatPct(child.outcome ? child.outcome.probability : 0) + '</span>' +
+                '</div>';
+        });
+        $('#ro-branches').html(html);
+    }
+
+    // ---------- 4. How this ends (projection) ----------
+    function renderRoProjectionPlaceholder() {
+        if (uiState.lastProjection && uiState.lastProjectionNodeId === uiState.tree.currentNodeId) {
+            renderRoProjection(uiState.lastProjection);
+            return;
+        }
+        $('#ro-projection').html(
+            '<p class="ro-empty">Not simulated yet — press <b>run</b> to play the fight ' +
+            'out from here.</p>');
+    }
+
+    /**
+     * Roll the rest of the fight forward and show both axes: whether you win,
+     * and what it costs you. They come apart constantly, and in a run the second
+     * one is what you actually pay.
+     */
+    /**
+     * The live window into the simulation: which strategy tier is being
+     * tried, how deep it is, the best line so far and what the fight is
+     * projected to cost. Chunked simulation ticks update it between frames,
+     * so the page stays responsive. Class-based lookups on a stored root —
+     * the ids never leak into the template contract.
+     */
+    function openSimProgressModal() {
+        $('.sim-progress-backdrop').remove();
+        // Critical styles are INLINE: the stylesheet link carries no
+        // cache-busting hash, so a stale cached css must not be able to
+        // leave this popup unstyled (= invisible at the page bottom).
+        var $root = $(
+            '<div class="sim-progress-backdrop" style="position:fixed;top:0;left:0;' +
+            'right:0;bottom:0;z-index:2147483000;background:rgba(4,8,14,0.72);' +
+            'display:flex;align-items:center;justify-content:center;">' +
+            '<div class="sim-progress" style="background:#10161f;' +
+            'border:1px solid #2b3a4d;border-radius:10px;width:min(440px,92vw);' +
+            'padding:16px 18px;color:#dbe6f2;font-size:12px;' +
+            'box-shadow:0 16px 48px rgba(0,0,0,0.55);">' +
+            '<h3><span class="ro-spinner"></span>Playing the battle out\u2026</h3>' +
+            '<div class="sim-phase">Warming up\u2026</div>' +
+            '<div class="sim-stats"></div>' +
+            '<div class="sim-line"></div>' +
+            '<div class="sim-leads"></div>' +
+            '<div class="sim-actions">' +
+            '<button class="planner-btn sim-cancel">Cancel</button>' +
+            '</div></div></div>');
+        // Mount INSIDE the planner overlay when it is open: the planner is
+        // itself a fixed full-screen layer (z-index 9999+), and a sibling on
+        // <body> with a lower z-index paints invisibly behind it — which is
+        // exactly how this popup managed to never be seen.
+        var $host = $('#battle-planner');
+        ($host.length ? $host : $('body')).append($root);
+
+        var cancelHandlers = [];
+        $root.find('.sim-cancel').on('click', function () {
+            cancelHandlers.forEach(function (fn) { fn(); });
+        });
+
+        function stat(label, value) {
+            return '<div class="sim-stat"><span>' + label + '</span><b>' + value + '</b></div>';
+        }
+
+        return {
+            showRun: function (r) {
+                var phase = r.strategy
+                    ? 'Strategy ' + ((r.strategyTier || 0) + 1) + '/' +
+                      (r.strategyCount || 3) + ': <b>' + escapeHtml(r.strategy) + '</b>'
+                    : 'Simulating\u2026';
+                $root.find('.sim-phase').html(phase +
+                    ' \u2014 turn ' + r.turnsSimulated + '/' + r.horizon);
+
+                var decided = r.winProbability + r.lossProbability;
+                $root.find('.sim-stats').html(
+                    stat('lines', r.statesConsidered) +
+                    stat('decided', formatPct(decided)) +
+                    stat('winning', formatPct(r.winProbability)) +
+                    stat('cost so far', r.expectedPokemonLost.toFixed(2) + ' lost') +
+                    stat('team HP left', r.expectedTeamHPLeft !== undefined
+                        ? Math.round(r.expectedTeamHPLeft * 100) + '%' : '\u2014'));
+
+                if (r.traceTail && r.traceTail.length) {
+                    var rows = r.traceTail.map(function (t) {
+                        var line = 'T' + t.turn + ' \u00b7 ' + escapeHtml(t.you) +
+                            ': ' + escapeHtml(t.yourMove);
+                        if (t.after) {
+                            line += ' \u2192 ' + escapeHtml(t.after.foe) + ' ' +
+                                t.after.foeHP + ' HP';
+                        }
+                        return '<div class="sim-line-row">' + line + '</div>';
+                    }).join('');
+                    $root.find('.sim-line').html(
+                        '<h5>Current line</h5>' + rows);
+                }
+            },
+            showLeads: function (r) {
+                $root.find('.sim-phase').html('Comparing openers \u2014 ' +
+                    (r.leadIndex + 1) + '/' + r.leadCount + ': <b>' +
+                    escapeHtml(r.name) + '</b>');
+                if (r.rows && r.rows.length) {
+                    $root.find('.sim-leads').html('<h5>Openers so far</h5>' +
+                        r.rows.map(function (row) {
+                            return '<div class="sim-line-row">' + escapeHtml(row.name) +
+                                ' \u2014 ' + formatPct(row.winProbability) + ' win, ' +
+                                row.expectedPokemonLost.toFixed(2) + ' lost</div>';
+                        }).join(''));
+                }
+            },
+            onCancel: function (fn) { cancelHandlers.push(fn); },
+            close: function () { $root.remove(); }
+        };
+    }
+
+    function runProjection() {
+        var state = currentStateForReadout();
+        if (!state) return;
+        if (uiState.simHandle) return;   // one simulation at a time
+
+        var deps, dist, node;
+        try {
+            deps = readoutDeps();
+            deps.executeTurn = makeBranchingExecutor();
+            if (!deps.executeTurn) throw new Error('branching engine unavailable');
+
+            node = uiState.tree.getCurrentNode();
+            // The projection starts from EXACTLY where you are standing in
+            // the line. If this node has never been through a reconcile its
+            // distribution may be missing — derive it first rather than
+            // falling back to a stale point state.
+            if (!node.dist) {
+                reconcileWholeTree();
+                node = uiState.tree.getCurrentNode();
+            }
+            dist = node.dist || window.BattlePlannerBranching.StateDist.of(state, 1);
+        } catch (e) {
+            console.error('Projection failed:', e);
+            $('#ro-projection').html('<p class="ro-empty">Could not simulate from here.</p>');
+            return;
+        }
+
+        // Turn 0: the team is still yours to decide — so the projection
+        // SELECTS the best roster for THIS fight from everything you own
+        // (current team AND box, ranked against the enemy team), instead of
+        // planning around whatever happened to be pre-built.
+        var recruits = [];
+        var benched = [];
+        var plannedRoster = null;
+        if (((node.state && node.state.turnNumber) || 0) === 0 &&
+                uiState.p1Box && uiState.p1Box.length) {
+            try {
+                var roster = window.BattlePlannerProjection.selectBestRoster(
+                    node.state, uiState.p1Box, deps, 6);
+                if (roster.length) {
+                    var names = roster.map(function (e) { return e.snap.name; });
+                    var current = (node.state.p1.team || []).filter(Boolean)
+                        .map(function (m) { return m.name; });
+                    recruits = roster.filter(function (e) { return e.fromBox; })
+                        .map(function (e) { return e.snap.name; });
+                    benched = current.filter(function (n) {
+                        return names.indexOf(n) === -1;
+                    });
+                    if (recruits.length || benched.length) {
+                        plannedRoster = names;
+                        var aug = node.state.clone();
+                        aug.p1.team = roster.map(function (e) { return e.snap.clone(); });
+                        var leadIdx = names.indexOf(aug.p1.active ? aug.p1.active.name : '');
+                        if (leadIdx === -1) {
+                            aug.p1.active = aug.p1.team[0].clone();
+                            leadIdx = 0;
+                        }
+                        aug.p1.teamSlot = leadIdx;
+                        dist = window.BattlePlannerBranching.StateDist.of(aug, 1);
+                        // The lead comparison and team plan see the same roster
+                        node = {state: aug};
+                    }
+                }
+            } catch (e) {
+                console.error('Roster selection failed:', e);
+            }
+        }
+
+        $('#ro-projection').html('<p class="ro-empty"><span class="ro-spinner"></span>Simulating\u2026</p>');
+        var modal = openSimProgressModal();
+        var smart;
+        try {
+            smart = window.BattlePlannerProjection.createSmartProjection(deps);
+        } catch (e) {
+            modal.close();
+            console.error('Projection failed:', e);
+            $('#ro-projection').html('<p class="ro-empty">Could not simulate from here.</p>');
+            return;
+        }
+
+        function fail(e) {
+            console.error('Projection failed:', e);
+            uiState.simHandle = null;
+            modal.close();
+            $('#ro-projection').html('<p class="ro-empty">Could not simulate from here.</p>');
+        }
+
+        function deliver(report) {
+            uiState.simHandle = null;
+            modal.close();
+            if (!report) {   // cancelled before anything finished
+                renderRoProjectionPlaceholder();
+                return;
+            }
+            uiState.lastProjection = report;
+            uiState.lastProjectionNodeId = uiState.tree.currentNodeId;
+            renderRoProjection(report);
+        }
+
+        uiState.simHandle = smart.start(dist, {
+            // To the END of the battle: the simulation stops on its own the
+            // moment every line is decided; 30 is only a stall guard.
+            horizon: uiState.projectionHorizon || 30,
+            // Wide enough that coalescing is rare; the frontier folds rather
+            // than truncates, so nothing is silently lost.
+            beamWidth: uiState.projectionBeam || 96,
+            plannedP1: uiState.p1Action,
+            onProgress: function (r) { modal.showRun(r); },
+            onError: fail,
+            onDone: function (report) {
+                if (!report) { deliver(null); return; }
+                if (recruits.length) report.recruits = recruits;
+                if (benched.length) report.benched = benched;
+                if (plannedRoster) report.plannedRoster = plannedRoster;
+
+                // At turn 0 the team is still yours to arrange, so the
+                // projection also answers "who should open?" by simulating
+                // the fight once per healthy team member.
+                var turnNumber = (node.state && node.state.turnNumber) || 0;
+                var healthy = ((node.state && node.state.p1.team) || [])
+                    .filter(function (m) { return m && m.currentHP > 0; }).length;
+                if (turnNumber !== 0 || healthy <= 1) { deliver(report); return; }
+
+                var compare = window.BattlePlannerProjection.createLeadComparison(deps);
+                uiState.simHandle = compare.start(node.state, {
+                    // One full sim per team member: a slightly shorter guard
+                    // keeps six of them responsive
+                    horizon: uiState.projectionHorizon || 16,
+                    beamWidth: 24,
+                    onProgress: function (r) { modal.showLeads(r); },
+                    onError: function (e) {
+                        console.error('Lead comparison failed:', e);
+                        deliver(report);
+                    },
+                    onDone: function (leads) {
+                        // Partial rows still render if the user cancelled
+                        // mid-comparison — the main projection is done either way
+                        if (leads && leads.length) report.leads = leads;
+                        deliver(report);
+                    }
+                });
+            }
+        });
+        modal.onCancel(function () {
+            if (uiState.simHandle) uiState.simHandle.cancel();
+        });
+    }
+
+    function renderRoProjection(r) {
+        var html = '';
+
+        // Axis 1 — do you win the fight
+        html += '<div class="ro-meter">';
+        if (r.winProbability > 0.001) {
+            html += '<span class="seg-safe" style="flex:' + (r.winProbability * 100).toFixed(2) + '">' +
+                (r.winProbability > 0.18 ? 'win ' + formatPct(r.winProbability) : '') + '</span>';
+        }
+        if (r.unresolvedProbability > 0.001) {
+            html += '<span class="seg-none" style="flex:' + (r.unresolvedProbability * 100).toFixed(2) + '">' +
+                (r.unresolvedProbability > 0.18 ? 'open ' + formatPct(r.unresolvedProbability) : '') + '</span>';
+        }
+        if (r.lossProbability > 0.001) {
+            html += '<span class="seg-ko" style="flex:' + (r.lossProbability * 100).toFixed(2) + '">' +
+                (r.lossProbability > 0.18 ? 'lose ' + formatPct(r.lossProbability) : '') + '</span>';
+        }
+        html += '</div>';
+        html += '<div class="ro-legend">' +
+            '<span><i style="background:#00ba7c"></i>win ' + formatPct(r.winProbability) + '</span>' +
+            '<span><i style="background:#26313d"></i>unresolved ' + formatPct(r.unresolvedProbability) + '</span>' +
+            '<span><i style="background:#f4212e"></i>lose ' + formatPct(r.lossProbability) + '</span>' +
+            '</div>';
+
+        // Which strategy tier produced this answer — "pure offense" means
+        // the simple plan already suffices; no need for clever play.
+        if (r.strategy) {
+            html += '<div class="ro-kv" style="margin-top:8px"><span>Strategy</span><span>' +
+                escapeHtml(r.strategy) + '</span></div>';
+        }
+
+        // The projected TEAM PLAN: who leads, who gets pulled in when, what
+        // each one handles — the "best answer now, next answer when needed"
+        // human algorithm, extracted from the simulated line.
+        if (r.teamPlan && r.teamPlan.length) {
+            html += '<div class="ro-team-plan"><h5 class="ro-sub-head">Team plan (as simulated)</h5>';
+            r.teamPlan.forEach(function (seg, i) {
+                var icon = seg.exit === 'fainted' ? '\ud83d\udc80'
+                    : (seg.exit === 'switched out' ? '\u21c4' : '\u2713');
+                var outcome = seg.exit === 'standing'
+                    ? 'stands at ' + seg.endHP + '/' + seg.maxHP
+                    : seg.exit + (seg.exit === 'switched out'
+                        ? ' at ' + seg.endHP + '/' + seg.maxHP : '');
+                var fromBox = r.recruits && r.recruits.indexOf(seg.name) !== -1;
+                html += '<div class="ro-plan-row">' +
+                    '<span class="ro-plan-idx">' + (i + 1) + '.</span> ' +
+                    '<b>' + escapeHtml(seg.name) + '</b>' +
+                    (fromBox ? ' <span class="ro-plan-box">(box)</span>' : '') +
+                    '<span class="ro-plan-turns"> T' + seg.fromTurn +
+                    (seg.toTurn !== seg.fromTurn ? '\u2013' + seg.toTurn : '') + '</span>' +
+                    ' vs ' + seg.foes.map(escapeHtml).join(', ') +
+                    ' <span class="ro-plan-exit">' + icon + ' ' + escapeHtml(outcome) +
+                    '</span></div>';
+            });
+            html += '</div>';
+        }
+        if (r.plannedRoster && ((r.recruits && r.recruits.length) ||
+                (r.benched && r.benched.length))) {
+            html += '<p class="ro-note">Planned with the best roster for this fight';
+            if (r.recruits && r.recruits.length) {
+                html += ' — from your box: <b>' +
+                    r.recruits.map(escapeHtml).join(', ') + '</b>';
+            }
+            if (r.benched && r.benched.length) {
+                html += ' — benched: <b>' + r.benched.map(escapeHtml).join(', ') + '</b>';
+            }
+            html += '. <button class="ro-adopt-team">Adopt this team</button></p>';
+        }
+
+        // Axis 2 — what it costs. Separate on purpose: a certain win that
+        // certainly costs a team member is not good news in a run.
+        html += '<div class="ro-kv big" style="margin-top:12px"><span>Pokemon lost</span><span>' +
+            r.expectedPokemonLost.toFixed(2) + '</span></div>';
+        html += '<div class="ro-kv"><span>Lose at least one</span><span class="' +
+            (r.probabilityOfLosingAny > 0.5 ? 'ro-em-ko' : (r.probabilityOfLosingAny > 0.1 ? 'ro-em-risk' : 'ro-em-safe')) +
+            '">' + formatPct(r.probabilityOfLosingAny) + '</span></div>';
+        if (r.expectedTeamHPLeft !== undefined) {
+            html += '<div class="ro-kv"><span>Team HP after</span><span>' +
+                Math.round(r.expectedTeamHPLeft * 100) + '%</span></div>';
+        }
+
+        if (r.lossDistribution && r.lossDistribution.length) {
+            html += '<div style="margin-top:8px">';
+            r.lossDistribution.forEach(function (d) {
+                if (d.probability < 0.001) return;
+                var cls = d.pokemonLost === 0 ? 'ro-loss-0' : (d.pokemonLost === 1 ? 'ro-loss-1' : 'ro-loss-n');
+                html += '<div class="ro-loss-row ' + cls + '">' +
+                    '<span>' + (d.pokemonLost === 0 ? 'none' :
+                        d.pokemonLost + (d.pokemonLost === 1 ? ' lost' : ' lost')) + '</span>' +
+                    '<span class="ro-loss-bar"><i style="width:' +
+                    Math.max(1, d.probability * 100).toFixed(1) + '%"></i></span>' +
+                    '<span>' + formatPct(d.probability) + '</span></div>';
+            });
+            html += '</div>';
+        }
+
+        // Which opener wins the most while losing the least — only offered at
+        // turn 0, where the team is still yours to arrange.
+        if (r.leads && r.leads.length > 1) {
+            var bestLead = r.leads[0];
+            html += '<div class="ro-lead-cmp">';
+            html += '<h5 class="ro-sub-head">Best opener</h5>';
+            r.leads.forEach(function (lead) {
+                var isBest = lead === bestLead;
+                html += '<div class="ro-lead-row' + (isBest ? ' best' : '') +
+                    (lead.isCurrent ? ' current' : '') + '">' +
+                    '<span class="ro-lead-name">' + (isBest ? '★ ' : '') +
+                    escapeHtml(lead.name) + (lead.isCurrent ? ' (now)' : '') + '</span>' +
+                    '<span class="ro-lead-win">' + formatPct(lead.winProbability) + ' win</span>' +
+                    '<span class="ro-lead-loss">' + lead.expectedPokemonLost.toFixed(2) +
+                    ' lost</span>' +
+                    (lead.isCurrent ? ''
+                        : '<button class="ro-lead-use" data-slot="' + lead.slot +
+                          '" title="Restart the battle with this Pokemon leading">use</button>') +
+                    '</div>';
+            });
+            if (!bestLead.isCurrent) {
+                html += '<p class="ro-note">Leading with <b>' + escapeHtml(bestLead.name) +
+                    '</b> projects better than the current lead.</p>';
+            }
+            html += '</div>';
+        }
+
+        // The simulated line, turn by turn — what actually HAPPENED, not just
+        // what was picked: turn order, resulting HP, stat and status changes
+        // (a Low Sweep Spe drop is why the order can flip mid-fight!), faints
+        // and replacements, and how each turn can split.
+        if (r.trace && r.trace.length) {
+            html += '<details class="ro-trace" open><summary>What it simulated</summary>';
+            html += '<div class="ro-apply-wrap"><button class="planner-btn ro-apply-line" ' +
+                'title="Plays the winning strategy forward from the current state, ' +
+                'turn by turn, re-deciding from whatever actually happens — it cannot ' +
+                'diverge from reality. Pauses at replacements so you can pick.">' +
+                'Play this strategy into the planner</button></div>';
+            r.trace.forEach(function (t) {
+                var after = t.after || {};
+                var youFirst = t.firstMover !== 'p2';
+
+                html += '<div class="ro-trace-turn">' +
+                    '<span class="ro-trace-t">T' + t.turn +
+                    (t.lineProbability !== undefined
+                        ? '<em>' + formatPct(t.lineProbability) + '</em>' : '') +
+                    '</span>' +
+                    '<span class="ro-trace-body">';
+
+                function actorLine(isYou) {
+                    var name = isYou ? t.you : t.foe;
+                    var move = isYou ? t.yourMove : t.foeMove;
+                    var hp = isYou ? t.yourHP : t.foeHP;
+                    var maxHP = isYou ? t.yourMaxHP : t.foeMaxHP;
+                    var hpAfter = isYou ? after.yourHP : after.foeHP;
+                    var changes = isYou ? t.youChanges : t.foeChanges;
+                    var replaced = isYou ? t.youReplaced : t.foeReplaced;
+
+                    var line = '<span class="ro-trace-actor' + (isYou ? ' you' : ' them') + '">' +
+                        escapeHtml(name) + ' <b>' + escapeHtml(move) + '</b> ';
+                    if (hpAfter !== undefined && (!replaced || replaced.fainted !== name)) {
+                        line += '<span class="n">' + hp + '→' + hpAfter +
+                            (maxHP ? '/' + maxHP : '') + '</span>';
+                    } else {
+                        line += '<span class="n">' + hp + (maxHP ? '/' + maxHP : '') + '</span>';
+                    }
+                    if (changes) {
+                        line += ' <span class="ro-trace-chg">' + escapeHtml(changes) + '</span>';
+                    }
+                    line += '</span>';
+                    if (replaced) {
+                        line += replaced.voluntary
+                            ? '<span class="ro-trace-switch">⇄ ' + escapeHtml(replaced.fainted) +
+                              ' switched out → ' + escapeHtml(replaced.sentIn) + ' in</span>'
+                            : '<span class="ro-trace-faint">💀 ' + escapeHtml(replaced.fainted) +
+                              ' fainted → ' + escapeHtml(replaced.sentIn) + ' sent in</span>';
+                    }
+                    return line;
+                }
+
+                // Drawn in the order they actually act
+                if (youFirst) {
+                    html += actorLine(true) + actorLine(false);
+                } else {
+                    html += actorLine(false) + actorLine(true);
+                }
+
+                if (t.foeAlternatives) {
+                    html += '<span class="ro-trace-alt">AI: ' +
+                        escapeHtml(t.foeAlternatives) + '</span>';
+                }
+
+                // Events the executor recorded (protect, speed ties, berries…)
+                (t.events || []).forEach(function (ev) {
+                    var text = String(ev);
+                    var colon = text.indexOf(':');
+                    if (colon !== -1) text = text.slice(colon + 1);
+                    if (/^p[12] /.test(text)) return; // internal phrasing
+                    html += '<span class="ro-trace-ev">' + escapeHtml(text) + '</span>';
+                });
+
+                // How the turn splits, so a 70/30 kill is never presented as
+                // a certainty
+                (t.branches || []).forEach(function (b) {
+                    html += '<span class="ro-trace-branch">' +
+                        escapeHtml(b.label) + ' <span class="n">' +
+                        formatPct(b.probability) + '</span></span>';
+                });
+
+                html += '</span></div>';
+
+                // The beam folded the followed line away: the story continues
+                // from a near-identical (approximated) or the likeliest
+                // remaining (broken) line. Without this divider the trace
+                // read as nonsense — Pokemon fainting twice, HP jumping back.
+                if (t.lineageApproximated || t.lineageBroken) {
+                    html += '<div class="ro-trace-splice">\u2248 the followed line was ' +
+                        (t.lineageApproximated
+                            ? 'folded into a near-identical one'
+                            : 'lost to folding; continuing from the likeliest line') +
+                        ' \u2014 HP may jump here</div>';
+                }
+            });
+            html += '</details>';
+        }
+
+        html += '<p class="ro-note">Simulated ' + r.turnsSimulated + ' of ' + r.horizon +
+            ' turns · ' + r.statesConsidered + ' positions · your moves from a ' +
+            'pivot-aware policy, the opponent moves from the AI engine.';
+        if (r.approximatedMass > 0.01) {
+            html += ' <span class="ro-warn">' + formatPct(r.approximatedMass) +
+                ' of the mass was folded onto near-identical positions to keep this fast; ' +
+                'the totals still include it.</span>';
+        }
+        if (r.truncatedMass > 0.0005) {
+            html += ' <span class="ro-warn">' + formatPct(r.truncatedMass) +
+                ' could not be modelled.</span>';
+        }
+        html += '</p>';
+
+        $('#ro-projection').html(html);
     }
 
     window.BattlePlannerUI = {
@@ -7402,6 +8596,11 @@
         getTree: function () { return uiState.tree; },
         isVisible: function () { return uiState.isVisible; },
         recheckBranches: recheckBranches,
+        renderMainlineRibbon: renderMainlineRibbon,
+        renderReadout: renderReadout,
+        runProjection: runProjection,
+        _uiState: function () { return uiState; },
+        branchCauseOf: branchCauseOf,
         analyzeRelevance: analyzeRelevance,
         makeBranchingExecutor: makeBranchingExecutor
     };

@@ -1904,7 +1904,7 @@ describe('applyEndOfTurnEffects - Flame Orb / Toxic Orb', () => {
   // so they only ever fired for tests that hand-set status to an empty string.
   test('Flame Orb burns a healthy Pokemon', () => {
     const state = makeState(
-      { currentHP: 300, maxHP: 300, item: 'Flame Orb', status: 'Healthy' },
+      { currentHP: 300, maxHP: 300, item: 'Flame Orb', status: 'Healthy', types: ['Normal'] },
       null
     );
     const effects = Logic.applyEndOfTurnEffects(state, 8);
@@ -1914,7 +1914,7 @@ describe('applyEndOfTurnEffects - Flame Orb / Toxic Orb', () => {
 
   test('Flame Orb also fires when status is the empty-string form', () => {
     const state = makeState(
-      { currentHP: 300, maxHP: 300, item: 'Flame Orb', status: '' },
+      { currentHP: 300, maxHP: 300, item: 'Flame Orb', status: '', types: ['Normal'] },
       null
     );
     Logic.applyEndOfTurnEffects(state, 8);
@@ -1952,7 +1952,7 @@ describe('applyEndOfTurnEffects - Flame Orb / Toxic Orb', () => {
 
   test('Flame Orb does not activate on fainted Pokemon', () => {
     const state = makeState(
-      { currentHP: 0, maxHP: 300, item: 'Flame Orb', status: 'Healthy' },
+      { currentHP: 0, maxHP: 300, item: 'Flame Orb', status: 'Healthy', types: ['Normal'] },
       null
     );
     Logic.applyEndOfTurnEffects(state, 8);
@@ -1984,7 +1984,8 @@ describe('applyEndOfTurnEffects - Pinch berries', () => {
         null
       );
       const effects = Logic.applyEndOfTurnEffects(state, 3);
-      const expectedHeal = Math.floor(300 / 3); // 100
+      // RnB: confuse-inducing berries restore HALF max HP at 1/4, not a third
+      const expectedHeal = Math.floor(300 / 2); // 150
       expect(state.p1.active.currentHP).toBe(74 + expectedHeal);
       expect(state.p1.active.item).toBe('');
       expect(effects).toContainEqual(expect.stringContaining(berry));
@@ -2009,7 +2010,7 @@ describe('applyEndOfTurnEffects - Pinch berries', () => {
       null
     );
     const effects = Logic.applyEndOfTurnEffects(state, 3);
-    expect(state.p1.active.currentHP).toBe(75 + Math.floor(300 / 3));
+    expect(state.p1.active.currentHP).toBe(75 + Math.floor(300 / 2));
     expect(state.p1.active.item).toBe('');
     expect(effects).toContainEqual(expect.stringContaining('Figy Berry'));
   });
@@ -2022,7 +2023,7 @@ describe('applyEndOfTurnEffects - Pinch berries', () => {
       null
     );
     Logic.applyEndOfTurnEffects(state, 3);
-    expect(state.p1.active.currentHP).toBe(70);
+    expect(state.p1.active.currentHP).toBe(90);
   });
 
   test('Pinch berry consumed on fainted Pokemon does not trigger', () => {
@@ -2071,9 +2072,9 @@ describe('simulateHPAfterDamage - Focus Band', () => {
 describe('simulateHPAfterDamage - Pinch berries', () => {
   test('Figy Berry triggers at ≤25% HP after damage', () => {
     // 400 maxHP, take 350 damage: 50 HP left = 12.5%, trigger berry
-    // heal = floor(400/3) = 133
+    // RnB heals HALF: floor(400/2) = 200
     const result = Logic.simulateHPAfterDamage(400, 400, 350, 'Figy Berry');
-    expect(result.hp).toBe(50 + 133);
+    expect(result.hp).toBe(50 + 200);
     expect(result.itemConsumed).toBe(true);
   });
 
@@ -2087,7 +2088,7 @@ describe('simulateHPAfterDamage - Pinch berries', () => {
   test('Mago Berry triggers at exactly 25% HP', () => {
     // 400 maxHP, take 300 damage: 100 HP left = 25%, trigger
     const result = Logic.simulateHPAfterDamage(400, 400, 300, 'Mago Berry');
-    expect(result.hp).toBe(100 + Math.floor(400 / 3));
+    expect(result.hp).toBe(100 + Math.floor(400 / 2));
     expect(result.itemConsumed).toBe(true);
   });
 
@@ -2100,9 +2101,9 @@ describe('simulateHPAfterDamage - Pinch berries', () => {
 
   test('Aguav Berry does not overheal', () => {
     // 120 maxHP, currently at 120, take 100: 20 HP = 16.7%, trigger
-    // heal = floor(120/3) = 40, result = min(120, 20+40) = 60
+    // RnB heals HALF: floor(120/2) = 60, result = min(120, 20+60) = 80
     const result = Logic.simulateHPAfterDamage(120, 120, 100, 'Aguav Berry');
-    expect(result.hp).toBe(60);
+    expect(result.hp).toBe(80);
     expect(result.itemConsumed).toBe(true);
   });
 });

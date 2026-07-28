@@ -166,6 +166,7 @@
                         <span class="planner-separator">|</span>
                         <button class="planner-btn planner-btn-action" id="planner-select-trainer" title="Select Opponent Trainer">Trainers</button>
                         <button class="planner-btn planner-btn-action" id="planner-new" title="Reset Battle - Clears timeline only">Reset</button>
+                        <button class="planner-btn planner-btn-action" id="planner-carry" title="Back-to-back fight: carry this team's damage, status and used items into the next battle">Carry →</button>
                         <button class="planner-btn planner-btn-action" id="planner-import" title="Import State">Import</button>
                         <button class="planner-btn planner-btn-action" id="planner-export" title="Export Plan">Export</button>
                         <button class="planner-btn planner-btn-action" id="planner-script" title="Battle Script - Play through your plan">Script</button>
@@ -175,13 +176,31 @@
                 </div>
                 
                 <div class="planner-body">
-                    <!-- Timeline Tree Panel -->
-                    <div class="planner-panel planner-tree-panel">
-                        <div class="panel-header">
-                            <span class="panel-title">TIMELINE</span>
+                  <div class="planner-main">
+                    <!-- ============================================
+                         MAINLINE RIBBON
+                         The plan reads left to right as the line you are
+                         currently standing in. Forks are a badge on the
+                         connector, not an indent, so depth never costs width.
+                         ============================================ -->
+                    <div class="mainline" id="mainline">
+                        <div class="mainline-scroll" id="mainline-ribbon"></div>
+                        <div class="mainline-tools">
+                            <button class="mainline-btn" id="mainline-alt" title="Other branches at this point">
+                                <span id="mainline-alt-count">0</span> alt
+                            </button>
+                            <button class="mainline-btn" id="mainline-all-lines" title="Show every line">Lines</button>
+                        </div>
+                    </div>
+
+                    <!-- Full tree, kept as a drawer so nothing is lost -->
+                    <div class="lines-drawer" id="lines-drawer" style="display:none;">
+                        <div class="lines-drawer-head">
+                            <span class="panel-title">ALL LINES</span>
                             <div class="panel-actions">
                                 <button class="panel-btn" id="tree-expand-all" title="Expand All">▼</button>
                                 <button class="panel-btn" id="tree-collapse-all" title="Collapse All">▶</button>
+                                <button class="panel-btn" id="lines-drawer-close" title="Close">✕</button>
                             </div>
                         </div>
                         <div class="panel-content" id="tree-container">
@@ -198,7 +217,7 @@
                             </div>
                         </div>
                     </div>
-                    
+
                     <!-- Round Stage Panel -->
                     <div class="planner-panel planner-stage-panel">
                         <div class="panel-header">
@@ -487,15 +506,51 @@
                         </div>
                     </div>
                     
-                    <!-- State Inspector Panel -->
+                  </div><!-- /.planner-main -->
+
+                    <!-- ============================================
+                         READ-OUT RAIL
+                         Three questions, in the order you ask them:
+                           1. What happens THIS turn?
+                           2. How does the whole fight end from here?
+                           3. What is actually at risk right now?
+                         ============================================ -->
                     <div class="planner-panel planner-inspector-panel">
                         <div class="panel-header">
-                            <span class="panel-title">INSPECTOR</span>
+                            <span class="panel-title">READ-OUT</span>
                             <div class="panel-actions">
+                                <button class="panel-btn" id="readout-refresh" title="Recalculate">↻</button>
                                 <button class="panel-btn panel-collapse-btn" id="inspector-collapse" title="Collapse">◀</button>
                             </div>
                         </div>
-                        <div class="panel-content" id="inspector-container">
+
+                        <div class="readout-scroll">
+                            <section class="ro-block" id="ro-now-block">
+                                <h4 class="ro-head">This turn</h4>
+                                <div id="ro-now"></div>
+                            </section>
+
+                            <section class="ro-block" id="ro-risk-block">
+                                <h4 class="ro-head">At risk right now</h4>
+                                <div id="ro-risk"></div>
+                            </section>
+
+                            <section class="ro-block" id="ro-projection-block">
+                                <h4 class="ro-head">
+                                    How this ends
+                                    <button class="ro-mini-btn" id="ro-project-run" title="Simulate from here">run</button>
+                                </h4>
+                                <div id="ro-projection"></div>
+                            </section>
+
+                            <section class="ro-block" id="ro-branch-block">
+                                <h4 class="ro-head">Why this turn splits</h4>
+                                <div id="ro-branches"></div>
+                            </section>
+
+                            <details class="ro-details">
+                                <summary>Node details</summary>
+                                <div id="inspector-container">
                             <div class="inspector-section">
                                 <h4>Node Info</h4>
                                 <div class="inspector-grid">
@@ -551,11 +606,13 @@
                                     Delete Branch
                                 </button>
                             </div>
-                        </div>
-                    </div>
-                </div>
+                                </div><!-- /#inspector-container -->
+                            </details>
+                        </div><!-- /.readout-scroll -->
+                    </div><!-- /.planner-inspector-panel -->
+                </div><!-- /.planner-body -->
             </div>
-            
+
             <!-- Help Modal -->
             <div id="planner-help-modal" class="planner-modal" style="display: none;">
                 <div class="modal-overlay"></div>
