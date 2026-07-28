@@ -151,7 +151,7 @@ function readSubStructure(OTID, personV, start, bytes){
 	mon.pokerus = ss3[0] & 0xFF
 	mon.metLocation = (ss3[0] >> 8) & 0xFF
 
-	flags = ss3[0] >> 16
+	var flags = ss3[0] >> 16
 	mon.metLevel = flags & 0x7F
 	mon.metGame = (flags >> 7) & 0xF
 	mon.pokeball = (flags >> 11) & 0xF
@@ -276,7 +276,7 @@ function getRunBUNlevel(exp, species){
 }
 
 function getRUNBUNAbility(mon){
-    current = RUNBUN_ABI[mon.species + 1][mon.altAbility]
+    var current = RUNBUN_ABI[mon.species + 1][mon.altAbility]
     if (current == "None") {
         current = RUNBUN_ABI[mon.species + 1][0]
     }
@@ -491,7 +491,7 @@ function parseFileGen3(file){
         }
     }
     reader.readAsArrayBuffer(file);
-};
+}
 
 function gen3_loadsave (){
     // Create UI elements
@@ -547,4 +547,4 @@ function gen3_loadsave (){
              }
         });
     }
-};
+}

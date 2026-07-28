@@ -7492,6 +7492,12 @@ delete SM['Pikachu-Pop-Star'];
 delete SM['Pikachu-Libre'];
 
 const SS_PATCH: {[name: string]: DeepPartial<SpeciesData>} = {
+  // RnB runs on gen 8 mechanics but adopts the Gen 9 stat rebalances. Without
+  // this, the calculator computed damage from pre-nerf stats while the UI (fed
+  // from rbdex/pokedex.js, a dump of the ROM's data) displayed the post-nerf
+  // ones. Keep in sync with src/js/data/rbdex/pokedex.js; data.test.ts enforces
+  // it. The Zacian/Zamazenta entries below carry the same rebalance inline.
+  Cresselia: {bs: {df: 110, sd: 120}},
   'Aegislash-Blade': {bs: {at: 140, sa: 140}},
   'Aegislash-Both': {bs: {at: 140, df: 140, sa: 140, sd: 140}},
   'Aegislash-Shield': {bs: {df: 140, sd: 140}},
@@ -8680,7 +8686,8 @@ const SS_PATCH: {[name: string]: DeepPartial<SpeciesData>} = {
   },
   Zacian: {
     types: ['Fairy'],
-    bs: {hp: 92, at: 130, df: 115, sa: 80, sd: 115, sp: 138},
+    // RnB uses the Gen 9 Attack rebalance (130 -> 120)
+    bs: {hp: 92, at: 120, df: 115, sa: 80, sd: 115, sp: 138},
     weightkg: 110,
     abilities: {0: 'Intrepid Sword'},
     gender: 'N',
@@ -8688,7 +8695,8 @@ const SS_PATCH: {[name: string]: DeepPartial<SpeciesData>} = {
   },
   'Zacian-Crowned': {
     types: ['Fairy', 'Steel'],
-    bs: {hp: 92, at: 170, df: 115, sa: 80, sd: 115, sp: 148},
+    // RnB uses the Gen 9 Attack rebalance (170 -> 150)
+    bs: {hp: 92, at: 150, df: 115, sa: 80, sd: 115, sp: 148},
     weightkg: 355,
     abilities: {0: 'Intrepid Sword'},
     baseSpecies: 'Zacian',
@@ -8696,7 +8704,8 @@ const SS_PATCH: {[name: string]: DeepPartial<SpeciesData>} = {
   },
   Zamazenta: {
     types: ['Fighting'],
-    bs: {hp: 92, at: 130, df: 115, sa: 80, sd: 115, sp: 138},
+    // RnB uses the Gen 9 Attack rebalance (130 -> 120)
+    bs: {hp: 92, at: 120, df: 115, sa: 80, sd: 115, sp: 138},
     weightkg: 210,
     abilities: {0: 'Dauntless Shield'},
     gender: 'N',
@@ -8704,7 +8713,8 @@ const SS_PATCH: {[name: string]: DeepPartial<SpeciesData>} = {
   },
   'Zamazenta-Crowned': {
     types: ['Fighting', 'Steel'],
-    bs: {hp: 92, at: 130, df: 145, sa: 80, sd: 145, sp: 128},
+    // RnB uses the Gen 9 rebalance (Atk 130->120, Def/SpD 145->140)
+    bs: {hp: 92, at: 120, df: 140, sa: 80, sd: 140, sp: 128},
     weightkg: 785,
     abilities: {0: 'Dauntless Shield'},
     baseSpecies: 'Zamazenta',
@@ -8863,7 +8873,9 @@ const PLA_PATCH: {[name: string]: DeepPartial<SpeciesData>} = {
   },
   Kleavor: {
     types: ['Bug', 'Rock'],
-    bs: {hp: 70, at: 130, df: 95, sa: 45, sd: 75, sp: 85},
+    // 135/70, matching rbdex/pokedex.js and the actual species stats; this
+    // table previously carried 130/75, which agreed with no source.
+    bs: {hp: 70, at: 135, df: 95, sa: 45, sd: 70, sp: 85},
     weightkg: 89,
     abilities: {0: 'Swarm'},
   },
@@ -8971,7 +8983,152 @@ const PLA_PATCH: {[name: string]: DeepPartial<SpeciesData>} = {
 };
 
 
-const SS: {[name: string]: SpeciesData} = extend(true, {}, SM, SS_PATCH, PLA_PATCH);
+// Run and Bun reassigns the primary ability of many species. The engine's
+// tables carry the vanilla Smogon ability, which is what the species dropdown
+// defaults to, so selecting (say) Clefable used to default to Cute Charm when
+// the ROM actually gives it Unaware. rbdex/pokedex.js is a dump of the ROM's
+// data and is authoritative; this patch is applied LAST so it also wins over
+// PLA_PATCH. Generated from the two sources; data.test.ts keeps it honest.
+const RNB_ABILITY_PATCH: {[name: string]: DeepPartial<SpeciesData>} = {
+  'Sandshrew-Alola': {abilities: {0: 'Slush Rush'}},
+  'Sandslash-Alola': {abilities: {0: 'Slush Rush'}},
+  Clefairy: {abilities: {0: 'Friend Guard'}},
+  Clefable: {abilities: {0: 'Unaware'}},
+  Diglett: {abilities: {0: 'Arena Trap'}},
+  Dugtrio: {abilities: {0: 'Arena Trap'}},
+  'Meowth-Galar': {abilities: {0: 'Run Away'}},
+  Psyduck: {abilities: {0: 'Swift Swim'}},
+  Golduck: {abilities: {0: 'Swift Swim'}},
+  Ponyta: {abilities: {0: 'Flame Body'}},
+  Rapidash: {abilities: {0: 'Flame Body'}},
+  'Farfetch’d-Galar': {abilities: {0: 'Inner Focus'}},
+  Grimer: {abilities: {0: 'Poison Touch'}},
+  Muk: {abilities: {0: 'Poison Touch'}},
+  Krabby: {abilities: {0: 'Sheer Force'}},
+  Kingler: {abilities: {0: 'Sheer Force'}},
+  'Voltorb-Hisui': {abilities: {0: 'Aftermath'}},
+  'Electrode-Hisui': {abilities: {0: 'Aftermath'}},
+  'Exeggutor-Alola': {abilities: {0: 'Harvest'}},
+  Hitmonchan: {abilities: {0: 'Inner Focus'}},
+  Rhyhorn: {abilities: {0: 'Reckless'}},
+  Rhydon: {abilities: {0: 'Reckless'}},
+  Staryu: {abilities: {0: 'Natural Cure'}},
+  Starmie: {abilities: {0: 'Natural Cure'}},
+  Electabuzz: {abilities: {0: 'Vital Spirit'}},
+  Ledyba: {abilities: {0: 'Rattled'}},
+  Ledian: {abilities: {0: 'Rattled'}},
+  Cleffa: {abilities: {0: 'Friend Guard'}},
+  Togepi: {abilities: {0: 'Super Luck'}},
+  Togetic: {abilities: {0: 'Super Luck'}},
+  Yanma: {abilities: {0: 'Compound Eyes'}},
+  Qwilfish: {abilities: {0: 'Intimidate'}},
+  'Qwilfish-Hisui': {abilities: {0: 'Intimidate'}},
+  Teddiursa: {abilities: {0: 'Quick Feet'}},
+  Phanpy: {abilities: {0: 'Cute Charm'}},
+  Elekid: {abilities: {0: 'Vital Spirit'}},
+  Tyranitar: {abilities: {0: 'Unnerve'}},
+  'Zigzagoon-Galar': {abilities: {0: 'Gluttony'}},
+  'Linoone-Galar': {abilities: {0: 'Gluttony'}},
+  Nosepass: {abilities: {0: 'Magnet Pull'}},
+  Skitty: {abilities: {0: 'Normalize'}},
+  Delcatty: {abilities: {0: 'Normalize'}},
+  Aron: {abilities: {0: 'Heavy Metal'}},
+  Lairon: {abilities: {0: 'Heavy Metal'}},
+  Aggron: {abilities: {0: 'Heavy Metal'}},
+  Torkoal: {abilities: {0: 'Shell Armor'}},
+  Trapinch: {abilities: {0: 'Arena Trap'}},
+  Kecleon: {abilities: {0: 'Protean'}},
+  Shinx: {abilities: {0: 'Intimidate'}},
+  Luxio: {abilities: {0: 'Intimidate'}},
+  Luxray: {abilities: {0: 'Intimidate'}},
+  Vespiquen: {abilities: {0: 'Unnerve'}},
+  Buneary: {abilities: {0: 'Cute Charm'}},
+  Stunky: {abilities: {0: 'Keen Eye'}},
+  Skuntank: {abilities: {0: 'Keen Eye'}},
+  Gible: {abilities: {0: 'Rough Skin'}},
+  Gabite: {abilities: {0: 'Rough Skin'}},
+  Garchomp: {abilities: {0: 'Rough Skin'}},
+  Croagunk: {abilities: {0: 'Poison Touch'}},
+  Toxicroak: {abilities: {0: 'Poison Touch'}},
+  Snover: {abilities: {0: 'Soundproof'}},
+  Abomasnow: {abilities: {0: 'Soundproof'}},
+  Weavile: {abilities: {0: 'Inner Focus'}},
+  Rhyperior: {abilities: {0: 'Solid Rock'}},
+  Electivire: {abilities: {0: 'Vital Spirit'}},
+  Togekiss: {abilities: {0: 'Super Luck'}},
+  Yanmega: {abilities: {0: 'Tinted Lens'}},
+  Gallade: {abilities: {0: 'Inner Focus'}},
+  Probopass: {abilities: {0: 'Magnet Pull'}},
+  Froslass: {abilities: {0: 'Cursed Body'}},
+  Munna: {abilities: {0: 'Synchronize'}},
+  Musharna: {abilities: {0: 'Synchronize'}},
+  Roggenrola: {abilities: {0: 'Weak Armor'}},
+  Boldore: {abilities: {0: 'Solid Rock'}},
+  Gigalith: {abilities: {0: 'Solid Rock'}},
+  Throh: {abilities: {0: 'Mold Breaker'}},
+  Sawk: {abilities: {0: 'Mold Breaker'}},
+  Maractus: {abilities: {0: 'Chlorophyll'}},
+  Sigilyph: {abilities: {0: 'Tinted Lens'}},
+  Karrablast: {abilities: {0: 'No Guard'}},
+  Escavalier: {abilities: {0: 'Overcoat'}},
+  Frillish: {abilities: {0: 'Cursed Body'}},
+  Jellicent: {abilities: {0: 'Cursed Body'}},
+  Ferroseed: {abilities: {0: 'Anticipation'}},
+  Ferrothorn: {abilities: {0: 'Anticipation'}},
+  Litwick: {abilities: {0: 'Shadow Tag'}},
+  Lampent: {abilities: {0: 'Shadow Tag'}},
+  Chandelure: {abilities: {0: 'Shadow Tag'}},
+  Larvesta: {abilities: {0: 'Swarm'}},
+  Volcarona: {abilities: {0: 'Swarm'}},
+  Bunnelby: {abilities: {0: 'Cheek Pouch'}},
+  Diggersby: {abilities: {0: 'Cheek Pouch'}},
+  Fletchling: {abilities: {0: 'Keen Eye'}},
+  Litleo: {abilities: {0: 'Unnerve'}},
+  Pyroar: {abilities: {0: 'Unnerve'}},
+  Goomy: {abilities: {0: 'Gooey'}},
+  Sliggoo: {abilities: {0: 'Gooey'}},
+  'Sliggoo-Hisui': {abilities: {0: 'Gooey'}},
+  Goodra: {abilities: {0: 'Gooey'}},
+  'Goodra-Hisui': {abilities: {0: 'Gooey'}},
+  Pumpkaboo: {abilities: {0: 'Frisk'}},
+  'Pumpkaboo-Small': {abilities: {0: 'Frisk'}},
+  'Pumpkaboo-Large': {abilities: {0: 'Frisk'}},
+  'Pumpkaboo-Super': {abilities: {0: 'Frisk'}},
+  Gourgeist: {abilities: {0: 'Frisk'}},
+  'Gourgeist-Small': {abilities: {0: 'Frisk'}},
+  'Gourgeist-Large': {abilities: {0: 'Frisk'}},
+  'Gourgeist-Super': {abilities: {0: 'Frisk'}},
+  Cutiefly: {abilities: {0: 'Sweet Veil'}},
+  Ribombee: {abilities: {0: 'Sweet Veil'}},
+  Lycanroc: {abilities: {0: 'Sand Rush'}},
+  'Lycanroc-Midnight': {abilities: {0: 'No Guard'}},
+  Mudbray: {abilities: {0: 'Tangling Hair'}},
+  Mudsdale: {abilities: {0: 'Tangling Hair'}},
+  Morelull: {abilities: {0: 'Effect Spore'}},
+  Shiinotic: {abilities: {0: 'Effect Spore'}},
+  Bounsweet: {abilities: {0: 'Sweet Veil'}},
+  Steenee: {abilities: {0: 'Sweet Veil'}},
+  Tsareena: {abilities: {0: 'Sweet Veil'}},
+  Comfey: {abilities: {0: 'Triage'}},
+  'Jangmo-o': {abilities: {0: 'Overcoat'}},
+  'Hakamo-o': {abilities: {0: 'Overcoat'}},
+  'Kommo-o': {abilities: {0: 'Overcoat'}},
+  Rookidee: {abilities: {0: 'Unnerve'}},
+  Corvisquire: {abilities: {0: 'Unnerve'}},
+  Corviknight: {abilities: {0: 'Unnerve'}},
+  Sizzlipede: {abilities: {0: 'Flame Body'}},
+  Centiskorch: {abilities: {0: 'Flame Body'}},
+  Hatenna: {abilities: {0: 'Synchronize'}},
+  Hattrem: {abilities: {0: 'Synchronize'}},
+  Hatterene: {abilities: {0: 'Synchronize'}},
+  'Sirfetch’d': {abilities: {0: 'Inner Focus'}},
+  Sneasler: {abilities: {0: 'Inner Focus'}},
+  Overqwil: {abilities: {0: 'Intimidate'}},
+  Enamorus: {abilities: {0: 'Healer'}},
+};
+
+const SS: {[name: string]: SpeciesData} =
+  extend(true, {}, SM, SS_PATCH, PLA_PATCH, RNB_ABILITY_PATCH);
 
 delete SS['Pikachu-Starter'];
 delete SS['Eevee-Starter'];
@@ -9755,7 +9912,8 @@ const SV_PATCH: {[name: string]: DeepPartial<SpeciesData>} = {
   },
 };
 
-const SV: {[name: string]: SpeciesData} = extend(true, {}, SS, SV_PATCH, PLA_PATCH);
+const SV: {[name: string]: SpeciesData} =
+  extend(true, {}, SS, SV_PATCH, PLA_PATCH, RNB_ABILITY_PATCH);
 
 export const SPECIES = [{}, RBY, GSC, ADV, DPP, BW, XY, SM, SS, SV];
 

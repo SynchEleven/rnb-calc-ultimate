@@ -14,7 +14,17 @@ This project combines the advanced damage calculation features of the [SylmarDev
 - **AI Move Prediction** -- ~2,600 lines of custom AI logic that generates probability distributions for what move an AI opponent will choose, factoring in kill detection, setup opportunities, status moves, recovery, priority, and dozens of special cases
 - **Savefile Import** -- Parse Pokemon Emerald `.sav` files to extract party and PC Pokemon (species, IVs, EVs, nature, moves, items, ability)
 - **Trainer/Boss Sets** -- ~1,626 individual trainer-Pokemon sets across ~672 unique trainer encounters, selectable and searchable by trainer name
-- **Battle Planner** -- Tree-based multi-turn battle simulation with branching outcomes, probability tracking, and state management
+- **Battle Planner** -- Tree-based multi-turn battle simulation with
+  outcome-relevant branching, exact probability tracking, and state management
+- **Outcome-Relevant Branching** -- The planner does not enumerate all 16 damage
+  rolls. Each node carries a *distribution* of concrete states, and a branch is
+  created only where an outcome genuinely diverges (something faints, a berry
+  fires, a status lands, an item is consumed). Rolls that change nothing stay in
+  one branch but are still carried in full, so a distinction that only becomes
+  relevant two turns later can still be split then. `recheckBranches()` replays
+  the whole tree from the root, adding branches that have become relevant,
+  collapsing ones that stopped mattering, and marking paths that can no longer
+  happen. See `src/js/battle_planner_branching.js`
 - **Range Compare** -- Compare damage ranges across different move/set combinations with chart visualization
 - **Custom RnB Moves** -- Paleo Wave (85 BP, Rock, Special) and Shadow Strike (80 BP, Ghost, Physical) fully integrated in the calc engine
 - **Custom RnB Items** -- Soul Dew functions as Choice Specs/Assault Vest equivalent for Latios/Latias (matching the ROM hack)
@@ -23,20 +33,42 @@ This project combines the advanced damage calculation features of the [SylmarDev
 - **Color Codings** -- Persist between sessions
 - **Mega Evolution** -- Proper ability/stat switching on form change
 
+### Deliberate RnB divergences from standard Smogon mechanics
+
+These are **intentional** and match the ROM, not bugs. They are called out here
+because they make this fork's numbers differ from any other calculator:
+
+- **Explosion / Self-Destruct halve the target's Defense** (`gen789.ts`), which
+  standard Gen 5+ removed
+- **Terrain boosts damage by 1.5x, not 1.3x** (`gen789.ts`, `terrainMultiplier`)
+- **Paralysis leaves 25% Speed, not 50%** (`mechanics/util.ts`)
+- **Gen 9 rebalances applied at gen 8** -- Cresselia, Zacian(-Crowned),
+  Zamazenta(-Crowned) stats and Glacial Lance / Grassy Glide / Wicked Blow BP
+- **~135 species have RnB-specific primary abilities** (`RNB_ABILITY_PATCH` in
+  `calc/src/data/species.ts`)
+- **Soul Dew** acts as Choice Specs / Assault Vest for Latios and Latias
+
+`calc/src/test/data.test.ts` cross-validates the damage engine's data against
+`src/js/data/rbdex/` on every run, so these cannot silently drift apart again.
+
 ### Known Issues (Bugs)
 
-- **Collision Drive / Electro Drift type check** -- Uses `defender.types[0]` for both type1 and type2 effectiveness checks (copy-paste bug in `gen789.ts:901-902`); second type is never checked
-- **Triage ability** -- Uses `move.drain` instead of `move.flags.heal` to detect healing moves (`gen789.ts:240`)
-- **Paralysis speed** -- Ternary in `mechanics/util.ts:134` is a no-op (`gen < 7 ? 25 : 25`), both branches return 25; Gen 1-6 historically used 75% reduction vs Gen 7+ 50%
-- **Status move scoring bug** -- Status-applying moves (Grass Whistle, etc.) still get a +6 AI score bonus even when the target already has a status condition
-- **Damaging speed/attack reduction moves** -- Score of 0 lets them get kill bonuses incorrectly
-- **Sitrus/Figy Berry + Unburden** -- Does not affect defender's speed (acknowledged bug in `mechanics/util.ts:301`)
-- **`var` declaration** in `shared_controls.js:1155` breaks Z-Move functionality
-- **Triple Axel / Triple Kick** -- BP calculation described as "hacks" in code comments; noted as "bugged" in the UI
-- **HP inputs** -- Accept arbitrary text instead of being `type=number` with min/max constraints
-- **Dynamax HP** -- Pokemon constructor expects non-Dynamaxed HP, but Dynamaxed values may be passed in some flows
-- **`#cloud-outcomes` missing** -- `renderProbabilityCloud` references a DOM element that doesn't exist in the HTML template
-- **Broken HTML attributes** -- Malformed `class=` attributes with stray double-quote characters on lines 829, 865, 901 of `index.template.html`
+- **Sitrus/Figy Berry + Unburden** -- Does not affect defender's speed
+  (acknowledged in `mechanics/util.ts`)
+- **`splitKeyString` / `setKeyStrings` in `ai.ts`** -- Both iterated arrays with
+  `for...in`, so they walked indices instead of values; one of them appears to
+  be compensated for by an inverted filter ("I have no idea why this needs to be
+  inversed"). Behaviour is preserved as-is and flagged in the code -- untangling
+  it changes real AI probabilities and needs expected-output tests first
+- **Damaging speed/attack reduction moves** -- Score of 0 lets them get kill
+  bonuses incorrectly
+- **Triple Axel / Triple Kick** -- BP calculation described as "hacks" in code
+  comments; noted as "bugged" in the UI
+- **Dynamax HP** -- Pokemon constructor expects non-Dynamaxed HP, but Dynamaxed
+  values may be passed in some flows
+- **Doubles** -- The AI engine has ~15 TODO markers for doubles mechanics
+- **Side-collapser layout** -- A stray semicolon that made `- relativeHeight` a
+  no-op was fixed; the collapser's positioning is worth an eyeball in the UI
 
 ---
 
@@ -46,7 +78,7 @@ This is an exhaustive list of everything needed to make a 100% perfect calculato
 
 ### Calculation Engine
 
-- [ ] **Drain/recoil move HP adjustment** -- Battle Planner does not adjust the attacker's HP after drain moves (Giga Drain, Drain Punch, etc.) or recoil moves (Flare Blitz, Double-Edge, etc.)
+- [x] **Drain/recoil move HP adjustment** -- Applied by both the turn executor and the branching engine, sized off the damage actually dealt
 - [ ] **Sun-based recovery** -- Morning Sun / Synthesis / Moonlight recovery percentage is hardcoded to `1` (100%); should use actual weather-dependent fractions (2/3 in sun, 1/4 in rain/sand/hail)
 - [ ] **Fling power data** -- Hardcoded in `items.ts` instead of being in the data files
 - [ ] **Move data flags migration** -- Flat booleans (`makesContact`, `isPunch`, etc.) need migration to proper `flags` object
@@ -55,8 +87,8 @@ This is an exhaustive list of everything needed to make a 100% perfect calculato
 - [ ] **Parental Bond approximation** -- Acknowledged as needing a better formula (`desc.ts:819`)
 - [ ] **Max Move detection** -- Checking `basePower === 10` for Max move detection is fragile (`move.ts:72`)
 - [ ] **`baseStats` rename** -- Species data uses `bs` shorthand instead of `baseStats` (`data/species.ts:6`)
-- [ ] **Full species stat cross-validation** -- Only spot-checked a few Pokemon between `rbdex/pokedex.js` and `calc/src/data/species.ts`; should validate all ~1,137 species
-- [ ] **Full move data cross-validation** -- Should validate all ~756 moves between `rbdex/moves.js` and `calc/src/data/moves.ts`
+- [x] **Full species stat cross-validation** -- All 1,137 species checked (stats, types, abilities) by `data.test.ts` on every run
+- [x] **Full move data cross-validation** -- All 758 moves checked (BP, type, category) by `data.test.ts`, plus every move used by the 1,626 trainer sets
 
 ### AI Move Prediction
 
@@ -69,7 +101,7 @@ This is an exhaustive list of everything needed to make a 100% perfect calculato
 - [ ] **Crit handling in AI** -- Consider turning off crits except where crit should be guaranteed
 - [ ] **Thaw moves** -- Not accounted for in AI scoring
 - [ ] **Truant ability** -- Not handled in AI prediction
-- [ ] **`statusApplyingMoves` array** -- Has an empty string entry and only "Grass Whistle"; clearly incomplete
+- [x] **`statusApplyingMoves` array** -- Now lists 17 moves and applies a -40 score when the target is already statused
 
 ### Doubles Support (AI)
 
@@ -86,29 +118,29 @@ The AI system has ~15 separate TODO markers for doubles mechanics:
 
 ### Battle Planner -- Missing End-of-Turn Effects
 
-- [ ] **Leech Seed** damage/drain
-- [ ] **Curse** (Ghost-type) residual damage
-- [ ] **Grassy Terrain** healing
-- [ ] **Rain Dish / Ice Body** ability healing
-- [ ] **Dry Skin** damage (Sun) and healing (Rain)
-- [ ] **Poison Heal** ability
+- [x] **Leech Seed** damage/drain
+- [x] **Curse** (Ghost-type) residual damage
+- [x] **Grassy Terrain** healing
+- [x] **Rain Dish / Ice Body** ability healing
+- [x] **Dry Skin** damage (Sun) and healing (Rain)
+- [x] **Poison Heal** ability
 - [ ] **Wish** delayed healing
-- [ ] **Aqua Ring** healing
-- [ ] **Ingrain** healing
+- [x] **Aqua Ring** healing
+- [x] **Ingrain** healing
 - [ ] **Snow** (Gen 9) -- no distinction from Hail; Snow gives Ice-types a Defense boost without chip damage
 
 ### Battle Planner -- Missing Item Effects
 
 Only Leftovers, Black Sludge, Sitrus Berry, and Oran Berry have end-of-turn effects. Missing:
-- [ ] **Flame Orb** activation
-- [ ] **Toxic Orb** activation
-- [ ] **Figy / Wiki / Mago / Aguav / Iapapa Berries** (pinch berries)
+- [x] **Flame Orb** activation
+- [x] **Toxic Orb** activation
+- [x] **Figy / Wiki / Mago / Aguav / Iapapa Berries** (pinch berries)
 - [ ] **Focus Band** -- Flagged but not functionally implemented
 - [ ] **Other passive items** with end-of-turn or triggered effects
 
 ### Battle Planner -- Other Missing Features
 
-- [ ] **Pokedex number mapping** -- `getPokedexNumber()` only has ~20 hardcoded entries; any Pokemon not in this list fails to resolve
+- [x] **Pokedex number mapping** -- Now sourced from RBDex `num` for all ~1,137 species instead of ~20 hardcoded entries
 - [ ] **Post-KO switch-in AI** -- Deterministic switch order display (except for crit variance cases)
 - [ ] **Switch percentage** -- Show AI switch probability underneath moves (rare but important edge case)
 
@@ -158,7 +190,7 @@ Only Leftovers, Black Sludge, Sitrus Berry, and Oran Berry have end-of-turn effe
 - [ ] **Remove `scripts/` folder** -- Contains obsolete Python utilities
 - [ ] **Gen 2 damage tests** -- Missing tests for "damage always rounded up to 1" (`gen12.ts:216`)
 - [ ] **Gigantamax cleanup** -- `pokemon.ts:74` and test files note cleanup needed for proper Gigantamax support
-- [ ] **Security vulnerabilities** -- Noted as "must have" in ver-2.md
+- [ ] **Security vulnerabilities** -- Noted as "must have" in ver-2.md (not audited)
 - [ ] **Analytics** -- Track usage: calc count, toggle preferences, user count
 
 ---

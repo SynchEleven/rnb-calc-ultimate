@@ -292,7 +292,7 @@ function renderHealthDistChart(healthDist) {
 
 	// Normalize to percentage and store for range comparator
 	var total = 0;
-	for (var k in healthDist) { total += healthDist[k] };
+	for (var k in healthDist) { total += healthDist[k] }
 
 	RangeCompare.lastHealthDist = $.extend(true, {}, healthDist);
 	RangeCompare.lastTotal = total;

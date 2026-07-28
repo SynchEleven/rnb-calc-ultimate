@@ -94,7 +94,6 @@ function topMoveIndices(dist: number[]): number[] {
 // ---------------------------------------------------------------------------
 
 describe('AI Move Prediction Engine (ai.ts)', () => {
-
   // =========================================================================
   // Distribution fundamentals
   // =========================================================================
@@ -443,8 +442,17 @@ describe('AI Move Prediction Engine (ai.ts)', () => {
 
       const dist = generateMoveDist(results, '1', defaultAiOptions());
       distSumsToOne(dist);
-      // Double Hit should be considered with its full multi-hit damage
-      // It should get some share of probability
+
+      // The previous assertion here was `expect(dist[0]).toBeGreaterThan(0)`,
+      // which would pass even if the multi-hit handling were deleted. Assert the
+      // thing the test is named after instead: generateMoveDist doubles a
+      // two-hit move's damage while scoring, then restores it for display.
+      const doubleHit = results[1][0];
+      const perHitMax = Math.max(...doubleHit.damageRolls());
+      const singleHitEquivalent = calculate(
+        GEN, ai, player, new Move(GEN, 'Double Hit', {hits: 1}), new Field().swap()
+      );
+      expect(perHitMax).toBe(Math.max(...singleHitEquivalent.damageRolls()));
       expect(dist[0]).toBeGreaterThan(0);
     });
 
@@ -468,7 +476,12 @@ describe('AI Move Prediction Engine (ai.ts)', () => {
 
       const dist = generateMoveDist(results, '1', defaultAiOptions());
       distSumsToOne(dist);
-      // Icicle Spear and Rock Blast should be viable options
+
+      // Named assertion, rather than the previous `> 0` which could not fail:
+      // with Skill Link the AI must value Icicle Spear (5 x 25 BP = 125) above
+      // the single-hit Ice Shard (40 BP) against a Ferrothorn that resists
+      // neither, so the spread move has to carry more probability.
+      expect(dist[0]).toBeGreaterThan(dist[2]);
       expect(dist[0] + dist[1]).toBeGreaterThan(0);
     });
   });
@@ -1010,8 +1023,8 @@ describe('AI Move Prediction Engine (ai.ts)', () => {
       // (at minimum they should both sum to 1)
       const diffExists = distPlayerFaster.some((v, i) => Math.abs(v - distAIFaster[i]) > 0.001);
       // They may or may not differ, but both should be valid distributions
-      expect(distPlayerFaster.length).toBe(4);
-      expect(distAIFaster.length).toBe(4);
+      expect(distPlayerFaster).toHaveLength(4);
+      expect(distAIFaster).toHaveLength(4);
     });
   });
 
@@ -1104,7 +1117,7 @@ describe('AI Move Prediction Engine (ai.ts)', () => {
 
       const dist = generateMoveDist(results, '0', opts);
       distSumsToOne(dist);
-      expect(dist.length).toBe(4);
+      expect(dist).toHaveLength(4);
     });
 
     test('distribution is valid with protect used last turn', () => {
@@ -1123,13 +1136,17 @@ describe('AI Move Prediction Engine (ai.ts)', () => {
         ['Scald', 'Toxic', 'Recover', 'Protect']
       );
 
+      const baseline = generateMoveDist(results, '0', defaultAiOptions());
+
       const opts = defaultAiOptions();
       opts.protectLastAiOpt = true;
-
       const dist = generateMoveDist(results, '0', opts);
+
       distSumsToOne(dist);
-      // Protect should be penalized after being used last turn
-      // (consecutive Protect has lower success rate)
+      // Protect (index 3) is penalised after being used last turn, because a
+      // consecutive Protect has a lower success rate. This test previously
+      // asserted nothing at all.
+      expect(dist[3]).toBeLessThan(baseline[3]);
     });
   });
 
@@ -1183,7 +1200,7 @@ describe('AI Move Prediction Engine (ai.ts)', () => {
 
       const dist = generateMoveDist(results, '0', defaultAiOptions());
       distSumsToOne(dist);
-      expect(dist.length).toBe(4);
+      expect(dist).toHaveLength(4);
       // All should get some probability since they're all status
       for (const p of dist) {
         expect(p).toBeGreaterThanOrEqual(0);
@@ -1219,7 +1236,7 @@ describe('AI Move Prediction Engine (ai.ts)', () => {
 
       const dist = generateMoveDist([playerResults, aiResults], '1', defaultAiOptions());
       distSumsToOne(dist);
-      expect(dist.length).toBe(4);
+      expect(dist).toHaveLength(4);
     });
   });
 

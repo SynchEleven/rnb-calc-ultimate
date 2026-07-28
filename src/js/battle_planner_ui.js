@@ -2757,7 +2757,11 @@
                 return null;
             }
 
-            var range = CalcIntegration.getDamageRange(result);
+            // getDamageRange returns TOTALS (per-hit rolls already multiplied by
+            // the hit count) plus the per-hit figures. Do not divide again here:
+            // result.damage holds per-hit rolls, so the old
+            // `perHitMin = range.min / hitCount` under-reported by hitCount^2.
+            var range = CalcIntegration.getDamageRange(result, hitCount);
 
             var defenderMaxHP = defender.maxHP || 100;
             return {
@@ -2765,10 +2769,10 @@
                 max: range.max,
                 minPercent: Math.round((range.min / defenderMaxHP) * 1000) / 10,
                 maxPercent: Math.round((range.max / defenderMaxHP) * 1000) / 10,
-                hitCount: hitCount,
+                hitCount: range.hits,
                 multiHitRange: multiHitRange,
-                perHitMin: hitCount > 1 ? Math.floor(range.min / hitCount) : null,
-                perHitMax: hitCount > 1 ? Math.floor(range.max / hitCount) : null
+                perHitMin: range.hits > 1 ? range.perHitMin : null,
+                perHitMax: range.hits > 1 ? range.perHitMax : null
             };
         } catch (e) {
             console.error('calculateMoveDamage error for', moveName + ':', e);
@@ -5416,7 +5420,7 @@
             var p1IsSwitch = uiState.p1Action.type === 'switch';
             var p2IsSwitch = uiState.p2Action.type === 'switch';
 
-            function performSwitch(side, action, stateObj) {
+            var performSwitch = function (side, action, stateObj) {
                 if (BattlePlannerLogic) {
                     BattlePlannerLogic.performSwitch(stateObj, side, action.targetSlot);
                 } else {
@@ -5428,9 +5432,11 @@
                     }
                     sideData.teamSlot = action.targetSlot;
                     sideData.active = sideData.team[action.targetSlot].clone();
-                    sideData.active.boosts = { atk: 0, def: 0, spa: 0, spd: 0, spe: 0 };
+                    sideData.active.boosts = {
+                        atk: 0, def: 0, spa: 0, spd: 0, spe: 0, accuracy: 0, evasion: 0
+                    };
                 }
-            }
+            };
 
             // Get priorities - switches have priority +6, also check custom priority modifiers
             var p1CustomPriority = uiState.p1Action.customEffects ? (uiState.p1Action.customEffects.priorityMod || 0) : 0;
@@ -5982,7 +5988,6 @@
     function applyMoveToStateEnhanced(attacker, defender, action, gen, state) {
         var moveName = action.moveName;
         var isCrit = action.isCrit || false;
-        var hits = action.hits || 3;
         var applyEffect = action.applyEffect || false;
         var customEffects = action.customEffects || {};
         var moveResult = { range: null, moveData: null };
@@ -6021,7 +6026,10 @@
             var field = window.createField ? window.createField() : null;
             var result = window.calc.calculate(gen, attackerPokemon, defenderPokemon, move, field);
 
-            var range = CalcIntegration.getDamageRange(result);
+            // Totals, not per-hit: for a 5-hit Pin Missile this is now the full
+            // 185-220 rather than the single-hit 37-44 that used to be applied.
+            var range = CalcIntegration.getDamageRange(result, moveOptions.hits);
+            moveResult.totalHits = range.hits;
             moveResult.range = range;
             moveResult.moveData = moveData;
             var avgDamage = range.avg;
@@ -7022,10 +7030,10 @@
 
         var map = {};
         for (var pokeName in SETDEX_SS) {
-            if (!SETDEX_SS.hasOwnProperty(pokeName)) continue;
+            if (!Object.prototype.hasOwnProperty.call(SETDEX_SS, pokeName)) continue;
             var sets = SETDEX_SS[pokeName];
             for (var trainerName in sets) {
-                if (!sets.hasOwnProperty(trainerName)) continue;
+                if (!Object.prototype.hasOwnProperty.call(sets, trainerName)) continue;
                 if (!map[trainerName]) {
                     map[trainerName] = { pokemon: [], index: sets[trainerName].index || 9999 };
                 }
@@ -7334,6 +7342,56 @@
     }
 
     // Export
+    /**
+     * Build the turn executor the branching engine drives, wired to this app's
+     * calc integration, move data and end-of-turn logic.
+     */
+    function makeBranchingExecutor() {
+        var B = window.BattlePlannerBranching;
+        if (!B || !window.calc) return null;
+        return B.createTurnExecutor({
+            calc: window.calc,
+            CalcIntegration: CalcIntegration,
+            MoveDB: window.MoveDB,
+            Logic: BattlePlannerLogic,
+            gen: getGenNum(),
+            getField: function () {
+                return window.createField ? window.createField() : new window.calc.Field();
+            }
+        });
+    }
+
+    /**
+     * Re-derive the whole tree.
+     *
+     * Replays every path from the root, so a change anywhere — an edited turn, a
+     * corrected ability, a confirmed crit — re-evaluates the past, present and
+     * future of every branch: distinctions that have become relevant gain a
+     * branch, distinctions that stopped mattering collapse, and paths that can
+     * no longer occur are marked impossible.
+     */
+    function recheckBranches(options) {
+        var B = window.BattlePlannerBranching;
+        if (!B || !uiState.tree) return null;
+
+        var executor = makeBranchingExecutor();
+        if (!executor) return null;
+
+        var report = B.reconcile(uiState.tree, executor, options || {});
+        renderTree();
+        return report;
+    }
+
+    /**
+     * Which earlier nodes still carry damage rolls that could change the
+     * outcome of something downstream.
+     */
+    function analyzeRelevance(nodeId) {
+        var B = window.BattlePlannerBranching;
+        if (!B || !uiState.tree) return null;
+        return B.analyzeRollRelevance(uiState.tree, nodeId || uiState.tree.currentNodeId);
+    }
+
     window.BattlePlannerUI = {
         show: showPlanner,
         hide: hidePlanner,
@@ -7342,7 +7400,10 @@
         startWithImportedTeam: startBattleWithImportedTeam,
         refreshBox: refreshBoxFromCustomsets,
         getTree: function () { return uiState.tree; },
-        isVisible: function () { return uiState.isVisible; }
+        isVisible: function () { return uiState.isVisible; },
+        recheckBranches: recheckBranches,
+        analyzeRelevance: analyzeRelevance,
+        makeBranchingExecutor: makeBranchingExecutor
     };
 
 })(window, jQuery);

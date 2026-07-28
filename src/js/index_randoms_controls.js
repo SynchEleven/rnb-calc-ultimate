@@ -65,7 +65,7 @@ function applyAiOptionsDict(dict, triggerChange) {
 
 	$("#aiOptions :input").each(function () {
 		var id = $(this).attr('id');
-		if (dict.hasOwnProperty(id)) {
+		if (Object.prototype.hasOwnProperty.call(dict, id)) {
 			$(this).prop('checked', !!dict[id]);
 			if (triggerChange) $(this).change();
 		}
@@ -74,7 +74,7 @@ function applyAiOptionsDict(dict, triggerChange) {
 	// Apply any checkboxes in the credits section or color coding section of index.template.html
 	$(".credits input[type='checkbox'], #cc-sets input[type='checkbox']").each(function () {
 		var id = $(this).attr('id');
-		if (id && dict.hasOwnProperty(id)) {
+		if (id && Object.prototype.hasOwnProperty.call(dict, id)) {
 			$(this).prop('checked', !!dict[id]);
 			if (triggerChange) $(this).change();
 		}
@@ -497,7 +497,7 @@ $(document).ready(function () {
 	// clear search if escape pressed
 	document.onkeydown = function(evt) {
 		evt = evt || window.event;
-		isEscape = evt.key === 'Escape';
+		var isEscape = evt.key === 'Escape';
 		if (isEscape && $("#search").is(":focus")) {
 			$('#search').val('');
 		}

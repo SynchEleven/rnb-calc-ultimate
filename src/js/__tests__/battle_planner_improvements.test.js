@@ -166,11 +166,22 @@ describe('applyItemEffects', () => {
     expect(fx.itemConsumed).toBe(false);
   });
 
-  test('Focus Band returns focusBandChance flag on lethal damage', () => {
+  test('Focus Band reports its 10% survival chance on lethal damage', () => {
     const p = makePokemon({ currentHP: 100, maxHP: 300, item: 'Focus Band' });
     const fx = CI.applyItemEffects(p, 200);
 
-    expect(fx.focusBandChance).toBe(true);
+    // Now a probability rather than a bare flag, so the branching engine can
+    // split the turn into "Focus Band held on" / "it did not".
+    expect(fx.focusBandChance).toBe(0.1);
+  });
+
+  test('Sturdy survives a lethal hit from full HP without consuming an item', () => {
+    const p = makePokemon({ currentHP: 300, maxHP: 300, item: 'Leftovers', ability: 'Sturdy' });
+    const fx = CI.applyItemEffects(p, 500);
+
+    expect(fx.survivesAtOneHP).toBe(true);
+    expect(fx.healed).toBe(1);
+    expect(fx.itemConsumed).toBe(false);
   });
 });
 

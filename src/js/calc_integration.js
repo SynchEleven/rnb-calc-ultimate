@@ -16,7 +16,7 @@
     // Wait for BattlePlanner to be available
     if (!window.BattlePlanner) {
         setTimeout(function () {
-            window.BattlePlannerCalcIntegration && window.BattlePlannerCalcIntegration();
+            if (window.BattlePlannerCalcIntegration) window.BattlePlannerCalcIntegration();
         }, 100);
         return;
     }
@@ -47,9 +47,40 @@
     };
 
     /**
-     * Calculate type effectiveness
+     * Type-based immunities granted by an ability, keyed by move type.
+     * The raw TYPE_CHART above only knows about types, so a Ground move would
+     * report 2x against a Levitate Bronzong while the engine correctly deals 0.
      */
-    function getTypeEffectiveness(moveType, defenderTypes) {
+    var ABILITY_TYPE_IMMUNITIES = {
+        levitate: ['Ground'],
+        flashfire: ['Fire'],
+        waterabsorb: ['Water'],
+        stormdrain: ['Water'],
+        dryskin: ['Water'],
+        voltabsorb: ['Electric'],
+        lightningrod: ['Electric'],
+        motordrive: ['Electric'],
+        sapsipper: ['Grass'],
+        eartheater: ['Ground'],
+        windrider: ['Flying'],
+        goodasgold: ['__status__']
+    };
+
+    function abilityGrantsImmunity(ability, moveType) {
+        if (!ability || !moveType) return false;
+        var key = String(ability).replace(/\s|-/g, '').toLowerCase();
+        var immune = ABILITY_TYPE_IMMUNITIES[key];
+        return !!(immune && immune.indexOf(moveType) !== -1);
+    }
+
+    /**
+     * Calculate type effectiveness.
+     *
+     * `defender` is optional; when supplied, ability-granted immunities
+     * (Levitate, Flash Fire, Water Absorb, ...) and Wonder Guard are honoured
+     * so this agrees with what the damage engine actually computes.
+     */
+    function getTypeEffectiveness(moveType, defenderTypes, defender) {
         if (!moveType || !defenderTypes || defenderTypes.length === 0) return 1;
 
         var multiplier = 1;
@@ -59,6 +90,23 @@
             var defType = defenderTypes[i];
             if (chart[defType] !== undefined) {
                 multiplier *= chart[defType];
+            }
+        }
+
+        if (defender) {
+            var ability = defender.ability || '';
+            var hasRingTarget = defender.item === 'Ring Target';
+            if (multiplier === 0 && hasRingTarget) {
+                // Ring Target removes type-based immunities (not ability ones)
+                multiplier = 1;
+                for (var j = 0; j < defenderTypes.length; j++) {
+                    var t = defenderTypes[j];
+                    if (chart[t] !== undefined && chart[t] !== 0) multiplier *= chart[t];
+                }
+            }
+            if (abilityGrantsImmunity(ability, moveType)) return 0;
+            if (String(ability).replace(/\s/g, '').toLowerCase() === 'wonderguard' && multiplier <= 1) {
+                return 0;
             }
         }
 
@@ -76,7 +124,14 @@
     }
 
     /**
-     * Calculate KO chance
+     * Calculate how many hits are needed to KO from the defender's CURRENT hp.
+     *
+     * All branches now measure against current HP. The old code mixed current HP
+     * (for the OHKO test) with max HP (for the 2HKO/3HKO tests), so 100 damage
+     * against a defender at 200/300 reported "3HKO" when two hits kill. The
+     * fabricated `chance: 0.5 / 0.33` constants are gone as well — a real KO
+     * probability needs the roll distribution, which calculateOutcomeSpread
+     * provides.
      */
     function calculateKOChance(damage, defenderHP, defenderMaxHP) {
         // Guard against invalid damage values
@@ -84,23 +139,31 @@
             return { hitsToKO: Infinity, label: 'No damage' };
         }
         if (!defenderHP || defenderHP <= 0) {
-            return { ohko: true, chance: 1, label: 'Already KO' };
+            return { ohko: true, hitsToKO: 0, chance: 1, label: 'Already KO' };
         }
 
-        if (damage >= defenderHP) {
-            return { ohko: true, chance: 1, label: 'OHKO' };
-        }
-        if (damage * 2 >= defenderMaxHP) {
-            return { twoHKO: true, chance: 0.5, label: '2HKO likely' };
-        }
-        if (damage * 3 >= defenderMaxHP) {
-            return { threeHKO: true, chance: 0.33, label: '3HKO' };
-        }
         var hitsToKO = Math.ceil(defenderHP / damage);
         if (isNaN(hitsToKO) || !isFinite(hitsToKO)) {
             return { hitsToKO: Infinity, label: 'No damage' };
         }
-        return { hitsToKO: hitsToKO, label: hitsToKO + 'HKO' };
+
+        var info = { hitsToKO: hitsToKO, label: hitsToKO + 'HKO' };
+        if (hitsToKO <= 1) {
+            info.ohko = true;
+            info.chance = 1;
+            info.label = 'OHKO';
+        } else if (hitsToKO === 2) {
+            info.twoHKO = true;
+            info.label = '2HKO';
+        } else if (hitsToKO === 3) {
+            info.threeHKO = true;
+            info.label = '3HKO';
+        }
+        // How many hits from FULL health, for the "healthy matchup" read-out
+        if (defenderMaxHP > 0) {
+            info.hitsToKOFromFull = Math.ceil(defenderMaxHP / damage);
+        }
+        return info;
     }
 
     /**
@@ -441,7 +504,7 @@
         // Get type effectiveness
         var defenderTypes = defender.types || (defender.species && defender.species.types) || [];
         var moveType = moveData.type || 'Normal';
-        var effectiveness = getTypeEffectiveness(moveType, defenderTypes);
+        var effectiveness = getTypeEffectiveness(moveType, defenderTypes, defender);
         var effectivenessInfo = getEffectivenessLabel(effectiveness);
 
         var accuracy = getAccuracy(moveData, attacker, defender, field, gen);
@@ -590,54 +653,125 @@
         return labels.length > 0 ? labels.join(', ') : 'Effect';
     }
 
+    /** Accuracy/evasion stage multipliers (gen 3+). */
+    var ACCURACY_STAGE_MULTIPLIERS = {
+        '-6': 3 / 9, '-5': 3 / 8, '-4': 3 / 7, '-3': 3 / 6, '-2': 3 / 5, '-1': 3 / 4,
+        '0': 1,
+        '1': 4 / 3, '2': 5 / 3, '3': 2, '4': 7 / 3, '5': 8 / 3, '6': 3
+    };
+
     /**
-     * Get accuracy considering all modifiers
+     * Resolve a move's base accuracy.
+     *
+     * IMPORTANT: @smogon/calc move data carries NO accuracy field at all (the
+     * engine does not model accuracy), so reading `moveData.accuracy` from a
+     * `gen.moves.get(...)` result always yielded undefined and every move came
+     * back as 100%. RBDex is the source of accuracy, so consult MoveDB first and
+     * only fall back to whatever the caller handed us.
+     */
+    function resolveBaseAccuracy(moveData) {
+        if (!moveData) return null;
+
+        if (moveData.accuracy !== undefined && moveData.accuracy !== null) {
+            return moveData.accuracy;
+        }
+
+        var name = moveData.name || moveData;
+        var db = window.MoveDB;
+        if (db && typeof name === 'string') {
+            var entry = db.get(name);
+            if (entry && entry.accuracy !== undefined && entry.accuracy !== null) {
+                return entry.accuracy;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Get accuracy (0-100) considering all modifiers, including accuracy and
+     * evasion stages which used to be discarded entirely.
      */
     function getAccuracy(moveData, attacker, defender, field, gen) {
         if (!moveData) return 100;
 
-        if (moveData.accuracy === true || moveData.accuracy === 0) return 100;
+        var baseAccuracy = resolveBaseAccuracy(moveData);
 
-        var baseAccuracy = moveData.accuracy || 100;
+        // `true` means "cannot miss"; null/undefined means we have no data
+        if (baseAccuracy === true || baseAccuracy === null || baseAccuracy === undefined) return 100;
+        if (baseAccuracy === 0) return 100;
 
         var attackerAbility = attacker ? (attacker.ability || '') : '';
         var defenderAbility = defender ? (defender.ability || '') : '';
+        var moveName = moveData.name || '';
+        var weather = field && field.weather ? field.weather : '';
 
         if (attackerAbility === 'No Guard' || defenderAbility === 'No Guard') {
             return 100;
         }
-        if (attackerAbility === 'Compound Eyes') {
-            baseAccuracy = Math.floor(baseAccuracy * 1.3);
-        }
-        if (attackerAbility === 'Hustle' && moveData.category === 'Physical') {
-            baseAccuracy = Math.floor(baseAccuracy * 0.8);
-        }
 
-        var attackerItem = attacker ? (attacker.item || '') : '';
-        if (attackerItem === 'Wide Lens') {
-            baseAccuracy = Math.floor(baseAccuracy * 1.1);
-        }
-
-        var weather = field && field.weather ? field.weather : '';
-        var moveName = moveData.name || '';
-
+        // Weather overrides come before the modifier chain
         if (moveName === 'Thunder' || moveName === 'Hurricane') {
-            if (weather === 'Rain' || weather === 'Heavy Rain') {
-                return 100;
-            }
-            if (weather === 'Sun' || weather === 'Harsh Sunshine') {
-                baseAccuracy = 50;
-            }
+            if (weather === 'Rain' || weather === 'Heavy Rain') return 100;
+            if (weather === 'Sun' || weather === 'Harsh Sunshine') baseAccuracy = 50;
         }
         if (moveName === 'Blizzard' && (weather === 'Hail' || weather === 'Snow')) {
             return 100;
         }
 
-        if (field && field.isGravity) {
-            baseAccuracy = Math.floor(baseAccuracy * 5 / 3);
+        // Accuracy and evasion stages (net stage, clamped to +/-6)
+        var accStage = (attacker && attacker.boosts && attacker.boosts.accuracy) || 0;
+        var evaStage = (defender && defender.boosts && defender.boosts.evasion) || 0;
+        // Moves that ignore evasion boosts
+        if (isNamedMove(moveName, 'Chip Away', 'Sacred Sword', 'Darkest Lariat')) evaStage = 0;
+        // Keen Eye / Illuminate / Minds Eye ignore the target's evasion boosts
+        if (isAbility(attackerAbility, 'Keen Eye', 'Illuminate', "Mind's Eye")) evaStage = Math.min(0, evaStage);
+        if (isAbility(attackerAbility, 'Unaware')) evaStage = 0;
+        var netStage = Math.max(-6, Math.min(6, accStage - evaStage));
+        var stageMultiplier = ACCURACY_STAGE_MULTIPLIERS[String(netStage)] || 1;
+
+        var accuracy = baseAccuracy * stageMultiplier;
+
+        // Abilities
+        if (attackerAbility === 'Compound Eyes') accuracy = Math.floor(accuracy * 1.3);
+        if (attackerAbility === 'Hustle' && moveData.category === 'Physical') accuracy = Math.floor(accuracy * 0.8);
+        if (attackerAbility === 'Victory Star') accuracy = Math.floor(accuracy * 1.1);
+        if (isAbility(defenderAbility, 'Sand Veil') && (weather === 'Sand' || weather === 'Sandstorm')) {
+            accuracy = Math.floor(accuracy * 0.8);
+        }
+        if (isAbility(defenderAbility, 'Snow Cloak') && (weather === 'Hail' || weather === 'Snow')) {
+            accuracy = Math.floor(accuracy * 0.8);
+        }
+        if (isAbility(defenderAbility, 'Tangled Feet') && defender && defender.volatiles && defender.volatiles.confusion) {
+            accuracy = Math.floor(accuracy * 0.5);
         }
 
-        return Math.min(100, baseAccuracy);
+        // Items
+        var attackerItem = attacker ? (attacker.item || '') : '';
+        var defenderItem = defender ? (defender.item || '') : '';
+        if (attackerItem === 'Wide Lens') accuracy = Math.floor(accuracy * 1.1);
+        if (attackerItem === 'Zoom Lens') accuracy = Math.floor(accuracy * 1.2);
+        if (defenderItem === 'Bright Powder' || defenderItem === 'BrightPowder') accuracy = Math.floor(accuracy * 0.9);
+        if (defenderItem === 'Lax Incense') accuracy = Math.floor(accuracy * 0.95);
+
+        // Field
+        if (field && field.isGravity) accuracy = Math.floor(accuracy * 5 / 3);
+
+        return Math.max(0, Math.min(100, Math.round(accuracy)));
+    }
+
+    // Variadic membership helpers: isNamedMove(name, 'A', 'B', ...)
+    function isNamedMove(name) {
+        for (var i = 1; i < arguments.length; i++) {
+            if (name === arguments[i]) return true;
+        }
+        return false;
+    }
+
+    function isAbility(ability) {
+        for (var i = 1; i < arguments.length; i++) {
+            if (ability === arguments[i]) return true;
+        }
+        return false;
     }
 
     /**
@@ -690,33 +824,67 @@
     }
 
     /**
-     * Extract damage range from result
+     * How many times a Result's move actually connects.
+     * @smogon/calc stores this on the Move as `hits`.
      */
-    function getDamageRange(result) {
-        if (!result) return { min: 0, max: 0, avg: 0, rolls: [] };
+    function getResultHitCount(result) {
+        if (!result || !result.move) return 1;
+        var hits = result.move.hits;
+        return (typeof hits === 'number' && hits > 0) ? hits : 1;
+    }
+
+    /**
+     * Extract the damage range from a calc Result.
+     *
+     * CRITICAL: for a multi-hit move, `result.damage` holds PER-HIT rolls — only
+     * `result.desc()` multiplies by the hit count. Treating those rolls as the
+     * total made the planner apply (and display) a single hit's damage for
+     * Pin Missile, Icicle Spear, Rock Blast, Bullet Seed and friends.
+     *
+     * Returns per-hit figures alongside the totals so callers can render an
+     * honest "x-y per hit x N = a-b total" breakdown.
+     */
+    function getDamageRange(result, hitCountOverride) {
+        if (!result) return { min: 0, max: 0, avg: 0, rolls: [], hits: 1, perHitMin: 0, perHitMax: 0, perHitAvg: 0 };
 
         var damage = result.damage;
+        var hits = (typeof hitCountOverride === 'number' && hitCountOverride > 0)
+            ? hitCountOverride
+            : getResultHitCount(result);
+
         var min = 0, max = 0, avg = 0;
+        var perHitRolls = null;
 
         if (typeof damage === 'number') {
             min = max = avg = damage;
         } else if (Array.isArray(damage)) {
-            if (damage.length === 2 && Array.isArray(damage[0])) {
-                // Parental Bond or multi-hit
-                var d0 = damage[0];
-                var d1 = damage[1];
-                min = (d0[0] || 0) + (d1[0] || 0);
-                max = (d0[d0.length - 1] || 0) + (d1[d1.length - 1] || 0);
+            if (Array.isArray(damage[0])) {
+                // Parental Bond / distinct-per-hit shape: [rolls(hit1), rolls(hit2), ...].
+                // Each sub-array is one hit, so the total is the sum across all of them.
+                min = 0; max = 0;
+                for (var h = 0; h < damage.length; h++) {
+                    var sub = damage[h] || [];
+                    min += (sub[0] || 0);
+                    max += (sub[sub.length - 1] || 0);
+                }
                 avg = Math.floor((min + max) / 2);
+                // The sub-arrays already enumerate every hit; don't multiply again.
+                hits = damage.length;
+                perHitRolls = damage;
             } else if (damage.length > 0) {
-                // Regular damage array (16 rolls)
-                min = Math.min.apply(null, damage);
-                max = Math.max.apply(null, damage);
+                // Flat 16-roll array of PER-HIT damage
+                var perMin = Math.min.apply(null, damage);
+                var perMax = Math.max.apply(null, damage);
                 var sum = 0;
                 for (var i = 0; i < damage.length; i++) {
                     sum += (damage[i] || 0);
                 }
-                avg = Math.floor(sum / damage.length);
+                var perAvg = sum / damage.length;
+
+                min = perMin * hits;
+                max = perMax * hits;
+                avg = Math.floor(perAvg * hits);
+                perHitRolls = damage;
             }
         }
 
@@ -725,72 +893,184 @@
             avg = Math.floor((min + max) / 2);
         }
 
-        return { min: min, max: max, avg: avg, rolls: damage };
+        return {
+            min: min,
+            max: max,
+            avg: avg,
+            rolls: damage,
+            hits: hits,
+            perHitRolls: perHitRolls,
+            perHitMin: hits > 0 ? Math.floor(min / hits) : min,
+            perHitMax: hits > 0 ? Math.floor(max / hits) : max,
+            perHitAvg: hits > 0 ? Math.floor(avg / hits) : avg
+        };
     }
 
     /**
-     * Simplify outcomes by filtering low probability ones
+     * Every distinct total-damage value the move can roll, with its probability.
+     * This is what the branching engine consumes: exact, merged, and already
+     * scaled by hit count.
+     */
+    function getDamageRolls(result, hitCountOverride) {
+        var range = getDamageRange(result, hitCountOverride);
+        var rolls = [];
+
+        if (result && typeof result.damage === 'number') {
+            return [{ damage: result.damage, probability: 1 }];
+        }
+
+        if (Array.isArray(range.perHitRolls) && Array.isArray(range.perHitRolls[0])) {
+            // Distinct per-hit roll arrays: total = sum of the i-th roll of each hit.
+            // calc emits aligned arrays, so index i across sub-arrays is one outcome.
+            var n = range.perHitRolls[0].length;
+            for (var i = 0; i < n; i++) {
+                var total = 0;
+                for (var h = 0; h < range.perHitRolls.length; h++) {
+                    total += (range.perHitRolls[h][i] || 0);
+                }
+                rolls.push(total);
+            }
+        } else if (Array.isArray(range.perHitRolls)) {
+            for (var j = 0; j < range.perHitRolls.length; j++) {
+                rolls.push((range.perHitRolls[j] || 0) * range.hits);
+            }
+        }
+
+        if (!rolls.length) return [{ damage: range.avg, probability: 1 }];
+
+        // Merge duplicates — the 16 rolls collapse into far fewer distinct values
+        var counts = {};
+        for (var k = 0; k < rolls.length; k++) {
+            counts[rolls[k]] = (counts[rolls[k]] || 0) + 1;
+        }
+        return Object.keys(counts).map(function (dmg) {
+            return { damage: Number(dmg), probability: counts[dmg] / rolls.length };
+        }).sort(function (a, b) { return a.damage - b.damage; });
+    }
+
+    /** Outcomes of the same kind can absorb each other's probability mass. */
+    function outcomeKind(o) {
+        if (o.isMiss || (o.effects && o.effects.miss)) return 'miss';
+        if (o.isCrit || (o.effects && o.effects.crit)) return 'crit';
+        return 'hit';
+    }
+
+    /**
+     * Drop negligible outcomes without distorting the meaningful ones.
+     *
+     * The old version dumped all the discarded probability mass onto
+     * `significant[0]` — whichever outcome happened to be pushed first, i.e. the
+     * Miss branch when one existed. That silently inflated miss chance with
+     * leftover crit mass.
+     *
+     * Now a dropped outcome folds into the largest surviving outcome of the SAME
+     * kind (a negligible "Crit (High)" merges into "Crit", not into "Miss"), so
+     * the probability of missing, critting and connecting each stay exact. Only
+     * when a whole kind disappears is the remainder spread proportionally.
      */
     function simplifyOutcomes(outcomes, threshold) {
         threshold = threshold || 0.01;
 
-        var significant = outcomes.filter(function (o) {
-            return o.probability >= threshold;
+        var significant = [];
+        var dropped = [];
+        outcomes.forEach(function (o) {
+            (o.probability >= threshold ? significant : dropped).push(o);
         });
 
-        var remainingProb = 0;
-        outcomes.forEach(function (o) {
-            if (o.probability < threshold) {
-                remainingProb += o.probability;
+        if (!significant.length) return outcomes.slice();
+
+        var orphanMass = 0;
+        dropped.forEach(function (o) {
+            var kind = outcomeKind(o);
+            var kin = null;
+            significant.forEach(function (candidate) {
+                if (outcomeKind(candidate) !== kind) return;
+                if (!kin || candidate.probability > kin.probability) kin = candidate;
+            });
+            if (kin) {
+                kin.probability += o.probability;
+            } else {
+                orphanMass += o.probability;
             }
         });
 
-        if (remainingProb > 0 && significant.length > 0) {
-            significant[0].probability += remainingProb;
+        if (orphanMass > 0) {
+            var keptMass = significant.reduce(function (sum, o) { return sum + o.probability; }, 0);
+            if (keptMass > 0) {
+                var scale = (keptMass + orphanMass) / keptMass;
+                significant.forEach(function (o) { o.probability *= scale; });
+            }
         }
 
         return significant;
     }
 
+    /** Pinch berries heal 1/3 max HP at <=25% HP (gen 7+). */
+    var PINCH_BERRIES = ['Figy Berry', 'Wiki Berry', 'Mago Berry', 'Aguav Berry', 'Iapapa Berry'];
+
     /**
-     * Apply item effects after damage
+     * Apply damage-triggered item/ability effects.
+     *
+     * Reports what WOULD happen if `damage` is dealt; the caller applies it.
+     * `survivesAtOneHP` covers Focus Sash and Sturdy; `focusBandChance` marks a
+     * probabilistic survival that the branching engine turns into its own branch.
      */
     function applyItemEffects(pokemon, damage) {
         var effects = { healed: 0, itemConsumed: false, itemEffect: null };
 
-        if (!pokemon || !pokemon.item) return effects;
+        if (!pokemon) return effects;
 
-        var item = pokemon.item;
+        var item = pokemon.item || '';
+        var ability = (pokemon.ability || '').replace(/\s/g, '').toLowerCase();
         var currentHP = pokemon.currentHP;
         var maxHP = pokemon.maxHP;
         var newHP = currentHP - damage;
-        var hpPercent = (newHP / maxHP) * 100;
+        var hpPercent = maxHP > 0 ? (newHP / maxHP) * 100 : 0;
+        var wasAboveHalf = currentHP > maxHP * 0.5;
+        var wasAboveQuarter = currentHP > maxHP * 0.25;
+
+        // Sturdy: survive at 1 HP from full, no item consumed
+        if (ability === 'sturdy' && currentHP === maxHP && newHP <= 0) {
+            effects.healed = 1;
+            effects.survivesAtOneHP = true;
+            effects.itemEffect = 'Sturdy kept the Pokemon at 1 HP';
+            return effects;
+        }
+
+        if (!item) return effects;
 
         // Oran Berry - Heals 10 HP when HP drops to 50% or below
-        if (item === 'Oran Berry' && hpPercent <= 50 && currentHP > maxHP * 0.5) {
+        if (item === 'Oran Berry' && hpPercent <= 50 && wasAboveHalf) {
             effects.healed = 10;
             effects.itemConsumed = true;
             effects.itemEffect = 'Oran Berry restored 10 HP';
         }
 
         // Sitrus Berry - Heals 25% HP when HP drops to 50% or below
-        if (item === 'Sitrus Berry' && hpPercent <= 50 && currentHP > maxHP * 0.5) {
+        if (item === 'Sitrus Berry' && hpPercent <= 50 && wasAboveHalf) {
             effects.healed = Math.floor(maxHP * 0.25);
             effects.itemConsumed = true;
             effects.itemEffect = 'Sitrus Berry restored ' + effects.healed + ' HP';
+        }
+
+        // Pinch berries - Heal 1/3 max HP at 25% or below
+        if (PINCH_BERRIES.indexOf(item) !== -1 && hpPercent <= 25 && wasAboveQuarter && newHP > 0) {
+            effects.healed = Math.max(1, Math.floor(maxHP / 3));
+            effects.itemConsumed = true;
+            effects.itemEffect = item + ' restored ' + effects.healed + ' HP';
         }
 
         // Focus Sash - Survives OHKO at full HP
         if (item === 'Focus Sash' && currentHP === maxHP && newHP <= 0) {
             effects.healed = 1; // applyDamage clamps to 0, so healing 1 leaves at 1 HP
             effects.itemConsumed = true;
+            effects.survivesAtOneHP = true;
             effects.itemEffect = 'Focus Sash kept the Pokemon at 1 HP';
         }
 
-        // Focus Band - 10% chance to survive at 1 HP
+        // Focus Band - 10% chance to survive at 1 HP (a probabilistic branch)
         if (item === 'Focus Band' && newHP <= 0) {
-            // This would be handled as a separate outcome branch
-            effects.focusBandChance = true;
+            effects.focusBandChance = 0.1;
         }
 
         // Leftovers healing (end of turn)
@@ -833,21 +1113,18 @@
                 attacker.setStatus(convertStatusCode(statusEffects.selfStatus));
             }
 
-            // Apply self boosts
+            // Apply self boosts. accuracy/evasion are included now that
+            // getAccuracy honours those stages (Double Team, Hone Claws, ...).
             if (statusEffects.selfBoosts) {
                 for (var stat in statusEffects.selfBoosts) {
-                    if (stat !== 'accuracy' && stat !== 'evasion') {
-                        attacker.applyBoost(stat, statusEffects.selfBoosts[stat]);
-                    }
+                    attacker.applyBoost(stat, statusEffects.selfBoosts[stat]);
                 }
             }
 
             // Apply target boosts (debuffs)
             if (statusEffects.targetBoosts) {
                 for (var stat in statusEffects.targetBoosts) {
-                    if (stat !== 'accuracy' && stat !== 'evasion') {
-                        defender.applyBoost(stat, statusEffects.targetBoosts[stat]);
-                    }
+                    defender.applyBoost(stat, statusEffects.targetBoosts[stat]);
                 }
             }
 
@@ -894,6 +1171,9 @@
                 attacker.applyHealing(healAmount);
             }
 
+            // Status moves change the attacker (boosts, healing, Rest) and the
+            // defender, so their team slots need syncing too.
+            syncTeamSlots(newState, attackerSide, attacker, defender);
             return newState;
         }
 
@@ -937,14 +1217,30 @@
             });
         }
 
-        // Update team slot HP
-        if (attackerSide === 'p1' && newState.p2.team[newState.p2.teamSlot]) {
-            newState.p2.team[newState.p2.teamSlot] = defender.clone();
-        } else if (attackerSide === 'p2' && newState.p1.team[newState.p1.teamSlot]) {
-            newState.p1.team[newState.p1.teamSlot] = attacker.clone();
-        }
+        syncTeamSlots(newState, attackerSide, attacker, defender);
 
         return newState;
+    }
+
+    /**
+     * Mirror the active Pokemon back into their team slots.
+     *
+     * The old code wrote `attacker.clone()` into p1's team when p2 attacked —
+     * but with attackerSide 'p2' the attacker IS the p2 Pokemon, so the
+     * opponent was injected into the player's team and the damage was lost.
+     * Both sides are synced now, since self-boosts, healing, recoil and item
+     * consumption change the attacker too.
+     */
+    function syncTeamSlots(state, attackerSide, attacker, defender) {
+        var attackerTeam = attackerSide === 'p1' ? state.p1 : state.p2;
+        var defenderTeam = attackerSide === 'p1' ? state.p2 : state.p1;
+
+        if (attacker && attackerTeam.team[attackerTeam.teamSlot]) {
+            attackerTeam.team[attackerTeam.teamSlot] = attacker.clone();
+        }
+        if (defender && defenderTeam.team[defenderTeam.teamSlot]) {
+            defenderTeam.team[defenderTeam.teamSlot] = defender.clone();
+        }
     }
 
     function convertStatusCode(code) {
@@ -976,13 +1272,17 @@
         if (snapshot._pokemonData && snapshot._pokemonData.clone) {
             try {
                 var cloned = snapshot._pokemonData.clone();
-                // Ensure current state is applied
+                // Ensure current state is applied.
+                //
+                // `curHP` is a METHOD on calc.Pokemon; the backing field is
+                // `originalCurHP`. Assigning to `.curHP` shadowed the method and
+                // the engine kept using full HP, so every HP-dependent mechanic
+                // (Super Fang, Brine, Eruption, Reversal, Flail, Endeavor) and
+                // every KO description was computed as if nothing was damaged.
                 if (typeof snapshot.currentHP === 'number') {
-                    cloned.curHP = snapshot.currentHP;
+                    cloned.originalCurHP = Math.max(0, Math.min(snapshot.currentHP, cloned.maxHP()));
                 }
-                if (snapshot.status) {
-                    cloned.status = snapshot._statusNameToCode ? snapshot._statusNameToCode(snapshot.status) : '';
-                }
+                cloned.status = window.BattlePlanner.normalizeStatusCode(snapshot.status);
                 if (snapshot.boosts) {
                     cloned.boosts = Object.assign({}, snapshot.boosts);
                 }
@@ -1009,6 +1309,9 @@
                 evs: snapshot.evs || {},
                 ivs: snapshot.ivs || {},
                 boosts: snapshot.boosts || {},
+                status: window.BattlePlanner.normalizeStatusCode(snapshot.status),
+                // The constructor accepts `curHP` as an option (it writes
+                // originalCurHP internally) — that path is fine.
                 curHP: snapshot.currentHP
             };
 
@@ -1130,20 +1433,26 @@
         return sources[0];
     }
 
-    // Simple Pokedex number lookup
+    /**
+     * Pokedex number lookup, sourced from RBDex (which carries `num` for all
+     * ~1,137 species). The previous hardcoded table had ~20 entries, so every
+     * other Pokemon resolved to sprite "0.png".
+     */
     function getPokedexNumber(name) {
-        var numbers = {
-            'bulbasaur': 1, 'ivysaur': 2, 'venusaur': 3, 'charmander': 4, 'charmeleon': 5,
-            'charizard': 6, 'squirtle': 7, 'wartortle': 8, 'blastoise': 9, 'caterpie': 10,
-            'pikachu': 25, 'raichu': 26, 'snorlax': 143, 'mew': 151, 'mewtwo': 150,
-            'tyranitar': 248, 'salamence': 373, 'metagross': 376, 'garchomp': 445,
-            'lucario': 448, 'togekiss': 468, 'darkrai': 491, 'arceus': 493,
-            'houndoom': 229, 'minccino': 572
-            // Add more as needed
-        };
+        if (!name) return 0;
 
-        var normalized = name.toLowerCase().replace(/[^a-z]/g, '');
-        return numbers[normalized] || 0;
+        var species = window.RBDex ? window.RBDex.getSpecies(name) : null;
+        if (species && species.num) return species.num;
+
+        // Alternate formes (Charizard-Mega-X, Rotom-Wash, ...) share the base
+        // species' national number.
+        var base = String(name).split('-')[0];
+        if (base !== name) {
+            var baseSpecies = window.RBDex ? window.RBDex.getSpecies(base) : null;
+            if (baseSpecies && baseSpecies.num) return baseSpecies.num;
+        }
+
+        return 0;
     }
 
     // Export
@@ -1151,8 +1460,13 @@
         calculateAllOutcomes: calculateAllOutcomes,
         calculateKeyOutcomes: calculateKeyOutcomes,
         getAccuracy: getAccuracy,
+        resolveBaseAccuracy: resolveBaseAccuracy,
         getCritChance: getCritChance,
         getDamageRange: getDamageRange,
+        getDamageRolls: getDamageRolls,
+        getResultHitCount: getResultHitCount,
+        syncTeamSlots: syncTeamSlots,
+        simplifyOutcomes: simplifyOutcomes,
         applyOutcomeToState: applyOutcomeToState,
         snapshotToPokemon: snapshotToPokemon,
         snapshotToField: snapshotToField,

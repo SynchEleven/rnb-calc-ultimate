@@ -68,13 +68,74 @@
         return { firstMover: first, secondMover: first === 'p1' ? 'p2' : 'p1', reason: 'speed_tie' };
     }
 
+    /** Accepts a gen number or a Generation object and returns the number. */
+    function toGenNum(gen) {
+        if (gen && typeof gen === 'object' && typeof gen.num === 'number') return gen.num;
+        if (typeof gen === 'number') return gen;
+        return 8;
+    }
+
+    /** Status helpers, shared with battle_planner.js so the two never diverge. */
+    function statusCodeOf(status) {
+        if (window.BattlePlanner && window.BattlePlanner.normalizeStatusCode) {
+            return window.BattlePlanner.normalizeStatusCode(status);
+        }
+        return status || '';
+    }
+
     /**
      * Apply end-of-turn effects to a battle state, mutating it in place.
      * Returns an array of human-readable effect descriptions.
+     *
+     * Stage order follows the in-game residual order for gen 8. This matters:
+     * healing resolves BEFORE poison/burn, so a Pokemon at 40/320 holding
+     * Leftovers and poisoned survives at 20 HP (heal 20 -> 60, poison 40 -> 20)
+     * where the previous status-damage-first order fainted it.
+     *
+     *   1. Weather damage (Sandstorm / Hail)
+     *   2. Weather-driven abilities (Rain Dish, Dry Skin, Ice Body, Solar Power)
+     *   3. Grassy Terrain healing
+     *   4. Leftovers / Black Sludge
+     *   5. Aqua Ring, Ingrain
+     *   6. Leech Seed
+     *   7. Poison / Burn (and Poison Heal)
+     *   8. Curse
+     *   9. HP-threshold berries
+     *  10. Flame Orb / Toxic Orb
+     *  11. Duration decrements
      */
     function applyEndOfTurnEffects(state, gen) {
         var effects = [];
+        var genNum = toGenNum(gen);
 
+        applyWeatherResidual(state, effects);
+        applyWeatherAbilityResidual(state, effects);
+        applyTerrainResidual(state, effects);
+        applyPassiveItemResidual(state, effects);
+        applyRootingVolatiles(state, effects);
+        applyLeechSeedResidual(state, effects);
+        applyStatusResidual(state, genNum, effects);
+        applyCurseResidual(state, effects);
+        applyBerryResidual(state, effects);
+        applyStatusOrbResidual(state, effects);
+        applyDurationDecrements(state, effects);
+
+        // Update percentHP, hasFainted, and turnsOnField on both sides
+        ['p1', 'p2'].forEach(function (side) {
+            var pokemon = state[side].active;
+            if (!pokemon) return;
+            pokemon.percentHP = pokemon.maxHP > 0 ? Math.round((pokemon.currentHP / pokemon.maxHP) * 100) : 0;
+            pokemon.hasFainted = pokemon.currentHP <= 0;
+            if (pokemon.turnsOnField !== undefined) {
+                pokemon.turnsOnField++;
+            }
+        });
+
+        return effects;
+    }
+
+    /** Stage 7: poison / burn damage, and Poison Heal. */
+    function applyStatusResidual(state, gen, effects) {
         ['p1', 'p2'].forEach(function (side) {
             var pokemon = state[side].active;
             if (!pokemon || pokemon.currentHP <= 0) return;
@@ -82,11 +143,11 @@
             if (pokemon.status) {
                 var statusDamage = 0;
                 var statusName = '';
-                var statusLower = pokemon.status.toLowerCase();
+                var statusCode = statusCodeOf(pokemon.status);
                 var ability = (pokemon.ability || '').replace(/\s/g, '').toLowerCase();
 
-                var isPoisoned = statusLower === 'psn' || statusLower === 'poison' || statusLower === 'poisoned';
-                var isToxic = statusLower === 'tox' || statusLower === 'toxic' || statusLower === 'badly poisoned';
+                var isPoisoned = statusCode === 'psn';
+                var isToxic = statusCode === 'tox';
 
                 // Poison Heal: heal 1/8 max HP instead of taking poison/toxic damage
                 if ((isPoisoned || isToxic) && ability === 'poisonheal') {
@@ -107,7 +168,7 @@
                         statusDamage = Math.max(1, Math.floor(pokemon.maxHP * toxicCounter / 16));
                         pokemon.toxicCounter = Math.min(15, toxicCounter + 1);
                         statusName = 'Toxic';
-                    } else if (statusLower === 'brn' || statusLower === 'burn' || statusLower === 'burned') {
+                    } else if (statusCode === 'brn') {
                         statusDamage = gen >= 7
                             ? Math.max(1, Math.floor(pokemon.maxHP / 16))
                             : Math.max(1, Math.floor(pokemon.maxHP / 8));
@@ -126,8 +187,10 @@
                 }
             }
         });
+    }
 
-        // Weather damage
+    /** Stage 1: Sandstorm / Hail chip damage. */
+    function applyWeatherResidual(state, effects) {
         if (state.field && state.field.weather && state.field.weather !== 'None') {
             var weather = state.field.weather.toLowerCase();
 
@@ -177,7 +240,10 @@
             });
         }
 
-        // Ability-based weather interactions (Rain Dish, Dry Skin, Ice Body, Solar Power)
+    }
+
+    /** Stage 2: weather-driven abilities (Rain Dish, Dry Skin, Ice Body). */
+    function applyWeatherAbilityResidual(state, effects) {
         if (state.field && state.field.weather && state.field.weather !== 'None') {
             var weather = state.field.weather.toLowerCase();
 
@@ -220,7 +286,10 @@
             });
         }
 
-        // Leftovers / Black Sludge
+    }
+
+    /** Stage 4: Leftovers / Black Sludge. */
+    function applyPassiveItemResidual(state, effects) {
         ['p1', 'p2'].forEach(function (side) {
             var pokemon = state[side].active;
             if (!pokemon || pokemon.currentHP <= 0) return;
@@ -250,7 +319,10 @@
             }
         });
 
-        // Berry consumption at low HP (end-of-turn check)
+    }
+
+    /** Stage 9: HP-threshold berries. */
+    function applyBerryResidual(state, effects) {
         ['p1', 'p2'].forEach(function (side) {
             var pokemon = state[side].active;
             if (!pokemon || pokemon.currentHP <= 0) return;
@@ -280,25 +352,77 @@
             }
         });
 
-        // Flame Orb / Toxic Orb activation (end-of-turn, only if no existing status)
+    }
+
+    /**
+     * Stage 10: Flame Orb / Toxic Orb activation.
+     *
+     * The old guard was `if (!pokemon.status)`, but a healthy PokemonSnapshot
+     * carries the string 'Healthy' (truthy), so the orbs never fired outside of
+     * tests that hand-set `status: ''`. Status is also written through
+     * setStatus() now so it stays in the display-name convention.
+     */
+    function applyStatusOrbResidual(state, effects) {
         ['p1', 'p2'].forEach(function (side) {
             var pokemon = state[side].active;
             if (!pokemon || pokemon.currentHP <= 0) return;
 
             var item = pokemon.item || '';
-            if (!pokemon.status) {
+            if (statusCodeOf(pokemon.status) === '') {
                 if (item === 'Flame Orb') {
-                    pokemon.status = 'brn';
+                    setSnapshotStatus(pokemon, 'brn');
                     effects.push(pokemon.name + ' was burned by its Flame Orb!');
                 } else if (item === 'Toxic Orb') {
-                    pokemon.status = 'tox';
-                    pokemon.toxicCounter = 1;
+                    setSnapshotStatus(pokemon, 'tox');
                     effects.push(pokemon.name + ' was badly poisoned by its Toxic Orb!');
                 }
             }
         });
+    }
 
-        // Volatile status effects (Leech Seed, Curse, Aqua Ring, Ingrain)
+    /** Write a status through the snapshot API when present, else normalise by hand. */
+    function setSnapshotStatus(pokemon, status) {
+        if (typeof pokemon.setStatus === 'function') {
+            pokemon.setStatus(status);
+            return;
+        }
+        if (window.BattlePlanner && window.BattlePlanner.normalizeStatusName) {
+            pokemon.status = window.BattlePlanner.normalizeStatusName(status);
+        } else {
+            pokemon.status = status;
+        }
+        pokemon.toxicCounter = statusCodeOf(pokemon.status) === 'tox' ? 1 : 0;
+    }
+
+    /** Stage 5: Aqua Ring / Ingrain healing (before Leech Seed and poison). */
+    function applyRootingVolatiles(state, effects) {
+        ['p1', 'p2'].forEach(function (side) {
+            var pokemon = state[side].active;
+            if (!pokemon || pokemon.currentHP <= 0) return;
+            if (!pokemon.volatiles) return;
+
+            // Aqua Ring: heal 1/16 maxHP
+            if (pokemon.volatiles.aquaring) {
+                var aquaHeal = Math.max(1, Math.floor(pokemon.maxHP / 16));
+                if (pokemon.currentHP < pokemon.maxHP) {
+                    pokemon.currentHP = Math.min(pokemon.maxHP, pokemon.currentHP + aquaHeal);
+                    effects.push(pokemon.name + ' recovers ' + aquaHeal + ' HP from Aqua Ring');
+                }
+            }
+
+            // Ingrain: heal 1/16 maxHP
+            if (pokemon.volatiles.ingrain) {
+                var ingrainHeal = Math.max(1, Math.floor(pokemon.maxHP / 16));
+                if (pokemon.currentHP < pokemon.maxHP) {
+                    pokemon.currentHP = Math.min(pokemon.maxHP, pokemon.currentHP + ingrainHeal);
+                    effects.push(pokemon.name + ' recovers ' + ingrainHeal + ' HP from Ingrain');
+                }
+            }
+        });
+    }
+
+    /** Stage 6: Leech Seed drain. */
+    function applyLeechSeedResidual(state, effects) {
         ['p1', 'p2'].forEach(function (side) {
             var pokemon = state[side].active;
             if (!pokemon || pokemon.currentHP <= 0) return;
@@ -322,36 +446,28 @@
                 }
             }
 
-            // Curse (Ghost): 1/4 maxHP damage
-            if (pokemon.volatiles.curse) {
-                if (ability !== 'magicguard') {
-                    var curseDamage = Math.max(1, Math.floor(pokemon.maxHP / 4));
-                    pokemon.currentHP = Math.max(0, pokemon.currentHP - curseDamage);
-                    pokemon.hasFainted = pokemon.currentHP <= 0;
-                    effects.push(pokemon.name + ' lost ' + curseDamage + ' HP from Curse');
-                }
-            }
-
-            // Aqua Ring: heal 1/16 maxHP
-            if (pokemon.volatiles.aquaring) {
-                var heal = Math.max(1, Math.floor(pokemon.maxHP / 16));
-                if (pokemon.currentHP < pokemon.maxHP) {
-                    pokemon.currentHP = Math.min(pokemon.maxHP, pokemon.currentHP + heal);
-                    effects.push(pokemon.name + ' recovers ' + heal + ' HP from Aqua Ring');
-                }
-            }
-
-            // Ingrain: heal 1/16 maxHP
-            if (pokemon.volatiles.ingrain) {
-                var heal = Math.max(1, Math.floor(pokemon.maxHP / 16));
-                if (pokemon.currentHP < pokemon.maxHP) {
-                    pokemon.currentHP = Math.min(pokemon.maxHP, pokemon.currentHP + heal);
-                    effects.push(pokemon.name + ' recovers ' + heal + ' HP from Ingrain');
-                }
-            }
         });
+    }
 
-        // Grassy Terrain healing (1/16 maxHP for grounded Pokemon)
+    /** Stage 8: Curse (Ghost) residual, after poison/burn. */
+    function applyCurseResidual(state, effects) {
+        ['p1', 'p2'].forEach(function (side) {
+            var pokemon = state[side].active;
+            if (!pokemon || pokemon.currentHP <= 0) return;
+            if (!pokemon.volatiles || !pokemon.volatiles.curse) return;
+
+            var ability = (pokemon.ability || '').replace(/\s/g, '').toLowerCase();
+            if (ability === 'magicguard') return;
+
+            var curseDamage = Math.max(1, Math.floor(pokemon.maxHP / 4));
+            pokemon.currentHP = Math.max(0, pokemon.currentHP - curseDamage);
+            pokemon.hasFainted = pokemon.currentHP <= 0;
+            effects.push(pokemon.name + ' lost ' + curseDamage + ' HP from Curse');
+        });
+    }
+
+    /** Stage 3: Grassy Terrain healing (1/16 maxHP for grounded Pokemon). */
+    function applyTerrainResidual(state, effects) {
         if (state.field && state.field.terrain &&
             (state.field.terrain.toLowerCase() === 'grassy' || state.field.terrain.toLowerCase() === 'grassyterrain')) {
             ['p1', 'p2'].forEach(function (side) {
@@ -370,6 +486,10 @@
             });
         }
 
+    }
+
+    /** Stage 11: weather / screen / room duration decrements. */
+    function applyDurationDecrements(state, effects) {
         // Decrement weather turns
         if (state.field && state.field.weatherTurns > 0) {
             state.field.weatherTurns--;
@@ -419,19 +539,6 @@
                 state.field.terrainTurns = 0;
             }
         }
-
-        // Update percentHP, hasFainted, and turnsOnField on both sides
-        ['p1', 'p2'].forEach(function (side) {
-            var pokemon = state[side].active;
-            if (!pokemon) return;
-            pokemon.percentHP = pokemon.maxHP > 0 ? Math.round((pokemon.currentHP / pokemon.maxHP) * 100) : 0;
-            pokemon.hasFainted = pokemon.currentHP <= 0;
-            if (pokemon.turnsOnField !== undefined) {
-                pokemon.turnsOnField++;
-            }
-        });
-
-        return effects;
     }
 
     /**

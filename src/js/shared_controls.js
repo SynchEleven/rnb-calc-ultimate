@@ -1535,7 +1535,7 @@ function get_trainer_names() {
 		var pok_tr_names = Object.keys(poks);
 		var monName = pok_name;
 		if (pok_name.includes("Vivillon")) { monName = "Vivillon"; }
-		for (i in pok_tr_names) {
+		for (var i in pok_tr_names) {
 			var index = (poks[pok_tr_names[i]]["index"])
 			var trainer_name = pok_tr_names[i]
 			trainer_names.push(`[${index}]${monName} (${trainer_name})`)
@@ -1573,7 +1573,7 @@ function get_trainer_poks(trainer_name) {
 	var true_name = trainer_name.split("(")[1].split("\n")[0].trim()
 	window.CURRENT_TRAINER = true_name.substring(0, true_name.length -1);
 	var matches = []
-	for (i in TR_NAMES) {
+	for (var i in TR_NAMES) {
 		if (TR_NAMES[i].includes(true_name)) {
 			matches.push(TR_NAMES[i])
 		}
@@ -1751,7 +1751,10 @@ $(document).on('change', '#p1, #fieldInfo, #p2', function() {
 //select first mon of the box when loading
 function selectFirstMon() {
 	var pMons = document.getElementsByClassName("trainer-pok left-side");
-	let set = pMons[i].getAttribute("data-id");
+	// This used to index with `i`, an undeclared global left over from whichever
+	// loop ran last, so "select the first mon" picked an arbitrary one (or threw).
+	if (!pMons.length) return;
+	let set = pMons[0].getAttribute("data-id");
 	$('.player').val(set);
 	$('.player').change();
 	$('.player .select2-chosen').text(set);
@@ -1759,12 +1762,12 @@ function selectFirstMon() {
 
 function selectTrainer(value) {
 	localStorage.setItem("lasttimetrainer", value);
-	all_poks = SETDEX_SS
+	var all_poks = SETDEX_SS
 	for (const [pok_name, poks] of Object.entries(all_poks)) {
 		var pok_tr_names = Object.keys(poks)
 		var monName = pok_name;
 		if (pok_name.includes("Vivillon")) { monName = "Vivillon"; }
-		for (i in pok_tr_names) {
+		for (var i in pok_tr_names) {
 
 			var index = (poks[pok_tr_names[i]]["index"])
 			if (index == value) {
@@ -1778,15 +1781,17 @@ function selectTrainer(value) {
 }
 
 function nextTrainer() {
-	string = ($(".trainer-pok-list-opposing")).html()
-	initialSplit = string.split("[")
-	value = parseInt(initialSplit[initialSplit.length - 2].split("]")[0]) + 1
+	// `string`, `initialSplit` and `value` used to be implicit globals leaking
+	// onto window, where any other script could clobber them mid-call.
+	var string = ($(".trainer-pok-list-opposing")).html()
+	var initialSplit = string.split("[")
+	var value = parseInt(initialSplit[initialSplit.length - 2].split("]")[0]) + 1
 	selectTrainer(value)
 }
 
 function previousTrainer() {
-	string = ($(".trainer-pok-list-opposing")).html();
-	value = parseInt(string.split("]")[0].split("[")[1]) - 1;
+	var string = ($(".trainer-pok-list-opposing")).html();
+	var value = parseInt(string.split("]")[0].split("[")[1]) - 1;
 	selectTrainer(value)
 }
 
@@ -1883,9 +1888,6 @@ function TrashPokemon() {
 	//switch to the next pokemon automatically
 	
 }
-function RemoveAllPokemon() {
-	document.getEle
-}
 function allowDrop(ev) {
 	ev.preventDefault();
 }
@@ -1954,7 +1956,7 @@ function ColorCodeSetsChange(ev){
 	}
 }
 function setupSideCollapsers(){
-	var applyF = (btns) => {
+	var applyF = btns => {
 		for (var i = 0; i < btns.length; i++) {
 			let btn = btns[i];
 			btn.cum = btn.offsetHeight;
@@ -1997,7 +1999,10 @@ function sideCollapsersCorrection(ev){
 	var relativeHeight = node.parentNode.offsetTop;
 	if(prev){
 		//since the position is absolute, this will prevent from eating fellows.
-		var prevLowPos = prev.offsetTop + prev.offsetHeight; - relativeHeight ;
+		// The stray semicolon here used to split this in two, so `- relativeHeight`
+		// was a no-op expression and prevLowPos stayed page-absolute while the
+		// `offset` it is compared against is parent-relative.
+		var prevLowPos = prev.offsetTop + prev.offsetHeight - relativeHeight;
 		if(offset==0){// collapsed
 			offset = prevLowPos;
 		}else{// standing
@@ -2151,7 +2156,7 @@ $(document).ready(function () {
 	let last = localStorage.getItem("lasttimetrainer");
 	if (last != "") {
 		selectTrainer(parseInt(last, 10));
-	};
+	}
 
 	// set crit checkboxes to align their values
 	/* Crits on the top of the screen */
@@ -2190,8 +2195,8 @@ $(document).ready(function () {
 	}
 
 	$('#show-changelog').on('click', function () {
-      	showChangelog();
-    });
+		showChangelog();
+	});
 
     $('#changelog-close, #changelog-overlay').on('click', function (e) {
       if (e.target.id === 'changelog-close' || e.target.id === 'changelog-overlay') {

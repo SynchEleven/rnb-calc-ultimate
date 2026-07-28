@@ -115,29 +115,100 @@ function extractMaxHP(pokemon) {
 }
 
 /**
- * Extract current HP properly from a calc Pokemon
+ * Extract current HP properly from a calc Pokemon.
+ *
+ * NOTE: on a @smogon/calc Pokemon, `curHP` is a METHOD and the backing field is
+ * `originalCurHP`. Reading `pokemon.curHP` as a value silently yields a function,
+ * which used to fall through to maxHP and snapshot every Pokemon at full health.
  */
 function extractCurHP(pokemon, maxHP) {
     if (!pokemon) return 0;
-    
+
     var curHP = maxHP;
-    
-    // Try curHP property
-    try {
-        var val = pokemon.curHP;
-        if (typeof val === 'number' && !isNaN(val)) {
-            curHP = val;
-        }
-    } catch(e) { }
-    
-    // Try originalCurHP for dynamax
-    if (pokemon.isDynamaxed && pokemon.originalCurHP) {
+
+    // calc.Pokemon: curHP() already accounts for Dynamax doubling
+    if (typeof pokemon.curHP === 'function') {
         try {
-            curHP = pokemon.originalCurHP * 2;
-        } catch(e) { }
+            var fromMethod = pokemon.curHP();
+            if (typeof fromMethod === 'number' && !isNaN(fromMethod)) {
+                return Math.max(0, Math.min(fromMethod, maxHP));
+            }
+        } catch (e) { /* fall through to the field reads below */ }
     }
-    
+
+    // Plain object / snapshot-like: a numeric curHP field
+    if (typeof pokemon.curHP === 'number' && !isNaN(pokemon.curHP)) {
+        curHP = pokemon.curHP;
+    } else if (typeof pokemon.originalCurHP === 'number' && !isNaN(pokemon.originalCurHP)) {
+        curHP = pokemon.originalCurHP;
+        if (pokemon.isDynamaxed) curHP *= 2;
+    } else if (typeof pokemon.currentHP === 'number' && !isNaN(pokemon.currentHP)) {
+        curHP = pokemon.currentHP;
+    }
+
     return Math.max(0, Math.min(curHP, maxHP));
+}
+
+/**
+ * Canonical status handling.
+ *
+ * The codebase historically mixed calc-style codes ('brn') with display names
+ * ('Burned'). Everything that writes a status must go through here so the two
+ * conventions can never diverge again.
+ */
+var STATUS_CODE_TO_NAME = {
+    '': 'Healthy',
+    'par': 'Paralyzed',
+    'psn': 'Poisoned',
+    'tox': 'Badly Poisoned',
+    'brn': 'Burned',
+    'slp': 'Asleep',
+    'frz': 'Frozen'
+};
+var STATUS_NAME_TO_CODE = {
+    'Healthy': '',
+    'Paralyzed': 'par',
+    'Poisoned': 'psn',
+    'Badly Poisoned': 'tox',
+    'Burned': 'brn',
+    'Asleep': 'slp',
+    'Frozen': 'frz'
+};
+
+/** Accepts a code, a display name, '', null or undefined; always returns a display name. */
+function normalizeStatusName(status) {
+    if (status === null || status === undefined || status === '') return 'Healthy';
+    if (STATUS_CODE_TO_NAME[status] !== undefined) return STATUS_CODE_TO_NAME[status];
+    if (STATUS_NAME_TO_CODE[status] !== undefined) return status;
+    // Tolerate loose casing ('poisoned', 'BRN', ...)
+    var lower = String(status).toLowerCase();
+    for (var code in STATUS_CODE_TO_NAME) {
+        if (code && code === lower) return STATUS_CODE_TO_NAME[code];
+        if (STATUS_CODE_TO_NAME[code].toLowerCase() === lower) return STATUS_CODE_TO_NAME[code];
+    }
+    return 'Healthy';
+}
+
+/** Accepts a code or display name; always returns a calc-style code ('' when healthy). */
+function normalizeStatusCode(status) {
+    return STATUS_NAME_TO_CODE[normalizeStatusName(status)];
+}
+
+/** True when the Pokemon carries a non-volatile status condition. */
+function hasStatusCondition(status) {
+    return normalizeStatusCode(status) !== '';
+}
+
+/** Base PP for a move, from RBDex when available. */
+function getMoveBasePP(moveName) {
+    if (!moveName) return 0;
+    try {
+        if (typeof window !== 'undefined' && window.MoveDB) {
+            var entry = window.MoveDB.get(moveName);
+            if (entry && entry.pp) return entry.pp;
+        }
+    } catch (e) { /* ignore */ }
+    return 35;
 }
 
 /**
@@ -153,7 +224,9 @@ function PokemonSnapshot(pokemon) {
         this.percentHP = 100;
         this.status = 'Healthy';
         this.toxicCounter = 0;
+        this.sleepCounter = 0;
         this.boosts = { atk: 0, def: 0, spa: 0, spd: 0, spe: 0, accuracy: 0, evasion: 0 };
+        this.volatiles = {};
         this.ability = '';
         this.item = '';
         this.nature = '';
@@ -183,10 +256,21 @@ function PokemonSnapshot(pokemon) {
     this.percentHP = this.maxHP > 0 ? Math.round((this.currentHP / this.maxHP) * 100) : 100;
     
     // Status
-    var rawStatus = safeGetValue(pokemon, 'status', '');
-    this.status = rawStatus ? this._statusCodeToName(rawStatus) : 'Healthy';
+    this.status = normalizeStatusName(safeGetValue(pokemon, 'status', ''));
     this.toxicCounter = safeGetValue(pokemon, 'toxicCounter', 0);
-    
+    this.sleepCounter = safeGetValue(pokemon, 'sleepCounter', 0);
+
+    // Volatile conditions (Leech Seed, Curse, Aqua Ring, Ingrain, Confusion, ...).
+    // These are carried by the snapshot so end-of-turn logic can act on them and
+    // so clone() preserves them across turns.
+    this.volatiles = {};
+    var rawVolatiles = safeGetValue(pokemon, 'volatiles', null);
+    if (rawVolatiles && typeof rawVolatiles === 'object') {
+        for (var v in rawVolatiles) {
+            if (rawVolatiles[v]) this.volatiles[v] = rawVolatiles[v];
+        }
+    }
+
     // Boosts
     var rawBoosts = safeGetValue(pokemon, 'boosts', {});
     this.boosts = {
@@ -228,10 +312,10 @@ function PokemonSnapshot(pokemon) {
         }
     }
     
-    // PP (default to 35 if not available)
+    // PP: taken from the move's own data (RBDex) rather than a flat 35
     this.pp = [];
     for (var i = 0; i < 4; i++) {
-        this.pp.push(35); // Default PP
+        this.pp.push(this.moves[i] ? getMoveBasePP(this.moves[i]) : 0);
     }
     
     // Stats
@@ -262,29 +346,16 @@ function PokemonSnapshot(pokemon) {
 }
 
 PokemonSnapshot.prototype._statusCodeToName = function(code) {
-    var map = {
-        '': 'Healthy',
-        'par': 'Paralyzed',
-        'psn': 'Poisoned',
-        'tox': 'Badly Poisoned',
-        'brn': 'Burned',
-        'slp': 'Asleep',
-        'frz': 'Frozen'
-    };
-    return map[code] || code || 'Healthy';
+    return normalizeStatusName(code);
 };
 
 PokemonSnapshot.prototype._statusNameToCode = function(name) {
-    var map = {
-        'Healthy': '',
-        'Paralyzed': 'par',
-        'Poisoned': 'psn',
-        'Badly Poisoned': 'tox',
-        'Burned': 'brn',
-        'Asleep': 'slp',
-        'Frozen': 'frz'
-    };
-    return map[name] || '';
+    return normalizeStatusCode(name);
+};
+
+/** True when this Pokemon already carries a non-volatile status. */
+PokemonSnapshot.prototype.hasStatus = function() {
+    return hasStatusCondition(this.status);
 };
 
 PokemonSnapshot.prototype.clone = function() {
@@ -297,7 +368,9 @@ PokemonSnapshot.prototype.clone = function() {
     clone.percentHP = this.percentHP;
     clone.status = this.status;
     clone.toxicCounter = this.toxicCounter;
+    clone.sleepCounter = this.sleepCounter || 0;
     clone.boosts = Object.assign({}, this.boosts);
+    clone.volatiles = Object.assign({}, this.volatiles || {});
     clone.ability = this.ability;
     clone.item = this.item;
     clone.nature = this.nature;
@@ -337,9 +410,26 @@ PokemonSnapshot.prototype.applyBoost = function(stat, stages) {
 };
 
 PokemonSnapshot.prototype.setStatus = function(status, toxicCounter) {
-    this.status = status || 'Healthy';
-    this.toxicCounter = status === 'Badly Poisoned' ? (toxicCounter || 1) : 0;
+    // Accepts either a code ('brn') or a display name ('Burned').
+    this.status = normalizeStatusName(status);
+    this.toxicCounter = this.status === 'Badly Poisoned' ? (toxicCounter || 1) : 0;
+    if (this.status !== 'Asleep') this.sleepCounter = 0;
     return this;
+};
+
+PokemonSnapshot.prototype.setVolatile = function(name, value) {
+    if (!name) return this;
+    if (!this.volatiles) this.volatiles = {};
+    if (value === false || value === undefined || value === null) {
+        delete this.volatiles[name];
+    } else {
+        this.volatiles[name] = value;
+    }
+    return this;
+};
+
+PokemonSnapshot.prototype.hasVolatile = function(name) {
+    return !!(this.volatiles && this.volatiles[name]);
 };
 
 PokemonSnapshot.prototype.usePP = function(moveIndex) {
@@ -365,18 +455,30 @@ PokemonSnapshot.prototype.getEffectiveSpeed = function(field) {
     }
     
     var speed = Math.floor(baseSpe * multiplier);
-    
-    // RnB: Paralysis reduces speed by 75% (25% remaining)
-    var s = (this.status || '').toLowerCase();
-    if (s === 'paralyzed' || s === 'par') {
+
+    var ability = (this.ability || '').replace(/\s/g, '').toLowerCase();
+
+    // RnB: Paralysis reduces speed by 75% (25% remaining). Quick Feet is immune
+    // to the cut and instead gets a 1.5x boost from any non-volatile status.
+    if (normalizeStatusCode(this.status) === 'par' && ability !== 'quickfeet') {
         speed = Math.floor(speed * 0.25);
     }
-    
-    // Choice Scarf
-    if (this.item === 'Choice Scarf') {
+    if (ability === 'quickfeet' && hasStatusCondition(this.status)) {
         speed = Math.floor(speed * 1.5);
     }
-    
+
+    // Items
+    if (this.item === 'Choice Scarf') {
+        speed = Math.floor(speed * 1.5);
+    } else if (this.item === 'Iron Ball' || this.item === 'Macho Brace' || this.item === 'Power Weight' ||
+               this.item === 'Power Bracer' || this.item === 'Power Belt' || this.item === 'Power Lens' ||
+               this.item === 'Power Band' || this.item === 'Power Anklet') {
+        speed = Math.floor(speed * 0.5);
+    }
+
+    // NOTE: Sticky Web is deliberately NOT applied here — it is a -1 Speed stage
+    // applied on switch-in and is already reflected in `boosts.spe`.
+
     // Tailwind (would need field info)
     if (field && field.tailwind) {
         speed = speed * 2;
@@ -575,8 +677,10 @@ BattleAction.prototype.describe = function() {
  */
 function BattleOutcome(description, probability, damageDealt, effects) {
     this.description = description || 'Normal';
-    this.probability = probability || 1.0;
-    this.damageDealt = damageDealt || 0;
+    // A 0 probability is meaningful (an impossible branch); `|| 1.0` used to turn
+    // it into a certainty.
+    this.probability = (typeof probability === 'number' && !isNaN(probability)) ? probability : 1.0;
+    this.damageDealt = (typeof damageDealt === 'number' && !isNaN(damageDealt)) ? damageDealt : 0;
     this.damagePercent = 0;
     this.effects = effects || {};
     
@@ -657,6 +761,9 @@ BattleNode.prototype.hasChildren = function() {
 function BattleTree() {
     this.nodes = {};
     this.rootId = null;
+    // Own property: this used to live on the prototype, so addRoot() before
+    // initialize() mutated an array shared by every BattleTree instance.
+    this.rootIds = [];
     this.currentNodeId = null;
     this.undoStack = [];
     this.redoStack = [];
@@ -695,9 +802,6 @@ BattleTree.prototype.getCurrentNode = function() {
 BattleTree.prototype.getRootNode = function() {
     return this.getNode(this.rootId);
 };
-
-// Support multiple roots for different team configurations
-BattleTree.prototype.rootIds = [];
 
 BattleTree.prototype.addRoot = function(initialState, label) {
     var rootNode = new BattleNode(null, initialState, null, null);
@@ -864,6 +968,28 @@ BattleTree.prototype.serialize = function() {
     }, null, 2);
 };
 
+/** Rebuild a BattleOutcome (with its prototype) from plain deserialized JSON. */
+function reviveOutcome(raw) {
+    if (!raw) return new BattleOutcome();
+    var outcome = new BattleOutcome(raw.description, raw.probability, raw.damageDealt, raw.effects);
+    // Preserve any extra fields written by the branching engine
+    Object.keys(raw).forEach(function(k) {
+        if (!(k in outcome)) outcome[k] = raw[k];
+    });
+    outcome.damagePercent = raw.damagePercent || 0;
+    return outcome;
+}
+
+/** Rebuild a BattleAction (with its prototype) from plain deserialized JSON. */
+function reviveAction(raw) {
+    if (!raw) return null;
+    var action = new BattleAction(raw.type, raw.data || raw);
+    Object.keys(raw).forEach(function(k) {
+        if (k !== 'type' && k !== 'data') action[k] = raw[k];
+    });
+    return action;
+}
+
 BattleTree.prototype.deserialize = function(jsonStr) {
     try {
         var data = JSON.parse(jsonStr);
@@ -877,7 +1003,16 @@ BattleTree.prototype.deserialize = function(jsonStr) {
         Object.keys(data.nodes).forEach(function(id) {
             var nodeData = data.nodes[id];
             var node = Object.assign(new BattleNode(), nodeData);
-            
+
+            // Object.assign copies plain JSON objects over the constructed
+            // instances, which used to strip the BattleOutcome / BattleAction
+            // prototypes and make getFullLabel() throw on any loaded tree.
+            node.outcome = reviveOutcome(nodeData.outcome);
+            node.actions = {
+                p1: reviveAction(nodeData.actions && nodeData.actions.p1),
+                p2: reviveAction(nodeData.actions && nodeData.actions.p2)
+            };
+
             if (nodeData.state) {
                 node.state = Object.assign(new BattleStateSnapshot(), nodeData.state);
                 
@@ -990,5 +1125,11 @@ window.BattlePlanner = {
     safeGetValue: safeGetValue,
     extractMaxHP: extractMaxHP,
     extractCurHP: extractCurHP,
-    extractPokemonStats: extractPokemonStats
+    extractPokemonStats: extractPokemonStats,
+    normalizeStatusName: normalizeStatusName,
+    normalizeStatusCode: normalizeStatusCode,
+    hasStatusCondition: hasStatusCondition,
+    getMoveBasePP: getMoveBasePP,
+    STATUS_CODE_TO_NAME: STATUS_CODE_TO_NAME,
+    STATUS_NAME_TO_CODE: STATUS_NAME_TO_CODE
 };

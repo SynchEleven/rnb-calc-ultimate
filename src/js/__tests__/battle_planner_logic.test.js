@@ -1228,7 +1228,7 @@ describe('scoreAIMoves', () => {
     origRBDex = global.window ? global.window.RBDex : undefined;
     if (!global.window) global.window = {};
     global.window.RBDex = {
-      getMove: (name) => {
+      getMove: name => {
         if (!name) return null;
         const id = name.toLowerCase().replace(/[^a-z0-9]/g, '');
         return moveDB[id] || null;
@@ -1899,14 +1899,26 @@ describe('applyEndOfTurnEffects - terrain turn decay', () => {
 // applyEndOfTurnEffects - Flame Orb / Toxic Orb activation
 // ---------------------------------------------------------------------------
 describe('applyEndOfTurnEffects - Flame Orb / Toxic Orb', () => {
-  test('Flame Orb burns a Pokemon with no status', () => {
+  // These use the PRODUCTION status convention: a healthy PokemonSnapshot
+  // carries 'Healthy', not ''. The orbs used to be guarded by `if (!status)`,
+  // so they only ever fired for tests that hand-set status to an empty string.
+  test('Flame Orb burns a healthy Pokemon', () => {
+    const state = makeState(
+      { currentHP: 300, maxHP: 300, item: 'Flame Orb', status: 'Healthy' },
+      null
+    );
+    const effects = Logic.applyEndOfTurnEffects(state, 8);
+    expect(state.p1.active.status).toBe('Burned');
+    expect(effects).toContainEqual(expect.stringContaining('burned by its Flame Orb'));
+  });
+
+  test('Flame Orb also fires when status is the empty-string form', () => {
     const state = makeState(
       { currentHP: 300, maxHP: 300, item: 'Flame Orb', status: '' },
       null
     );
-    const effects = Logic.applyEndOfTurnEffects(state, 3);
-    expect(state.p1.active.status).toBe('brn');
-    expect(effects).toContainEqual(expect.stringContaining('burned by its Flame Orb'));
+    Logic.applyEndOfTurnEffects(state, 8);
+    expect(state.p1.active.status).toBe('Burned');
   });
 
   test('Flame Orb does not burn if already statused', () => {
@@ -1914,17 +1926,17 @@ describe('applyEndOfTurnEffects - Flame Orb / Toxic Orb', () => {
       { currentHP: 300, maxHP: 300, item: 'Flame Orb', status: 'psn' },
       null
     );
-    Logic.applyEndOfTurnEffects(state, 3);
+    Logic.applyEndOfTurnEffects(state, 8);
     expect(state.p1.active.status).toBe('psn');
   });
 
-  test('Toxic Orb badly poisons a Pokemon with no status', () => {
+  test('Toxic Orb badly poisons a healthy Pokemon', () => {
     const state = makeState(
-      { currentHP: 300, maxHP: 300, item: 'Toxic Orb', status: '' },
+      { currentHP: 300, maxHP: 300, item: 'Toxic Orb', status: 'Healthy' },
       null
     );
-    const effects = Logic.applyEndOfTurnEffects(state, 3);
-    expect(state.p1.active.status).toBe('tox');
+    const effects = Logic.applyEndOfTurnEffects(state, 8);
+    expect(state.p1.active.status).toBe('Badly Poisoned');
     expect(state.p1.active.toxicCounter).toBe(1);
     expect(effects).toContainEqual(expect.stringContaining('badly poisoned by its Toxic Orb'));
   });
@@ -1934,26 +1946,26 @@ describe('applyEndOfTurnEffects - Flame Orb / Toxic Orb', () => {
       { currentHP: 300, maxHP: 300, item: 'Toxic Orb', status: 'brn' },
       null
     );
-    Logic.applyEndOfTurnEffects(state, 3);
+    Logic.applyEndOfTurnEffects(state, 8);
     expect(state.p1.active.status).toBe('brn');
   });
 
   test('Flame Orb does not activate on fainted Pokemon', () => {
     const state = makeState(
-      { currentHP: 0, maxHP: 300, item: 'Flame Orb', status: '' },
+      { currentHP: 0, maxHP: 300, item: 'Flame Orb', status: 'Healthy' },
       null
     );
-    Logic.applyEndOfTurnEffects(state, 3);
-    expect(state.p1.active.status).toBe('');
+    Logic.applyEndOfTurnEffects(state, 8);
+    expect(state.p1.active.status).toBe('Healthy');
   });
 
   test('p2 Toxic Orb activates correctly', () => {
     const state = makeState(
       null,
-      { currentHP: 340, maxHP: 340, item: 'Toxic Orb', status: '' }
+      { currentHP: 340, maxHP: 340, item: 'Toxic Orb', status: 'Healthy' }
     );
-    const effects = Logic.applyEndOfTurnEffects(state, 3);
-    expect(state.p2.active.status).toBe('tox');
+    const effects = Logic.applyEndOfTurnEffects(state, 8);
+    expect(state.p2.active.status).toBe('Badly Poisoned');
     expect(effects).toContainEqual(expect.stringContaining('Toxic Orb'));
   });
 });

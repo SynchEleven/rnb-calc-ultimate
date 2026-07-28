@@ -385,7 +385,7 @@ export function calculateSMSSSV(
     return result;
   }
 
-  if (move.named("Super Fang", 'Nature\'s Madness')) {
+  if (move.named('Super Fang', 'Nature\'s Madness')) {
     const lostHP = field.defenderSide.isProtected ? 0 : Math.floor(defender.curHP() / 2);
     result.damage = lostHP;
     return result;
@@ -1263,7 +1263,8 @@ export function calculateAtModsSMSSSV(
   } else if (!move.isZ && !move.isMax &&
     ((attacker.hasItem('Choice Band') && move.category === 'Physical') ||
       (attacker.hasItem('Choice Specs') && move.category === 'Special') ||
-      attacker.hasItem("Soul Dew") && move.category === 'Special' && attacker.named('Latios', 'Latias', 'Latios-Mega', 'Latias-Mega'))
+      attacker.hasItem('Soul Dew') && move.category === 'Special' &&
+        attacker.named('Latios', 'Latias', 'Latios-Mega', 'Latias-Mega'))
   ) {
     atMods.push(6144);
     desc.attackerItem = attacker.item;
@@ -1377,7 +1378,7 @@ export function calculateDfModsSMSSSV(
     dfMods.push(3072);
   }
 
-  if (move.named('Explosion', 'Self-Destruct', 'Misty Explosion')){
+  if (move.named('Explosion', 'Self-Destruct', 'Misty Explosion')) {
     dfMods.push(2048);
   }
 
@@ -1397,8 +1398,9 @@ export function calculateDfModsSMSSSV(
   }
 
   if ((defender.hasItem('Eviolite') && gen.species.get(toID(defender.name))?.nfe) ||
-      (!hitsPhysical && defender.hasItem('Assault Vest') )||
-      (defender.hasItem("Soul Dew") && move.category === 'Special' && defender.named('Latios', 'Latias', 'Latios-Mega', 'Latias-Mega'))) {
+      (!hitsPhysical && defender.hasItem('Assault Vest')) ||
+      (defender.hasItem('Soul Dew') && move.category === 'Special' &&
+        defender.named('Latios', 'Latias', 'Latios-Mega', 'Latias-Mega'))) {
     dfMods.push(6144);
     desc.defenderItem = defender.item;
   } else if (

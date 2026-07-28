@@ -1,3 +1,6 @@
+import * as fs from 'fs';
+import * as path from 'path';
+
 import {calculate, Pokemon, Move} from '../adaptable';
 import * as I from '../data/interface';
 
@@ -40,10 +43,12 @@ describe('Generations', () => {
     }
   });
 
-  // TODO: RnB-specific test needed — RnB intentionally changes move types/BPs from @pkmn/dex
-  // (e.g., Super Fang Normal→Dark, Absorb BP 40→20, etc.)
-  // This test compares calc data against Smogon standard @pkmn/dex and will fail for RnB overrides.
-  test.skip('moves', () => {
+  // Compares against Smogon standard @pkmn/dex, which RnB deliberately diverges
+  // from (Super Fang Normal->Dark, Absorb BP 40->20, ...). The RnB-aware
+  // replacement is the 'RnB data consistency' block at the bottom of this file,
+  // which checks the two RnB data sources against EACH OTHER.
+  // eslint-disable-next-line jest/no-disabled-tests
+  test.skip('moves (vanilla Smogon baseline)', () => {
     for (const gen of gens) {
       const p = Array.from(pkmn.Generations.get(gen).moves);
       const c = new Map<I.ID, I.Move>();
@@ -64,10 +69,9 @@ describe('Generations', () => {
     }
   });
 
-  // TODO: RnB-specific test needed — RnB intentionally changes species stats from @pkmn/dex
-  // (e.g., Azumarill Atk 65→50, Diggersby Atk 71→56, etc.)
-  // This test compares calc data against Smogon standard @pkmn/dex and will fail for RnB overrides.
-  test.skip('species', () => {
+  // See the note on 'moves' above.
+  // eslint-disable-next-line jest/no-disabled-tests
+  test.skip('species (vanilla Smogon baseline)', () => {
     for (const gen of gens) {
       const p = Array.from(pkmn.Generations.get(gen).species);
       const c = new Map<I.ID, I.Specie>();
@@ -108,6 +112,178 @@ describe('Generations', () => {
         c.delete(nature.id);
       }
       expect(c.size).toBe(0);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RnB data consistency
+// ---------------------------------------------------------------------------
+//
+// This project carries TWO independent copies of the game data:
+//
+//   calc/src/data/{species,moves}.ts   -> drives damage calculation
+//   src/js/data/rbdex/{pokedex,moves}.js -> drives the UI, MoveDB and the AI
+//
+// Nothing used to check that they agreed, and they did not: six species had
+// different base stats and three moves used by real trainer sets had different
+// base powers, so the numbers on screen contradicted the numbers being
+// calculated. rbdex is a dump of the ROM's own data and is therefore the source
+// of truth; these tests fail if the engine drifts away from it again.
+describe('RnB data consistency (calc vs rbdex)', () => {
+  const RBDEX_DIR = path.resolve(__dirname, '../../../src/js/data/rbdex');
+
+  function loadRbdex<T>(file: string, key: string): T {
+    const code = fs.readFileSync(path.join(RBDEX_DIR, file), 'utf8');
+    const sandbox: any = {};
+    // These data files are plain CommonJS assigned onto `exports`; evaluating
+    // them in a sandbox object is the least intrusive way to read them from a
+    // test without adding a build step.
+    // eslint-disable-next-line no-new-func, @typescript-eslint/no-implied-eval
+    new Function('exports', 'module', code)(sandbox, {exports: sandbox});
+    return sandbox[key] as T;
+  }
+
+  const dex = loadRbdex<{[id: string]: any}>('pokedex.js', 'BattlePokedex');
+  const movedex = loadRbdex<{[id: string]: any}>('moves.js', 'BattleMovedex');
+  const gen = calc.Generations.get(8);
+  const id = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '') as I.ID;
+
+  // Cosmetic formes and Bond/Neutral formes the engine has no reason to model.
+  const SPECIES_NOT_IN_ENGINE = new Set([
+    'pikachucosplay', 'pikachurockstar', 'pikachubelle', 'pikachupopstar',
+    'pikachuphd', 'pikachulibre', 'pikachustarter', 'eeveestarter',
+    'pichuspikyeared', 'greninjabond', 'aegislash', 'xerneasneutral',
+  ]);
+
+  test('base stats agree for every species', () => {
+    const mismatches: string[] = [];
+
+    for (const key of Object.keys(dex)) {
+      const raw = dex[key];
+      if (!raw?.baseStats || !raw.name) continue;
+      if (SPECIES_NOT_IN_ENGINE.has(id(raw.name))) continue;
+
+      const specie = gen.species.get(id(raw.name));
+      if (!specie) continue;
+
+      for (const stat of ['hp', 'atk', 'def', 'spa', 'spd', 'spe'] as const) {
+        if (specie.baseStats[stat] !== raw.baseStats[stat]) {
+          mismatches.push(
+            `${raw.name} ${stat}: calc=${specie.baseStats[stat]} rbdex=${raw.baseStats[stat]}`
+          );
+        }
+      }
+    }
+
+    expect(mismatches).toEqual([]);
+  });
+
+  test('types agree for every species', () => {
+    const mismatches: string[] = [];
+
+    for (const key of Object.keys(dex)) {
+      const raw = dex[key];
+      if (!raw?.types || !raw.name) continue;
+      if (SPECIES_NOT_IN_ENGINE.has(id(raw.name))) continue;
+
+      const specie = gen.species.get(id(raw.name));
+      if (!specie) continue;
+
+      const calcTypes = (specie.types || []).join('/');
+      const rbdexTypes = raw.types.join('/');
+      if (calcTypes !== rbdexTypes) {
+        mismatches.push(`${raw.name}: calc=${calcTypes} rbdex=${rbdexTypes}`);
+      }
+    }
+
+    expect(mismatches).toEqual([]);
+  });
+
+  test('default abilities agree for every species', () => {
+    const mismatches: string[] = [];
+
+    for (const key of Object.keys(dex)) {
+      const raw = dex[key];
+      if (!raw?.abilities || !raw.name) continue;
+      if (SPECIES_NOT_IN_ENGINE.has(id(raw.name))) continue;
+
+      const specie = gen.species.get(id(raw.name));
+      if (!specie) continue;
+
+      const calcAbility = specie.abilities ? specie.abilities[0] : undefined;
+      const rbdexAbility = raw.abilities['0'];
+      if (rbdexAbility && calcAbility !== rbdexAbility) {
+        mismatches.push(`${raw.name}: calc=${calcAbility} rbdex=${rbdexAbility}`);
+      }
+    }
+
+    expect(mismatches).toEqual([]);
+  });
+
+  test('base power, type and category agree for every move', () => {
+    const bpMismatches: string[] = [];
+    const typeMismatches: string[] = [];
+
+    // Return/Frustration have variable BP: the table stores 0 and the Move
+    // constructor resolves it at runtime.
+    const VARIABLE_BP = new Set(['return', 'frustration']);
+
+    for (const key of Object.keys(movedex)) {
+      const raw = movedex[key];
+      if (!raw?.name) continue;
+
+      const move = gen.moves.get(id(raw.name));
+      if (!move) continue;
+
+      if (!VARIABLE_BP.has(id(raw.name)) &&
+          typeof raw.basePower === 'number' && raw.basePower > 0 &&
+          move.basePower !== raw.basePower) {
+        bpMismatches.push(`${raw.name}: calc=${move.basePower} rbdex=${raw.basePower}`);
+      }
+
+      if (move.type !== raw.type) {
+        typeMismatches.push(`${raw.name}: calc=${move.type} rbdex=${raw.type}`);
+      }
+      if (raw.category && move.category !== raw.category) {
+        typeMismatches.push(`${raw.name}: calc=${move.category} rbdex=${raw.category}`);
+      }
+    }
+
+    expect(bpMismatches).toEqual([]);
+    expect(typeMismatches).toEqual([]);
+  });
+
+  test('every move a trainer set can use exists in the engine', () => {
+    const setsFile = path.resolve(__dirname, '../../../src/js/data/sets/gen8.js');
+    const code = fs.readFileSync(setsFile, 'utf8');
+    // eslint-disable-next-line no-new-func, @typescript-eslint/no-implied-eval
+    const SETDEX = new Function(`${code}; return SETDEX_SS;`)() as {[k: string]: any};
+
+    const missingSpecies: string[] = [];
+    const missingMoves = new Set<string>();
+
+    for (const species of Object.keys(SETDEX)) {
+      if (!gen.species.get(id(species))) {
+        missingSpecies.push(species);
+        continue;
+      }
+      for (const trainer of Object.keys(SETDEX[species])) {
+        for (const moveName of (SETDEX[species][trainer].moves || [])) {
+          if (!moveName) continue;
+          if (!gen.moves.get(id(moveName))) missingMoves.add(moveName);
+        }
+      }
+    }
+
+    expect(missingSpecies).toEqual([]);
+    expect(Array.from(missingMoves)).toEqual([]);
+  });
+
+  test('custom RnB moves exist in both sources', () => {
+    for (const name of ['Paleo Wave', 'Shadow Strike']) {
+      expect(gen.moves.get(id(name))).toBeDefined();
+      expect(movedex[id(name)]).toBeDefined();
     }
   });
 });

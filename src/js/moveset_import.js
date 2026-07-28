@@ -96,8 +96,8 @@ function parseSetsFromCustomSets(customSets) {
 	for (var monName in customSets) {
 		for (var setName in customSets[monName]) {
 			var poke = customSets[monName][setName];
-			var item = poke.hasOwnProperty('item') ? ` @ ${poke.item}` : '';
-			var ivs = poke.hasOwnProperty('ivs') ? formatIVs(poke.ivs) : '';
+			var item = Object.prototype.hasOwnProperty.call(poke, 'item') ? ` @ ${poke.item}` : '';
+			var ivs = Object.prototype.hasOwnProperty.call(poke, 'ivs') ? formatIVs(poke.ivs) : '';
 
 			var ivLine = ivs !== "" ? `IVs: ${ivs}\n` : '';
 

@@ -2833,6 +2833,17 @@ const SM_PATCH: {[name: string]: DeepPartial<MoveData>} = {
 const SM: {[name: string]: MoveData} = extend(true, {}, XY, SM_PATCH);
 
 const SS_PATCH: {[name: string]: DeepPartial<MoveData>} = {
+  // --- Run and Bun specific -------------------------------------------------
+  // RnB adopts the Gen 9 base-power rebalances even though it runs on gen 8
+  // mechanics. These three were the only moves used by trainer sets where the
+  // engine's BP disagreed with rbdex/moves.js (what the UI shows), so damage
+  // was over-reported by 8-17%. Enforced by data.test.ts.
+  // Present in rbdex (so selectable in the UI) but absent from the engine's
+  // gen 8 table, which silently produced 0 damage.
+  'Rage Fist': {bp: 50, type: 'Ghost', category: 'Physical', makesContact: true},
+  'Mystical Power': {bp: 70, type: 'Psychic', category: 'Special', secondaries: true},
+  'Lunar Blessing': {bp: 0, type: 'Psychic', category: 'Status'},
+  // --------------------------------------------------------------------------
   'Apple Acid': {
     bp: 80,
     type: 'Grass',
@@ -3037,7 +3048,8 @@ const SS_PATCH: {[name: string]: DeepPartial<MoveData>} = {
     maxPower: 130,
   },
   'Glacial Lance': {
-    bp: 130,
+    // RnB uses the Gen 9 rebalance (130 -> 120)
+    bp: 120,
     type: 'Ice',
     category: 'Physical',
     target: 'allAdjacentFoes',
@@ -3276,7 +3288,8 @@ const SS_PATCH: {[name: string]: DeepPartial<MoveData>} = {
     maxPower: 1,
   },
   'Grassy Glide': {
-    bp: 70,
+    // RnB uses the Gen 9 rebalance (70 -> 60)
+    bp: 60,
     type: 'Grass',
     category: 'Physical',
     makesContact: true,
@@ -3609,7 +3622,8 @@ const SS_PATCH: {[name: string]: DeepPartial<MoveData>} = {
     maxPower: 140,
   },
   'Wicked Blow': {
-    bp: 80,
+    // RnB uses the Gen 9 rebalance (80 -> 75)
+    bp: 75,
     type: 'Dark',
     category: 'Physical',
     makesContact: true,

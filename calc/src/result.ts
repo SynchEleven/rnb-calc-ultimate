@@ -63,12 +63,14 @@ export class Result {
   }
 
   moveRate() {
-    
+
   }
 
   damageRolls() {
     let returnVal: number[] = [];
-    typeof this.damage === 'number' ? returnVal = [this.damage] : returnVal = this.damage as number[];
+    returnVal = typeof this.damage === 'number'
+      ? [this.damage]
+      : this.damage as number[];
     return returnVal; // it'll be fineeeee
   }
 
